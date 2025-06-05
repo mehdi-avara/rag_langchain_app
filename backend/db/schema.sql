@@ -1,0 +1,3 @@
+-- -- Active: 1743246884488@@212.23.201.167@5432@finantial
+-- -- Enable pgvector extension for future use
+-- CREATE EXTENSION IF NOT EXISTS vector; 

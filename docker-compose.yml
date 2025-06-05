@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: ankane/pgvector:pg15
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  elastic:
+    image: elasticsearch:8.13.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+
+  chroma:
+    image: chromadb/chroma:0.4
+    volumes:
+      - chroma_data:/data
+    ports:
+      - "8000:8000"
+
+  backend:
+    build: ./backend
+    env_file: .env
+    depends_on:
+      - postgres
+      - elastic
+      - chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - chroma_data:/data/chroma
+
+  ui:
+    build: ./ui
+    environment:
+      - API_URL=http://backend:8000
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./ui:/app
+    depends_on:
+      - backend
+
+volumes:
+  pg_data:
+  es_data:
+  chroma_data: 
