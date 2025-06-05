@@ -1,64 +1,67 @@
 from typing import List, Dict, Any
-from elasticsearch import AsyncElasticsearch
-from langchain.retrievers import ElasticsearchBM25Retriever
-from ...settings import get_settings
-
-settings = get_settings()
+from rank_bm25 import BM25Okapi
+from langchain.schema import Document
+import asyncio
 
 class BM25Retriever:
-    def __init__(self, k: int = 6):
-        self.es_client = AsyncElasticsearch(settings.elastic_host)
-        self.index_name = "chunks"
-        self.k = k
-        self._retriever = None
+    """
+    Lightweight in‑memory BM25 retriever for prototypes.
 
-    @property
-    def retriever(self) -> ElasticsearchBM25Retriever:
-        if self._retriever is None:
-            self._retriever = ElasticsearchBM25Retriever(
-                elasticsearch_url=settings.elastic_host,
-                index_name=self.index_name,
-                k=self.k
-            )
-        return self._retriever
+    * Stores every chunk’s raw text and metadata in local lists.
+    * Builds a BM25Okapi index (rank_bm25) once new texts are added.
+    * Provides an **async** `invoke` method that returns the top‑k chunks
+      as `langchain.schema.Document` objects so the downstream pipeline
+      remains unchanged.
+
+    NOTE: Corpus must fit in RAM; not thread‑safe beyond a single process.
+    """
+
+    def __init__(self, k: int = 6):
+        self.k = k
+        self.texts: List[str] = []
+        self.metadatas: List[Dict[str, Any]] = []
+        self.corpus_tokens: List[List[str]] = []
+        self._bm25: BM25Okapi | None = None
 
     async def add_texts(
         self,
         texts: List[str],
         metadatas: List[Dict[str, Any]],
-        ids: List[str]
+        ids: List[str] | None = None,
     ) -> None:
-        """Add texts to Elasticsearch index."""
-        # Create index if it doesn't exist
-        if not await self.es_client.indices.exists(index=self.index_name):
-            await self.es_client.indices.create(
-                index=self.index_name,
-                body={
-                    "mappings": {
-                        "properties": {
-                            "content": {"type": "text"},
-                            "doc_id": {"type": "integer"},
-                            "chunk_id": {"type": "integer"}
-                        }
-                    }
-                }
-            )
+        """
+        Ingest a batch of chunk texts.
 
-        # Bulk index documents
-        actions = []
-        for text, metadata, doc_id in zip(texts, metadatas, ids):
-            actions.append({
-                "_index": self.index_name,
-                "_id": doc_id,
-                "_source": {
-                    "content": text,
-                    **metadata
-                }
-            })
+        Parameters
+        ----------
+        texts : list of chunk strings
+        metadatas : list of dicts (must align with `texts`)
+        ids : unused here but kept for API compatibility
+        """
+        for text, meta in zip(texts, metadatas):
+            self.texts.append(text)
+            self.metadatas.append(meta)
+            self.corpus_tokens.append(text.lower().split())
 
-        if actions:
-            await self.es_client.bulk(operations=actions)
+        # Rebuild BM25 index each time—fast for prototype sizes.
+        self._bm25 = BM25Okapi(self.corpus_tokens)
 
-    async def invoke(self, query: str) -> List[Dict[str, Any]]:
-        """Search documents using BM25."""
-        return await self.retriever.ainvoke(query) 
+    async def invoke(self, query: str) -> List[Document]:
+        """
+        Rank stored chunks against the user query and
+        return the top‑k as LangChain Document objects.
+        """
+        if not self._bm25 or not self.texts:
+            return []
+
+        query_tokens = query.lower().split()
+        scores = self._bm25.get_scores(query_tokens)
+        top_idx = sorted(
+            range(len(scores)), key=lambda i: scores[i], reverse=True
+        )[: self.k]
+
+        # Build Document objects expected by downstream code
+        return [
+            Document(page_content=self.texts[i], metadata=self.metadatas[i])
+            for i in top_idx
+        ]

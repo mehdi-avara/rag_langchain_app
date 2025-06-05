@@ -4,12 +4,12 @@ sqlalchemy==2.0.30
 psycopg2-binary==2.9.9
 pydantic-settings==2.2.1
 python-jose==3.3.0
-langchain==0.2.0
-langgraph==0.0.32
-jinaai==0.21.0
+langchain
+langgraph
 elasticsearch==8.13.0
 chromadb==0.4.0
 pytesseract==0.3.10
 pdfminer.six==20221105
 Pillow==10.3.0
 requests==2.32.3 
+rank_bm25
