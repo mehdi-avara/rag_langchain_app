@@ -1,15 +1,17 @@
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
 from langchain.schema import Document
-import asyncio
+from langchain_core.runnables import Runnable
 
-class BM25Retriever:
+
+
+class BM25Retriever(Runnable):
     """
     Lightweight in‑memory BM25 retriever for prototypes.
 
     * Stores every chunk’s raw text and metadata in local lists.
     * Builds a BM25Okapi index (rank_bm25) once new texts are added.
-    * Provides an **async** `invoke` method that returns the top‑k chunks
+    * Provides an **async** `ainvoke` method that returns the top‑k chunks
       as `langchain.schema.Document` objects so the downstream pipeline
       remains unchanged.
 
@@ -46,7 +48,7 @@ class BM25Retriever:
         # Rebuild BM25 index each time—fast for prototype sizes.
         self._bm25 = BM25Okapi(self.corpus_tokens)
 
-    async def invoke(self, query: str) -> List[Document]:
+    async def ainvoke(self, query: str) -> List[Document]:
         """
         Rank stored chunks against the user query and
         return the top‑k as LangChain Document objects.
@@ -65,3 +67,6 @@ class BM25Retriever:
             Document(page_content=self.texts[i], metadata=self.metadatas[i])
             for i in top_idx
         ]
+
+    def invoke(self, input: str):
+        raise NotImplementedError("BM25Retriever only supports async usage via `ainvoke`.")
