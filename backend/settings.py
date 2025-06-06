@@ -4,13 +4,15 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # API Keys
-    openai_api_key: str
+
 
     # Database URLs
     postgres_url: str
-
+    
+    # API Keys
+    openai_api_key: str
     # Vector DB
+    
     # elastic_host: str
     chroma_persist_dir: str
 

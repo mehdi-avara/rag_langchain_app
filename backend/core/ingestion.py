@@ -9,10 +9,10 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from sqlalchemy.orm import Session
 
-from ..db.models import Document, Chunk
-from ..settings import get_settings
-from ..retrieval.vector.chroma_store import ChromaStore
-from ..retrieval.keyword.es_bm25 import BM25Retriever
+from db.models import Document, Chunk
+from settings import get_settings
+from retrieval.vector.chroma_store import ChromaStore
+from retrieval.keyword.es_bm25 import BM25Retriever
 
 settings = get_settings()
 

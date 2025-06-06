@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
-from ...settings import get_settings
+from settings import get_settings
 
 settings = get_settings()
 

@@ -5,12 +5,12 @@ from typing import List
 from datetime import datetime
 from pydantic import BaseModel
 
-from .db.models import User, Document
-from .db.init_db import get_db
-from .deps import get_current_user, create_access_token
-from .core.ingestion import ingest_file
-from .core.summarise import summarise_document
-from .core.graph import build_answer_graph
+from db.models import User, Document
+from db.init_db import get_db
+from deps import get_current_user, create_access_token
+from core.ingestion import ingest_file
+from core.summarise import summarise_document
+from core.graph import build_answer_graph
 
 app = FastAPI(title="RAG API")
 

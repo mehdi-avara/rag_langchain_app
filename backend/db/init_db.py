@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from .models import Base
-from ..settings import get_settings
+from db.models import Base
+from settings import get_settings
 
 settings = get_settings()
 

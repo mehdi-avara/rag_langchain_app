@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from ..db.models import Document, Chunk
-from ..settings import get_settings
+from db.models import Document, Chunk
+from settings import get_settings
 
 settings = get_settings()
 

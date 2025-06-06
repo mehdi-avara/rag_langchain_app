@@ -7,9 +7,9 @@ from langchain.retrievers.document_compressors import DocumentCompressorPipeline
 from langchain.retrievers.document_compressors.embeddings_filter import EmbeddingsFilter
 from langchain.embeddings import HuggingFaceEmbeddings
 
-from ..retrieval.keyword.es_bm25 import BM25Retriever
-from ..retrieval.vector.chroma_store import ChromaStore
-from ..settings import get_settings
+from retrieval.keyword.es_bm25 import BM25Retriever
+from retrieval.vector.chroma_store import ChromaStore
+from settings import get_settings
 
 settings = get_settings()
 
