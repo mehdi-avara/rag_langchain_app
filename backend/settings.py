@@ -8,7 +8,11 @@ class Settings(BaseSettings):
 
     # Database URLs
     postgres_url: str
-    
+
+    # Default user
+    default_username: str
+    default_password: str
+
     # API Keys
     openai_api_key: str
     # Vector DB
