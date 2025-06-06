@@ -21,23 +21,33 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
+    print("🔐 get_current_user called")
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         token = credentials.credentials
+        print(f"🪪 Token received: {token}")
+
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        print(f"📦 JWT payload: {payload}")
+
         user_id: str = payload.get("sub")
         if user_id is None:
+            print("⚠️ Missing `sub` in token")
             raise credentials_exception
-    except JWTError:
+    except JWTError as e:
+        print(f"❌ JWT error: {e}")
         raise credentials_exception
-        
+
     user = db.query(User).filter(User.id == int(user_id)).first()
     if user is None:
+        print(f"❌ No user found with ID: {user_id}")
         raise credentials_exception
-        
-    return user 
+
+    print(f"✅ Authenticated user: {user.username}")
+    return user

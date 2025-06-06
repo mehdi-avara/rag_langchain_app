@@ -1,16 +1,15 @@
 from typing import List, Dict, Any, Optional
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceHubEmbeddings
 from settings import get_settings
 
 settings = get_settings()
 
 class ChromaStore:
     def __init__(self):
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="jinaai/jina-embeddings-v3",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
+        self.embeddings = HuggingFaceHubEmbeddings(
+            repo_id="jinaai/jina-embeddings-v3",
+            task="feature-extraction"
         )
         self._store = None
 

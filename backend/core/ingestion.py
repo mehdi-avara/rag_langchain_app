@@ -5,7 +5,6 @@ from pdfminer.high_level import extract_text
 from pdfminer.high_level import extract_pages
 from PIL import Image
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
 from sqlalchemy.orm import Session
 
 from db.models import Document, Chunk
@@ -98,12 +97,6 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
     db.bulk_save_objects(chunk_records)
     db.flush()
 
-    # Generate embeddings and store in vector DB
-    embeddings = HuggingFaceEmbeddings(
-        model_name="jinaai/jina-embeddings-v3",
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
-    )
     
     # Store in Chroma
     chroma_store = ChromaStore()
