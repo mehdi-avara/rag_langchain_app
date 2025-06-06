@@ -10,7 +10,7 @@ from langchain.retrievers.document_compressors import EmbeddingsFilter
 from retrieval.keyword.es_bm25 import BM25Retriever
 from retrieval.vector.chroma_store import ChromaStore
 from settings import get_settings
-# from components import embeddings
+from components import embeddings
 
 settings = get_settings()
 
@@ -50,6 +50,11 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     elif route == "vector":
         docs = await vector_retriever.ainvoke(question)
     elif route == "hybrid":
+        # chroma = ChromaStore()
+        # stored = chroma.store.get()
+        # texts = stored["documents"]
+        # metas = stored["metadatas"]
+        # await keyword_retriever.add_texts(texts=texts, metadatas=metas)
         # hybrid_retriever = ContextualCompressionRetriever(
         #     base_compressor=EmbeddingsFilter(
         #         embeddings=embeddings.embedding,
@@ -123,4 +128,4 @@ def build_answer_graph() -> Graph:
     workflow.set_entry_point("classify")
     workflow.set_finish_point("generate")
     
-    return workflow.compile() 
+    return workflow.compile()

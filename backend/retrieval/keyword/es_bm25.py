@@ -48,7 +48,7 @@ class BM25Retriever(Runnable):
         # Rebuild BM25 index each time—fast for prototype sizes.
         self._bm25 = BM25Okapi(self.corpus_tokens)
 
-    async def ainvoke(self, query: str) -> List[Document]:
+    async def ainvoke(self, query: str, **kwargs) -> List[Document]:
         """
         Rank stored chunks against the user query and
         return the top‑k as LangChain Document objects.
