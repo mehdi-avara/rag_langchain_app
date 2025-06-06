@@ -1,16 +1,35 @@
+import requests
 from typing import List, Dict, Any, Optional
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceHubEmbeddings
 from settings import get_settings
 
 settings = get_settings()
 
+class JinaAPIEmbeddings:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.model = "jina-embeddings-v3-base-en"
+        self.api_url = "https://api.jina.ai/v1/embeddings"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": self.model,
+            "input": texts
+        }
+        response = requests.post(self.api_url, headers=headers, json=payload)
+        response.raise_for_status()
+        return [item["embedding"] for item in response.json()["data"]]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_documents([text])[0]
+
 class ChromaStore:
     def __init__(self):
-        self.embeddings = HuggingFaceHubEmbeddings(
-            repo_id="jinaai/jina-embeddings-v3",
-            task="feature-extraction"
-        )
+        self.embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
         self._store = None
 
     @property
@@ -44,4 +63,4 @@ class ChromaStore:
         """Get retriever interface."""
         if search_kwargs is None:
             search_kwargs = {"k": 6}
-        return self.store.as_retriever(search_kwargs=search_kwargs) 
+        return self.store.as_retriever(search_kwargs=search_kwargs)

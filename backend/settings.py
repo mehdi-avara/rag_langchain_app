@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_exp_hours: int = 744
 
+    jina_api_key: str
+
     class Config:
         env_file = ".env"
         case_sensitive = True
