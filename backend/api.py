@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
 from pydantic import BaseModel
+from passlib.hash import bcrypt  
+
 
 from db.models import User, Document
 from db.init_db import get_db
@@ -11,6 +13,7 @@ from deps import get_current_user, create_access_token
 from core.ingestion import ingest_file
 from core.summarise import summarise_document
 from core.graph import build_answer_graph
+from db.models import LoginRequest
 
 app = FastAPI(title="RAG API")
 
@@ -34,11 +37,21 @@ class DocumentOut(BaseModel):
     class Config:
         orm_mode = True
 
+    
+
+
 # Auth routes
 @app.post("/auth/login")
-async def login(username: str, password: str, db: Session = Depends(get_db)):
+async def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    username = payload.username
+    password = payload.password
     user = db.query(User).filter(User.username == username).first()
-    if not user or not user.pw_hash == password:  # In production, use proper password hashing
+    if not user:  # In production, use proper password hashing
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+    if not bcrypt.verify(password, user.pw_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"

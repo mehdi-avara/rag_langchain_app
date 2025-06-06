@@ -2,8 +2,7 @@ import io
 from typing import List, Tuple
 import pytesseract
 from pdfminer.high_level import extract_text
-from pdfminer.pdfparser import PDFParser
-from pdfminer.pdfdocument import PDFDocument
+from pdfminer.high_level import extract_pages
 from PIL import Image
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -22,12 +21,12 @@ async def detect_type(file_bytes: bytes) -> str:
         return 'pdf'
     return 'image'
 
+
 async def extract_text_from_pdf(file_bytes: bytes) -> Tuple[str, int]:
     """Extract text from PDF and return (text, page_count)."""
-    parser = PDFParser(io.BytesIO(file_bytes))
-    doc = PDFDocument(parser)
     text = extract_text(io.BytesIO(file_bytes))
-    return text, len(doc.get_pages())
+    page_count = sum(1 for _ in extract_pages(io.BytesIO(file_bytes)))
+    return text, page_count
 
 async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int]:
     """Extract text from image using OCR."""

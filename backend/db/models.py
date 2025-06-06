@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import uuid
+from pydantic import BaseModel
 
 Base = declarative_base()
 
@@ -44,3 +45,9 @@ class Chunk(Base):
     es_id = Column(String, nullable=False, default=lambda: str(uuid.uuid4()))
 
     document = relationship("Document", back_populates="chunks") 
+    
+    
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
