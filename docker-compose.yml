@@ -46,7 +46,7 @@ services:
   ui:
     build: ./ui
     environment:
-      - API_URL=http://backend:8000
+      - API_URL=http://127.0.0.1:8000
     ports:
       - "8501:8501"
     volumes:
