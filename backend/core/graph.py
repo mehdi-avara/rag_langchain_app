@@ -112,14 +112,14 @@ def build_answer_graph() -> Graph:
     # Add nodes
     workflow.add_node("classify", classify_question)
     workflow.add_node("retrieve", retrieve_docs)
-    workflow.add_node("answer", generate_answer)
+    workflow.add_node("generate", generate_answer)
     
     # Add edges
     workflow.add_edge("classify", "retrieve")
-    workflow.add_edge("retrieve", "answer")
+    workflow.add_edge("retrieve", "generate")
     
     # Set entry and exit points
     workflow.set_entry_point("classify")
-    workflow.set_finish_point("answer")
+    workflow.set_finish_point("generate")
     
     return workflow.compile() 

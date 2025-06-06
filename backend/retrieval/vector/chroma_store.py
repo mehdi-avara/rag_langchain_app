@@ -8,8 +8,9 @@ settings = get_settings()
 class JinaAPIEmbeddings:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.model = "jina-embeddings-v3-base-en"
+        self.model = "jina-embeddings-v3"
         self.api_url = "https://api.jina.ai/v1/embeddings"
+        self.task = "text-matching"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         headers = {
@@ -18,6 +19,7 @@ class JinaAPIEmbeddings:
         }
         payload = {
             "model": self.model,
+            "task": self.task,
             "input": texts
         }
         response = requests.post(self.api_url, headers=headers, json=payload)

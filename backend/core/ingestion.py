@@ -95,6 +95,11 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         )
         chunk_records.append(chunk)
     db.bulk_save_objects(chunk_records)
+
+    for i, chunk in enumerate(chunk_records):
+        chunk.vdb_id = f"{doc.id}_{i}"
+        chunk.es_id = f"{doc.id}_{i}"
+
     db.flush()
 
     
