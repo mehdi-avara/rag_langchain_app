@@ -3,13 +3,14 @@ from langgraph.graph import Graph, StateGraph
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 
-from langchain.retrievers.document_compressors import DocumentCompressorPipeline
+from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors.embeddings_filter import EmbeddingsFilter
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.retrievers.document_compressors import EmbeddingsFilter
 
 from retrieval.keyword.es_bm25 import BM25Retriever
 from retrieval.vector.chroma_store import ChromaStore
 from settings import get_settings
+# from components import embeddings
 
 settings = get_settings()
 
@@ -49,15 +50,15 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     elif route == "vector":
         docs = await vector_retriever.ainvoke(question)
     elif route == "hybrid":
-        hybrid_retriever = DocumentCompressorPipeline.from_embeddings(
-            embeddings=HuggingFaceEmbeddings(
-                model_name="jinaai/jina-embeddings-v3",
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            ),
-            base_retriever=keyword_retriever
-        )
-        docs = await hybrid_retriever.ainvoke(question)
+        # hybrid_retriever = ContextualCompressionRetriever(
+        #     base_compressor=EmbeddingsFilter(
+        #         embeddings=embeddings.embedding,
+        #         similarity_threshold=0.7
+        #     ),
+        #     base_retriever=keyword_retriever
+        # )
+        # docs = await hybrid_retriever.ainvoke(question)
+        docs = await vector_retriever.ainvoke(question)
     else:
         docs = []
     return {**state, "docs": docs}
@@ -81,8 +82,8 @@ Answer:"""
     
     # Initialize LLM
     llm = ChatOpenAI(
-        model="gpt-4",
-        temperature=0,
+        model="gpt-4o",
+        temperature=0.1,
         openai_api_key=settings.openai_api_key
     )
     
