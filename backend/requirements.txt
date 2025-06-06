@@ -13,3 +13,4 @@ Pillow
 requests
 rank_bm25
 langchain-community
+python-multipart

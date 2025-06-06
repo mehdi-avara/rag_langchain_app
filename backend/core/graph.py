@@ -2,7 +2,7 @@ from typing import Dict, List, TypedDict, Annotated
 from langgraph.graph import Graph, StateGraph
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from langchain.retrievers import RouterRetriever
+
 from langchain.retrievers.document_compressors import DocumentCompressorPipeline
 from langchain.retrievers.document_compressors.embeddings_filter import EmbeddingsFilter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -43,25 +43,23 @@ async def retrieve_docs(state: GraphState) -> GraphState:
         search_kwargs={"k": 6}
     )
     
-    # Create router
-    router = RouterRetriever.from_llm(
-        retrievers={
-            "keyword": keyword_retriever,
-            "vector": vector_retriever,
-            "hybrid": DocumentCompressorPipeline.from_embeddings(
-                embeddings=HuggingFaceEmbeddings(
-                    model_name="jinaai/jina-embeddings-v3",
-                    model_kwargs={'device': 'cpu'},
-                    encode_kwargs={'normalize_embeddings': True}
-                ),
-                base_retriever=keyword_retriever
-            )
-        },
-        default_retriever="hybrid"
-    )
-    
-    # Retrieve documents
-    docs = await router.ainvoke(question)
+    # Manual routing logic
+    if route == "keyword":
+        docs = await keyword_retriever.ainvoke(question)
+    elif route == "vector":
+        docs = await vector_retriever.ainvoke(question)
+    elif route == "hybrid":
+        hybrid_retriever = DocumentCompressorPipeline.from_embeddings(
+            embeddings=HuggingFaceEmbeddings(
+                model_name="jinaai/jina-embeddings-v3",
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            ),
+            base_retriever=keyword_retriever
+        )
+        docs = await hybrid_retriever.ainvoke(question)
+    else:
+        docs = []
     return {**state, "docs": docs}
 
 async def generate_answer(state: GraphState) -> GraphState:
