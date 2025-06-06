@@ -6,18 +6,17 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # API Keys
     openai_api_key: str
-    jina_api_key: str
 
     # Database URLs
     postgres_url: str
 
     # Vector DB
-    elastic_host: str
+    # elastic_host: str
     chroma_persist_dir: str
 
     # JWT
     jwt_secret: str
-    jwt_exp_hours: int = 4
+    jwt_exp_hours: int = 744
 
     class Config:
         env_file = ".env"

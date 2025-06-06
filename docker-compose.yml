@@ -10,35 +10,35 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
-  elastic:
-    image: elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-    ports:
-      - "9200:9200"
+  # elastic:
+  #   image: elasticsearch
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+  #   volumes:
+  #     - es_data:/usr/share/elasticsearch/data
+  #   ports:
+  #     - "9200:9200"
 
-  chroma:
-    image: chromadb/chroma
-    volumes:
-      - chroma_data:/data
-    ports:
-      - "8000:8000"
+  # chroma:
+  #   image: chromadb/chroma
+  #   volumes:
+  #     - chroma_data:/data
+  #   ports:
+  #     - "127.0.0.1:8001:8001"
 
   backend:
     build: ./backend
     env_file: .env
     depends_on:
       - postgres
-      - elastic
-      - chroma
+      # - elastic
+      # - chroma
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
       - chroma_data:/data/chroma
