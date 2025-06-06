@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: ankane/pgvector:pg15
+    image: ankane/pgvector
     environment:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: rag
@@ -13,7 +13,7 @@ services:
       - "5432:5432"
 
   elastic:
-    image: elasticsearch:8.13.0
+    image: elasticsearch
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -24,7 +24,7 @@ services:
       - "9200:9200"
 
   chroma:
-    image: chromadb/chroma:0.4
+    image: chromadb/chroma
     volumes:
       - chroma_data:/data
     ports:
