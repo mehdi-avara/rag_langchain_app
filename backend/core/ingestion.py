@@ -86,10 +86,16 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
 
     # Create chunk records
     chunk_records = []
+    if len(chunks) > 0 and n_pages > 0:
+        approx_chunks_per_page = max(1, len(chunks) // n_pages)
+    else:
+        approx_chunks_per_page = 1
+
+
     for i, chunk_text in enumerate(chunks):
         chunk = Chunk(
             doc_id=doc.id,
-            page_num=i // (len(chunks) // n_pages),  # Approximate page number
+            page_num=i // (approx_chunks_per_page),  # Approximate page number
             token_count=len(chunk_text.split()),
             content=chunk_text,
         )
