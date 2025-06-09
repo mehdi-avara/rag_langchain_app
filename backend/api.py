@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from passlib.hash import bcrypt  
 
 
-from db.models import User, Document
+from db.models import User, Document, Chunk
 from db.init_db import get_db
 from deps import get_current_user, create_access_token
 from core.ingestion import ingest_file
@@ -37,8 +37,19 @@ class DocumentOut(BaseModel):
     class Config:
         orm_mode = True
 
-    
+class ChunkSource(BaseModel):
+    doc_id: int
+    filename: str
+    page_num: int
+    chunk_type: str
+    position: str | None
+    start_pos: int | None
+    end_pos: int | None
 
+class AnswerResponse(BaseModel):
+    answer: str
+    sources: List[ChunkSource]
+    confidence: float
 
 # Auth routes
 @app.post("/auth/login")
@@ -90,6 +101,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
     db.delete(doc)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @app.get("/summary/{doc_id}")
 async def get_summary(
@@ -123,3 +135,43 @@ async def chat(
         "user_id": current_user.id
     })
     return result 
+
+@app.get("/answer/{doc_id}")
+async def get_answer(
+    doc_id: int,
+    question: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Get document
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check ownership
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this document")
+    
+    # Get answer and sources
+    answer, sources, confidence = await build_answer_graph(doc_id, question, db)
+    
+    # Format sources
+    formatted_sources = []
+    for source in sources:
+        chunk = db.query(Chunk).filter(Chunk.id == source["chunk_id"]).first()
+        if chunk:
+            formatted_sources.append(ChunkSource(
+                doc_id=doc.id,
+                filename=doc.filename,
+                page_num=chunk.page_num,
+                chunk_type=chunk.chunk_type,
+                position=chunk.start_pos if chunk.chunk_type == "text" else None,
+                start_pos=chunk.start_pos,
+                end_pos=chunk.end_pos
+            ))
+    
+    return AnswerResponse(
+        answer=answer,
+        sources=formatted_sources,
+        confidence=confidence
+    ) 

@@ -43,10 +43,24 @@ class Chunk(Base):
     content = Column(Text, nullable=False)
     vdb_id = Column(String, nullable=False, default=lambda: str(uuid.uuid4()))
     es_id = Column(String, nullable=False, default=lambda: str(uuid.uuid4()))
+    start_pos = Column(Integer, nullable=True)  # Starting position in the document
+    end_pos = Column(Integer, nullable=True)    # Ending position in the document
+    chunk_type = Column(String, nullable=True, default="text")  # "text" or "image"
 
-    document = relationship("Document", back_populates="chunks") 
+    document = relationship("Document", back_populates="chunks")
+
+
+class ImageChunk(Base):
+    __tablename__ = "image_chunks"
+
+    id = Column(Integer, primary_key=True)
+    chunk_id = Column(Integer, ForeignKey("chunks.id"), nullable=False)
+    image_data = Column(Text, nullable=False)  # Base64 encoded image data
+    caption = Column(Text, nullable=False)     # Image caption/description
+    position = Column(String, nullable=False)  # Position on page (e.g., "top-left", "center", etc.)
     
-    
+    chunk = relationship("Chunk", backref="image_data")
+
 
 class LoginRequest(BaseModel):
     username: str
