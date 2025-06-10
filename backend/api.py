@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Response
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 from passlib.hash import bcrypt  
@@ -50,6 +50,19 @@ class AnswerResponse(BaseModel):
     answer: str
     sources: List[ChunkSource]
     confidence: float
+
+class ChunkOut(BaseModel):
+    id: int
+    doc_id: int
+    page_num: int
+    chunk_type: str
+    content: str
+    start_pos: Optional[int]
+    end_pos: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 # Auth routes
 @app.post("/auth/login")
@@ -175,3 +188,33 @@ async def get_answer(
         sources=formatted_sources,
         confidence=confidence
     ) 
+
+@app.get("/documents/{doc_id}/chunks", response_model=List[ChunkOut])
+async def browse_chunks(
+    doc_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Get document
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check ownership
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this document")
+    
+    # Calculate offset
+    offset = (page - 1) * page_size
+    
+    # Get chunks with pagination
+    chunks = db.query(Chunk)\
+        .filter(Chunk.doc_id == doc_id)\
+        .order_by(Chunk.page_num, Chunk.start_pos)\
+        .offset(offset)\
+        .limit(page_size)\
+        .all()
+    
+    return chunks 

@@ -7,7 +7,7 @@ from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors.embeddings_filter import EmbeddingsFilter
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 
-from backend.db.models import Document
+from db.models import Document
 from retrieval.keyword.es_bm25 import BM25Retriever
 from retrieval.vector.chroma_store import ChromaStore
 from settings import get_settings

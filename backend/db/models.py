@@ -46,6 +46,7 @@ class Chunk(Base):
     start_pos = Column(Integer, nullable=True)  # Starting position in the document
     end_pos = Column(Integer, nullable=True)    # Ending position in the document
     chunk_type = Column(String, nullable=False, default="text")  # "text" or "image"
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     document = relationship("Document", back_populates="chunks")
 
