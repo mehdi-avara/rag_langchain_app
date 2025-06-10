@@ -8,7 +8,9 @@ from pdf2image import convert_from_bytes
 from PIL import Image
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
-import openai
+from openai import AsyncOpenAI
+
+aclient = AsyncOpenAI(api_key=settings.openai_api_key)
 import arabic_reshaper
 from bidi.algorithm import get_display
 
@@ -18,7 +20,6 @@ from retrieval.vector.chroma_store import ChromaStore
 from retrieval.keyword.es_bm25 import BM25Retriever
 
 settings = get_settings()
-openai.api_key = settings.openai_api_key
 
 async def generate_image_caption(image: Image.Image) -> str:
     """Generate caption for image using GPT-4 Vision."""
@@ -27,30 +28,28 @@ async def generate_image_caption(image: Image.Image) -> str:
     image.save(img_byte_arr, format='PNG')
     img_byte_arr = img_byte_arr.getvalue()
     img_base64 = base64.b64encode(img_byte_arr).decode()
-    
+
     # Call GPT-o4 Vision API
-    response = await openai.ChatCompletion.acreate(
-        model="gpt-o4",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Please describe this image in detail, focusing on its content, context, and any text that appears in it. Be specific and thorough."
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_base64}"
-                        }
+    response = await aclient.chat.completions.create(model="gpt-o4",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Please describe this image in detail, focusing on its content, context, and any text that appears in it. Be specific and thorough."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{img_base64}"
                     }
-                ]
-            }
-        ],
-        max_tokens=300
-    )
-    
+                }
+            ]
+        }
+    ],
+    max_tokens=300)
+
     return response.choices[0].message.content
 
 async def detect_type(file_bytes: bytes) -> str:
@@ -64,7 +63,7 @@ async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int,
     text = ""
     images_info = []
     current_pos = 0
-    
+
     for page_num, page_layout in enumerate(extract_pages(io.BytesIO(file_bytes))):
         page_text = ""
         for element in page_layout:
@@ -90,23 +89,23 @@ async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int,
                         position = f"top-{position}"
                     elif y0 > page_layout.height * 0.7:
                         position = f"bottom-{position}"
-                    
+
                     # Convert image to base64
                     img_byte_arr = io.BytesIO()
                     pdf_images[0].save(img_byte_arr, format='PNG')
                     img_byte_arr = img_byte_arr.getvalue()
                     img_base64 = base64.b64encode(img_byte_arr).decode()
-                    
+
                     # Generate caption 
                     caption = await generate_image_caption(pdf_images[0])
-                    
+
                     images_info.append({
                         'page_num': page_num,
                         'position': position,
                         'image_data': img_base64,
                         'caption': caption
                     })
-    
+
     page_count = sum(1 for _ in extract_pages(io.BytesIO(file_bytes)))
     return text, page_count, images_info
 
@@ -114,22 +113,22 @@ async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dic
     """Extract text from image using OCR and generate caption."""
     image = Image.open(io.BytesIO(file_bytes))
     text = pytesseract.image_to_string(image)
-    
+
     caption = await generate_image_caption(image)
-    
+
     # Convert image to base64
     img_byte_arr = io.BytesIO()
     image.save(img_byte_arr, format='PNG')
     img_byte_arr = img_byte_arr.getvalue()
     img_base64 = base64.b64encode(img_byte_arr).decode()
-    
+
     images_info = [{
         'page_num': 0,
         'position': 'center',
         'image_data': img_base64,
         'caption': caption
     }]
-    
+
     return text, 1, images_info
 
 async def extract_images_from_pdf(file_bytes: bytes) -> List[Image.Image]:
@@ -190,7 +189,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         start_pos = text.find(chunk_text, current_pos)
         end_pos = start_pos + len(chunk_text)
         current_pos = end_pos
-        
+
         chunk = Chunk(
             doc_id=doc.id,
             page_num=i // (approx_chunks_per_page),  # Approximate page number
@@ -201,7 +200,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
             chunk_type="text"
         )
         chunk_records.append(chunk)
-    
+
     # Add image chunks
     for img_info in images_info:
         chunk = Chunk(
@@ -213,7 +212,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         )
         chunk_records.append(chunk)
         db.flush()  # Get chunk.id
-        
+
         # Create image chunk record
         image_chunk = ImageChunk(
             chunk_id=chunk.id,
