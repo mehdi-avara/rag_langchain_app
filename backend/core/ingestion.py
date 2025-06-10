@@ -28,9 +28,9 @@ async def generate_image_caption(image: Image.Image) -> str:
     img_byte_arr = img_byte_arr.getvalue()
     img_base64 = base64.b64encode(img_byte_arr).decode()
     
-    # Call GPT-4 Vision API
+    # Call GPT-o4 Vision API
     response = await openai.ChatCompletion.acreate(
-        model="gpt-4-vision-preview",
+        model="gpt-o4",
         messages=[
             {
                 "role": "user",
@@ -97,7 +97,7 @@ async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int,
                     img_byte_arr = img_byte_arr.getvalue()
                     img_base64 = base64.b64encode(img_byte_arr).decode()
                     
-                    # Generate caption using GPT-4 Vision
+                    # Generate caption 
                     caption = await generate_image_caption(pdf_images[0])
                     
                     images_info.append({
@@ -115,7 +115,6 @@ async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dic
     image = Image.open(io.BytesIO(file_bytes))
     text = pytesseract.image_to_string(image)
     
-    # Generate caption using GPT-4 Vision
     caption = await generate_image_caption(image)
     
     # Convert image to base64
