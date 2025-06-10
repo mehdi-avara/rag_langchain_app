@@ -45,7 +45,7 @@ class Chunk(Base):
     es_id = Column(String, nullable=False, default=lambda: str(uuid.uuid4()))
     start_pos = Column(Integer, nullable=True)  # Starting position in the document
     end_pos = Column(Integer, nullable=True)    # Ending position in the document
-    chunk_type = Column(String, nullable=True, default="text")  # "text" or "image"
+    chunk_type = Column(String, nullable=False, default="text")  # "text" or "image"
 
     document = relationship("Document", back_populates="chunks")
 
