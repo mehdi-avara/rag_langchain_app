@@ -9,8 +9,10 @@ from PIL import Image
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 import openai
-from settings import get_settings
+import arabic_reshaper
+from bidi.algorithm import get_display
 
+from settings import get_settings
 from db.models import Document, Chunk, ImageChunk
 from retrieval.vector.chroma_store import ChromaStore
 from retrieval.keyword.es_bm25 import BM25Retriever
@@ -68,6 +70,9 @@ async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int,
         for element in page_layout:
             if isinstance(element, LTTextBox):
                 element_text = element.get_text()
+                # Clean and fix Persian text
+                element_text = get_display(arabic_reshaper.reshape(element_text))
+  # Skip reshaping if libraries are not available
                 page_text += element_text
                 text += element_text
             elif isinstance(element, LTImage):
