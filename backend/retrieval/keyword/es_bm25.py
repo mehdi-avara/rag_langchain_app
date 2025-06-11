@@ -3,6 +3,12 @@ from langchain_core.documents import Document
 from langchain_core.runnables import Runnable
 from rank_bm25 import BM25Okapi
 import numpy as np
+import pickle
+import os
+
+from settings import get_settings
+
+settings = get_settings()
 
 
 
@@ -55,7 +61,6 @@ class BM25Retriever(Runnable):
         """
         if not self._bm25 or not self.texts:
             return []
-
         # Tokenize query
         query_tokens = query.lower().split()
         
@@ -64,7 +69,8 @@ class BM25Retriever(Runnable):
         
         # Get top k indices
         top_idx = np.argsort(scores)[-self.k:][::-1]
-
+        
+        print(scores)        
         # Build Document objects expected by downstream code
         return [
             Document(
@@ -76,3 +82,29 @@ class BM25Retriever(Runnable):
 
     def invoke(self, input: str):
         raise NotImplementedError("BM25Retriever only supports async usage via `ainvoke`.")
+
+    def save(self, path: str = settings.bm25_index_path):
+        with open(path, "wb") as f:
+            pickle.dump({
+                "texts": self.texts,
+                "metadatas": self.metadatas,
+                "bm25": self._bm25
+            }, f)
+
+    def load(self, path: str = settings.bm25_index_path):
+        if not os.path.exists(path):
+            return  # Nothing to load
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+            self.texts = data["texts"]
+            self.metadatas = data["metadatas"]
+            self._bm25 = data["bm25"]
+_bm25_retriever_instance = None
+
+ 
+def get_bm25_retriever() -> BM25Retriever:
+    global _bm25_retriever_instance
+    if _bm25_retriever_instance is None:
+        _bm25_retriever_instance = BM25Retriever()
+        _bm25_retriever_instance.load()  
+    return _bm25_retriever_instance

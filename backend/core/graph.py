@@ -1,4 +1,4 @@
-from typing import Dict, List, TypedDict, Annotated, Tuple
+from typing import Dict, List, TypedDict, Tuple
 from fastapi import HTTPException
 from langgraph.graph import Graph, StateGraph
 from langchain.chat_models import ChatOpenAI
@@ -6,15 +6,11 @@ from langchain.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from sqlalchemy.orm import Session
 
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors.embeddings_filter import EmbeddingsFilter
-from langchain.retrievers.document_compressors import EmbeddingsFilter
-
 from db.models import Document as DBDocument
-from retrieval.keyword.es_bm25 import BM25Retriever
 from retrieval.vector.chroma_store import ChromaStore
 from settings import get_settings
-from components import embeddings
+from retrieval.keyword.es_bm25 import get_bm25_retriever
+
 
 from langchain_core.runnables import Runnable
 from typing import Any
@@ -48,7 +44,7 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     mode = state.get("mode", "full")  # Default to full mode if not specified
     
     # Initialize retrievers
-    keyword_retriever = BM25Retriever()
+    keyword_retriever = get_bm25_retriever()
     vector_retriever = ChromaStore().as_retriever(
         search_kwargs={"k": 6 if mode == "full" else 3}  # Use fewer results for preview
     )
@@ -59,10 +55,9 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     elif route == "vector":
         docs = await vector_retriever.ainvoke(question)
     elif route == "hybrid":
-        print("hello")
         docs = await vector_retriever.ainvoke(question)
-        print(f"docs: {docs}")
-        docs += await keyword_retriever.ainvoke(question)
+        holder = await keyword_retriever.ainvoke(question)
+        docs += holder
     else:
         docs = []
     

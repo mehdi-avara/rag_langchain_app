@@ -2,11 +2,10 @@ import io
 import base64
 from typing import List, Tuple, Dict
 import pytesseract
-from pdfminer.high_level import extract_text, extract_pages
-from pdfminer.layout import LTPage, LTImage, LTTextBox
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTImage, LTTextBox
 from pdf2image import convert_from_bytes
 from PIL import Image
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 from openai import AsyncOpenAI
 
@@ -16,7 +15,7 @@ from bidi.algorithm import get_display
 from settings import get_settings
 from db.models import Document, Chunk, ImageChunk
 from retrieval.vector.chroma_store import ChromaStore
-from retrieval.keyword.es_bm25 import BM25Retriever
+from retrieval.keyword.es_bm25 import get_bm25_retriever
 from core.chunking import ChunkingMode, chunk_text
 
 settings = get_settings()
@@ -245,8 +244,8 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
     )
 
     # Store in Elasticsearch
-    es_retriever = BM25Retriever()
-    await es_retriever.add_texts(
+    bm25 = get_bm25_retriever()
+    await bm25.add_texts(
         texts=[c.content for c in chunk_records],
         metadatas=[{
             "doc_id": doc.id,
@@ -257,6 +256,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         } for c in chunk_records],
         ids=[c.es_id for c in chunk_records]
     )
+    bm25.save()
 
     db.commit()
     return doc.id 

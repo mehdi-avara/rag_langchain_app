@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     jwt_exp_hours: int = 744
 
     jina_api_key: str
+    
+    bm25_index_path: str = "data/bm25.pkl"
 
     class Config:
         env_file = ".env"

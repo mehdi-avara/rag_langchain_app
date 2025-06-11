@@ -5,8 +5,6 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 from passlib.hash import bcrypt  
-import io
-from pdf2image import convert_from_bytes
 from openai import AsyncOpenAI
 
 from db.models import User, Document, Chunk
@@ -273,7 +271,6 @@ async def preview_query(
     
     # Transform LangChain Document objects into dictionaries
     retrieved_chunks = []
-    print(result)
     for doc in result["docs"]:
         retrieved_chunks.append({
             "content": doc.page_content,

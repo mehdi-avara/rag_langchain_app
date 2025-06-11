@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from langchain_chroma import Chroma
-from settings import get_settings
 from components import embeddings
+from settings import get_settings
 
 settings = get_settings()
 
