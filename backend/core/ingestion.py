@@ -10,7 +10,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 from openai import AsyncOpenAI
 
-aclient = AsyncOpenAI(api_key=settings.openai_api_key)
 import arabic_reshaper
 from bidi.algorithm import get_display
 
@@ -20,6 +19,7 @@ from retrieval.vector.chroma_store import ChromaStore
 from retrieval.keyword.es_bm25 import BM25Retriever
 
 settings = get_settings()
+aclient = AsyncOpenAI(api_key=settings.openai_api_key)
 
 async def generate_image_caption(image: Image.Image) -> str:
     """Generate caption for image using GPT-4 Vision."""
@@ -30,7 +30,7 @@ async def generate_image_caption(image: Image.Image) -> str:
     img_base64 = base64.b64encode(img_byte_arr).decode()
 
     # Call GPT-o4 Vision API
-    response = await aclient.chat.completions.create(model="gpt-o4",
+    response = await aclient.chat.completions.create(model="gpt-4o",
     messages=[
         {
             "role": "user",
@@ -156,6 +156,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
     if file_type == 'pdf':
         text, n_pages, images_info = await extract_text_and_images_from_pdf(file_bytes)
     else:
+        print("hello")
         text, n_pages, images_info = await extract_text_from_image(file_bytes)
 
     # Split into chunks
@@ -210,8 +211,10 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
             content=img_info['caption'],
             chunk_type="image"
         )
-        chunk_records.append(chunk)
+        db.add(chunk)
         db.flush()  # Get chunk.id
+
+        chunk_records.append(chunk)
 
         # Create image chunk record
         image_chunk = ImageChunk(
