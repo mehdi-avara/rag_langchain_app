@@ -260,3 +260,115 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
 
     db.commit()
     return doc.id 
+
+async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.token_fixed) -> int:
+    """Ingest a PDF as a single document, processing all pages together."""
+    try:
+        # Convert PDF to images
+        images = convert_from_bytes(file_bytes)
+        if not images:
+            raise ValueError("No pages found in PDF")
+        
+        # Create a single document for all pages
+        doc = Document(
+            owner_id=user_id,
+            filename=filename,
+            n_pages=len(images),
+            n_chunks=0,  # Will be updated after processing
+        )
+        db.add(doc)
+        db.flush()
+        
+        all_text = ""
+        all_images_info = []
+        
+        # Process each page
+        for i, image in enumerate(images):
+            try:
+                # Convert image to bytes
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                
+                # Extract text and image info from this page
+                text, _, images_info = await extract_text_from_image(img_byte_arr)
+                
+                # Update page numbers in images_info
+                for img_info in images_info:
+                    img_info['page_num'] = i
+                
+                all_text += f"\n\nPage {i+1}:\n{text}"
+                all_images_info.extend(images_info)
+            except Exception as e:
+                print(f"Error processing page {i+1}: {str(e)}")
+                # Continue with next page even if this one fails
+                continue
+        
+        if not all_text.strip():
+            raise ValueError("No text could be extracted from the PDF")
+        
+        # Split the combined text into chunks
+        chunks = chunk_text(all_text, chunking_mode)
+        if not chunks:
+            raise ValueError("No chunks could be created from the text")
+        
+        # Update document with total chunk count
+        doc.n_chunks = len(chunks) + len(all_images_info)
+        db.flush()
+        
+        # Create chunk records
+        chunk_records = []
+        approx_chunks_per_page = max(1, len(chunks) // len(images))
+        
+        current_pos = 0
+        # Add text chunks
+        for i, chunk in enumerate(chunks):
+            start_pos = all_text.find(chunk, current_pos)
+            if start_pos == -1:
+                start_pos = current_pos
+            end_pos = start_pos + len(chunk)
+            current_pos = end_pos
+            
+            holder = Chunk(
+                doc_id=doc.id,
+                page_num=i // approx_chunks_per_page,  # Approximate page number
+                token_count=len(chunk.split()),
+                content=chunk,
+                start_pos=start_pos,
+                end_pos=end_pos,
+                chunk_type="text"
+            )
+            chunk_records.append(holder)
+        
+        # Add image chunks
+        for img_info in all_images_info:
+            chunk = Chunk(
+                doc_id=doc.id,
+                page_num=img_info['page_num'],
+                token_count=len(img_info['caption'].split()),
+                content=img_info['caption'],
+                chunk_type="image"
+            )
+            db.add(chunk)
+            db.flush()  # ✅ Assign chunk.id
+
+            # Now you can use chunk.id
+            image_chunk = ImageChunk(
+                chunk_id=chunk.id,
+                image_data=img_info['image_data'],
+                caption=img_info['caption'],
+                position=img_info['position']
+            )
+            db.add(image_chunk)
+
+            chunk_records.append(chunk)
+        # Add all chunks to database
+        db.add_all(chunk_records)
+        db.commit()
+        
+        return doc.id
+        
+    except Exception as e:
+        # Rollback the transaction in case of error
+        db.rollback()
+        raise ValueError(f"Error processing PDF: {str(e)}")

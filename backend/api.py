@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 from db.models import User, Document, Chunk
 from db.init_db import get_db
 from deps import get_current_user, create_access_token
-from core.ingestion import ingest_file
+from core.ingestion import ingest_file, ingest_pdf_as_single_document
 from core.summarise import summarise_document
 from core.graph import build_answer_graph
 from core.chunking  import ChunkingMode
@@ -116,38 +116,51 @@ async def upload_file(
 
 @app.post("/upload-pdf-as-images")
 async def upload_pdf_as_images(
-    file: UploadFile = File(...),
-    request: UploadRequest = None,
+    file: UploadFile,
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    contents = await file.read()
-    if not contents.startswith(b'%PDF'):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-    
-    # Get chunking mode from request or use default
-    chunking_mode = request.chunking_mode if request else ChunkingMode.token_fixed
-    
-    # Convert PDF to images
-    images = convert_from_bytes(contents)
-    doc_id = None
-    
-    for i, image in enumerate(images):
-        # Convert image to bytes
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='PNG')
-        img_byte_arr = img_byte_arr.getvalue()
+    """Upload a PDF file and process it as images."""
+    try:
+        # Read file content
+        file_bytes = await file.read()
         
-        # Create filename for this page
-        page_filename = f"{file.filename}_page_{i+1}.png"
+        # Validate PDF file
+        if not file_bytes.startswith(b'%PDF'):
+            raise HTTPException(status_code=400, detail="File must be a PDF")
+            
+        # Validate file extension
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="File must have .pdf extension")
         
-        # Ingest the image with specified chunking mode
-        if i == 0:
-            doc_id = await ingest_file(img_byte_arr, page_filename, current_user.id, db, chunking_mode)
-        else:
-            await ingest_file(img_byte_arr, page_filename, current_user.id, db, chunking_mode)
-    
-    return {"doc_id": doc_id}
+        # Use the new ingestion function
+        try:
+            doc_id = await ingest_pdf_as_single_document(
+                file_bytes=file_bytes,
+                filename=file.filename,
+                user_id=current_user.id,
+                db=db,
+                chunking_mode=chunking_mode
+            )
+            return {"message": "PDF processed successfully", "doc_id": doc_id}
+        except Exception as e:
+            # Log the error for debugging
+            print(f"Error processing PDF: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error processing PDF: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
+        )
 
 @app.get("/documents", response_model=List[DocumentOut])
 async def list_documents(

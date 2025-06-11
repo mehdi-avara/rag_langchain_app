@@ -33,7 +33,7 @@ class ChromaStore:
             metadatas=metadatas,
             ids=ids
         )
-        self.store.persist()
+        # self.store.persist()
 
     def as_retriever(
         self,
