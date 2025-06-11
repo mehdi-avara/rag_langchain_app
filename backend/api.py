@@ -244,13 +244,14 @@ async def query_docs(
         "keywords": keywords,
         "route": "hybrid",
         "chunking_mode": request.chunking_mode,
-        "user_id": current_user.id
+        "user_id": current_user.id,
+        "mode": "full"
     })
     
     return result
 
-@app.post("/query/preview_chunks")
-async def preview_chunks(
+@app.post("/query/preview")
+async def preview_query(
     request: QueryRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -263,24 +264,25 @@ async def preview_chunks(
     
     # Get relevant chunks
     answer_graph = build_answer_graph()
-    docs = await answer_graph.ainvoke({
+    result = await answer_graph.ainvoke({
         "question": query,
         "route": "hybrid",
-        "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
-        "preview_only": True
+        "mode": "end"
     })
+    
     # Transform LangChain Document objects into dictionaries
     retrieved_chunks = []
-    for doc in docs["docs"]:
+    print(result)
+    for doc in result["docs"]:
         retrieved_chunks.append({
             "content": doc.page_content,
             "page_num": doc.metadata.get("page_num", "N/A"),
             "doc_id": doc.metadata.get("doc_id", None),
         })
 
-
     return {"retrieved_chunks": retrieved_chunks}
+
 @app.get("/answer/{doc_id}")
 async def get_answer(
     doc_id: int,

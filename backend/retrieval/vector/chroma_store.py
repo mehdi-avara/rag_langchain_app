@@ -21,7 +21,7 @@ class ChromaStore:
             )
         return self._store
 
-    async def add_texts(
+    def add_texts(
         self,
         texts: List[str],
         metadatas: List[Dict[str, Any]],
@@ -33,7 +33,6 @@ class ChromaStore:
             metadatas=metadatas,
             ids=ids
         )
-        # self.store.persist()
 
     def as_retriever(
         self,

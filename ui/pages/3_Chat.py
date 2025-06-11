@@ -76,7 +76,7 @@ if prompt := st.chat_input("Ask a question about your documents"):
     }
     
     # Select endpoint based on preview option
-    endpoint = "/query/preview_chunks" if preview_chunks else "/query"
+    endpoint = "/query/preview" if preview_chunks else "/query"
     
     # Get response from API
     try:

@@ -232,7 +232,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
 
     # Store in Chroma
     chroma_store = ChromaStore()
-    await chroma_store.add_texts(
+    chroma_store.add_texts(
         texts=[c.content for c in chunk_records],
         metadatas=[{
             "doc_id": doc.id,

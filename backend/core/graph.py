@@ -27,6 +27,7 @@ class GraphState(TypedDict):
     docs: List[Document]
     answer: str
     citations: List[int]
+    mode: str  # Can be "preview" or "full"
 
 def classify_question(state: GraphState) -> GraphState:
     """Classify question type and choose retrieval route."""
@@ -44,11 +45,12 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""
     question = state["question"]
     route = state["route"]
+    mode = state.get("mode", "full")  # Default to full mode if not specified
     
     # Initialize retrievers
     keyword_retriever = BM25Retriever()
     vector_retriever = ChromaStore().as_retriever(
-        search_kwargs={"k": 6}
+        search_kwargs={"k": 6 if mode == "full" else 3}  # Use fewer results for preview
     )
     
     # Manual routing logic
@@ -57,7 +59,10 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     elif route == "vector":
         docs = await vector_retriever.ainvoke(question)
     elif route == "hybrid":
+        print("hello")
         docs = await vector_retriever.ainvoke(question)
+        print(f"docs: {docs}")
+        docs += await keyword_retriever.ainvoke(question)
     else:
         docs = []
     
@@ -147,6 +152,9 @@ class MyCustomTool(Runnable):
         # Implement your processing logic
         pass
 
+def end_node(state: GraphState) -> GraphState:
+    return state  # No-op, just returns the state
+
 def build_answer_graph() -> Graph:
     """Build the answer generation graph."""
     # Create graph
@@ -155,9 +163,19 @@ def build_answer_graph() -> Graph:
     # Add nodes
     workflow.add_node("retrieve", retrieve_docs)
     workflow.add_node("generate", generate_answer)
+    workflow.add_node("end", end_node)
+    # Add edges with conditional routing
+    def should_generate(state: GraphState) -> str:
+        return "generate" if state.get("mode", "full") == "full" else "end"
     
-    # Add edges
-    workflow.add_edge("retrieve", "generate")
+    workflow.add_conditional_edges(
+        "retrieve",
+        should_generate,
+        {
+            "generate": "generate",
+            "end": "end"
+        }
+    )
     
     # Set entry point
     workflow.set_entry_point("retrieve")
@@ -181,7 +199,8 @@ async def build_answer_graph_with_id(doc_id: int, question: str, db: Session) ->
         "route": "hybrid",
         "docs": [],
         "answer": "",
-        "citations": []
+        "citations": [],
+        "mode": "full"
     })
     
     return result["answer"], result["citations"], 1.0  # Confidence score
