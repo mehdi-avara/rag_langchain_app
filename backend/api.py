@@ -250,16 +250,24 @@ async def preview_chunks(
     
     # Get relevant chunks
     answer_graph = build_answer_graph()
-    chunks = await answer_graph.ainvoke({
+    docs = await answer_graph.ainvoke({
         "question": query,
         "route": "hybrid",
         "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
         "preview_only": True
     })
-    
-    return {"retrieved_chunks": chunks}
+    # Transform LangChain Document objects into dictionaries
+    retrieved_chunks = []
+    for doc in docs["docs"]:
+        retrieved_chunks.append({
+            "content": doc.page_content,
+            "page_num": doc.metadata.get("page_num", "N/A"),
+            "doc_id": doc.metadata.get("doc_id", None),
+        })
 
+
+    return {"retrieved_chunks": retrieved_chunks}
 @app.get("/answer/{doc_id}")
 async def get_answer(
     doc_id: int,

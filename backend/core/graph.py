@@ -165,7 +165,7 @@ def build_answer_graph() -> Graph:
     # Compile
     return workflow.compile()
 
-async def build_answer_graph(doc_id: int, question: str, db: Session) -> Tuple[str, List[Dict], float]:
+async def build_answer_graph_with_id(doc_id: int, question: str, db: Session) -> Tuple[str, List[Dict], float]:
     """Build answer graph for a specific document."""
     # Get document
     doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
