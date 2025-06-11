@@ -48,20 +48,25 @@ if prompt := st.chat_input("Ask a question about your documents"):
         # Add assistant message to history
         st.session_state["history"].append({
             "role": "assistant",
-            "content": result["answer"],
-            "citations": result["citations"]
+            "content": result.get("answer", "Sorry, I couldn't process your request."),
+            "citations": result.get("citations", [])
         })
         
         # Display assistant message
         render_message(
             role="assistant",
-            content=result["answer"],
-            citations=result["citations"],
+            content=result.get("answer", "Sorry, I couldn't process your request."),
+            citations=result.get("citations", []),
             token=get_token()
         )
         
     except requests.exceptions.RequestException as e:
         st.error(f"Failed to get response: {str(e)}")
+        # Add error message to history
+        st.session_state["history"].append({
+            "role": "assistant",
+            "content": f"Error: {str(e)}"
+        })
 
 # Navigation
 st.markdown("---")

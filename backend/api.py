@@ -5,6 +5,8 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 from passlib.hash import bcrypt  
+import io
+from pdf2image import convert_from_bytes
 
 
 from db.models import User, Document, Chunk
@@ -64,6 +66,9 @@ class ChunkOut(BaseModel):
     class Config:
         from_attributes = True
 
+class ChatRequest(BaseModel):
+    query: str
+
 # Auth routes
 @app.post("/auth/login")
 async def login(payload: LoginRequest, db: Session = Depends(get_db)):
@@ -91,6 +96,37 @@ async def upload_file(
 ):
     contents = await file.read()
     doc_id = await ingest_file(contents, file.filename, current_user.id, db)
+    return {"doc_id": doc_id}
+
+@app.post("/upload-pdf-as-images")
+async def upload_pdf_as_images(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    contents = await file.read()
+    if not contents.startswith(b'%PDF'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+    
+    # Convert PDF to images
+    images = convert_from_bytes(contents)
+    doc_id = None
+    
+    for i, image in enumerate(images):
+        # Convert image to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        
+        # Create filename for this page
+        page_filename = f"{file.filename}_page_{i+1}.png"
+        
+        # Ingest the image
+        if i == 0:
+            doc_id = await ingest_file(img_byte_arr, page_filename, current_user.id, db)
+        else:
+            await ingest_file(img_byte_arr, page_filename, current_user.id, db)
+    
     return {"doc_id": doc_id}
 
 @app.get("/documents", response_model=List[DocumentOut])
@@ -138,16 +174,17 @@ async def get_summary(
 # Chat route
 @app.post("/chat")
 async def chat(
-    query: str,
+    request: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
-        "question": query,
+        "question": request.query,
+        "route": "hybrid",  # Default to hybrid search
         "user_id": current_user.id
     })
-    return result 
+    return result
 
 @app.get("/answer/{doc_id}")
 async def get_answer(

@@ -1,13 +1,16 @@
-from typing import Dict, List, TypedDict, Annotated
+from typing import Dict, List, TypedDict, Annotated, Tuple
+from fastapi import HTTPException
 from langgraph.graph import Graph, StateGraph
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
+from sqlalchemy.orm import Session
 
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors.embeddings_filter import EmbeddingsFilter
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 
-from db.models import Document
+from db.models import Document as DBDocument
 from retrieval.keyword.es_bm25 import BM25Retriever
 from retrieval.vector.chroma_store import ChromaStore
 from settings import get_settings
@@ -21,7 +24,7 @@ settings = get_settings()
 class GraphState(TypedDict):
     question: str
     route: str
-    docs: List[Dict]
+    docs: List[Document]
     answer: str
     citations: List[int]
 
@@ -54,22 +57,10 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     elif route == "vector":
         docs = await vector_retriever.ainvoke(question)
     elif route == "hybrid":
-        # chroma = ChromaStore()
-        # stored = chroma.store.get()
-        # texts = stored["documents"]
-        # metas = stored["metadatas"]
-        # await keyword_retriever.add_texts(texts=texts, metadatas=metas)
-        # hybrid_retriever = ContextualCompressionRetriever(
-        #     base_compressor=EmbeddingsFilter(
-        #         embeddings=embeddings.embedding,
-        #         similarity_threshold=0.7
-        #     ),
-        #     base_retriever=keyword_retriever
-        # )
-        # docs = await hybrid_retriever.ainvoke(question)
         docs = await vector_retriever.ainvoke(question)
     else:
         docs = []
+    
     return {**state, "docs": docs}
 
 async def generate_answer(state: GraphState) -> GraphState:
@@ -91,7 +82,7 @@ Answer:"""
     
     # Initialize LLM
     llm = ChatOpenAI(
-        model="gpt-4o",
+        model="gpt-4",
         temperature=0.1,
         openai_api_key=settings.openai_api_key
     )
@@ -127,7 +118,7 @@ class DocumentEnricher(Runnable):
         
         for doc in docs:
             # Add your enrichment logic here
-            enriched_doc = Document(
+            enriched_doc = DBDocument(
                 page_content=doc.page_content,
                 metadata={
                     **doc.metadata,
@@ -138,6 +129,10 @@ class DocumentEnricher(Runnable):
             enriched_docs.append(enriched_doc)
         
         return {**state, "docs": enriched_docs}
+    
+    def invoke(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        """Synchronous version of ainvoke."""
+        raise NotImplementedError("DocumentEnricher only supports async usage via `ainvoke`.")
 
 class MyCustomTool(Runnable):
     def __init__(self, some_param: str):
@@ -153,30 +148,40 @@ class MyCustomTool(Runnable):
         pass
 
 def build_answer_graph() -> Graph:
+    """Build the answer generation graph."""
+    # Create graph
     workflow = StateGraph(GraphState)
     
-    # Initialize tools
-    document_enricher = DocumentEnricher(enrichment_type="semantic")
-    
     # Add nodes
-    workflow.add_node("classify", classify_question)
     workflow.add_node("retrieve", retrieve_docs)
-    workflow.add_node("enrich", document_enricher.ainvoke)
     workflow.add_node("generate", generate_answer)
     
-    # Add edges with conditional routing
-    workflow.add_conditional_edges(
-        "classify",
-        lambda x: x["route"],
-        {
-            "keyword": "retrieve",
-            "hybrid": "enrich"
-        }
-    )
+    # Add edges
     workflow.add_edge("retrieve", "generate")
-    workflow.add_edge("enrich", "generate")
     
-    workflow.set_entry_point("classify")
-    workflow.set_finish_point("generate")
+    # Set entry point
+    workflow.set_entry_point("retrieve")
     
+    # Compile
     return workflow.compile()
+
+async def build_answer_graph(doc_id: int, question: str, db: Session) -> Tuple[str, List[Dict], float]:
+    """Build answer graph for a specific document."""
+    # Get document
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Initialize graph
+    graph = build_answer_graph()
+    
+    # Run graph
+    result = await graph.ainvoke({
+        "question": question,
+        "route": "hybrid",
+        "docs": [],
+        "answer": "",
+        "citations": []
+    })
+    
+    return result["answer"], result["citations"], 1.0  # Confidence score

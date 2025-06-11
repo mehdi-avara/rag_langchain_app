@@ -10,8 +10,18 @@ require_auth()
 
 st.title("Upload Documents")
 
+# Upload type selection
+upload_type = st.radio(
+    "Select upload type",
+    ["Standard Upload", "PDF as Images"],
+    help="Standard Upload processes the document normally. PDF as Images converts each PDF page to a separate image document."
+)
+
 # File uploader
-uploaded_file = st.file_uploader("Choose a PDF or image file", type=["pdf", "png", "jpg", "jpeg"])
+if upload_type == "Standard Upload":
+    uploaded_file = st.file_uploader("Choose a PDF or image file", type=["pdf", "png", "jpg", "jpeg"])
+else:
+    uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
 
 if uploaded_file:
     # Show progress
@@ -22,8 +32,12 @@ if uploaded_file:
         # Upload file
         status_text.text("Uploading file...")
         files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+        
+        # Select endpoint based on upload type
+        endpoint = "/upload-pdf-as-images" if upload_type == "PDF as Images" else "/upload"
+        
         response = requests.post(
-            f"{API_URL}/upload",
+            f"{API_URL}{endpoint}",
             files=files,
             headers={"Authorization": f"Bearer {get_token()}"}
         )

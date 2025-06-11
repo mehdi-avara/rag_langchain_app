@@ -37,7 +37,7 @@ async def generate_image_caption(image: Image.Image) -> str:
             "content": [
                 {
                     "type": "text",
-                    "text": "Please describe this image in detail, focusing on its content, context, and any text that appears in it. Be specific and thorough."
+                    "text": "Please describe this image in detail, focusing on its content, context, and any visible text. Be specific and thorough. Include any written text in persian exactly as it appears in the image."
                 },
                 {
                     "type": "image_url",
