@@ -49,18 +49,19 @@ class Chunk(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     document = relationship("Document", back_populates="chunks")
+    image_data = relationship("ImageChunk", back_populates="chunk", cascade="all, delete-orphan")
 
 
 class ImageChunk(Base):
     __tablename__ = "image_chunks"
 
     id = Column(Integer, primary_key=True)
-    chunk_id = Column(Integer, ForeignKey("chunks.id"), nullable=False)
+    chunk_id = Column(Integer, ForeignKey("chunks.id", ondelete="CASCADE"), nullable=False)
     image_data = Column(Text, nullable=False)  # Base64 encoded image data
     caption = Column(Text, nullable=False)     # Image caption/description
     position = Column(String, nullable=False)  # Position on page (e.g., "top-left", "center", etc.)
     
-    chunk = relationship("Chunk", backref="image_data")
+    chunk = relationship("Chunk", back_populates="image_data")
 
 
 class LoginRequest(BaseModel):

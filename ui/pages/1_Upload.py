@@ -17,6 +17,16 @@ upload_type = st.radio(
     help="Standard Upload processes the document normally. PDF as Images converts each PDF page to a separate image document."
 )
 
+# Chunking mode selection (for both upload types)
+chunking_mode = st.selectbox(
+    "Select chunking strategy",
+    ["sentence-3", "paragraph", "token-fixed"],
+    help="""Choose how to split the document:
+    - sentence-3: Groups text into chunks of 3 sentences
+    - paragraph: Splits text by paragraphs
+    - token-fixed: Splits text into fixed-size chunks"""
+)
+
 # File uploader
 if upload_type == "Standard Upload":
     uploaded_file = st.file_uploader("Choose a PDF or image file", type=["pdf", "png", "jpg", "jpeg"])
@@ -36,9 +46,13 @@ if uploaded_file:
         # Select endpoint based on upload type
         endpoint = "/upload-pdf-as-images" if upload_type == "PDF as Images" else "/upload"
         
+        # Prepare request data
+        data = {"chunking_mode": chunking_mode}
+        
         response = requests.post(
             f"{API_URL}{endpoint}",
             files=files,
+            data=data,
             headers={"Authorization": f"Bearer {get_token()}"}
         )
         response.raise_for_status()

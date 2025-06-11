@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from passlib.hash import bcrypt  
 import io
 from pdf2image import convert_from_bytes
-
+from openai import AsyncOpenAI
 
 from db.models import User, Document, Chunk
 from db.init_db import get_db
@@ -15,7 +15,12 @@ from deps import get_current_user, create_access_token
 from core.ingestion import ingest_file
 from core.summarise import summarise_document
 from core.graph import build_answer_graph
+from core.chunking  import ChunkingMode
 from db.models import LoginRequest
+from settings import get_settings
+
+settings = get_settings()
+aclient = AsyncOpenAI(api_key=settings.openai_api_key)
 
 app = FastAPI(title="RAG API")
 
@@ -69,6 +74,15 @@ class ChunkOut(BaseModel):
 class ChatRequest(BaseModel):
     query: str
 
+class UploadRequest(BaseModel):
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed
+
+class QueryRequest(BaseModel):
+    query: str
+    rewrite_query: bool = False
+    extract_keywords_with_llm: bool = False
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed
+
 # Auth routes
 @app.post("/auth/login")
 async def login(payload: LoginRequest, db: Session = Depends(get_db)):
@@ -91,22 +105,28 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
+    request: UploadRequest = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     contents = await file.read()
-    doc_id = await ingest_file(contents, file.filename, current_user.id, db)
+    chunking_mode = request.chunking_mode if request else ChunkingMode.token_fixed
+    doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
     return {"doc_id": doc_id}
 
 @app.post("/upload-pdf-as-images")
 async def upload_pdf_as_images(
     file: UploadFile = File(...),
+    request: UploadRequest = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     contents = await file.read()
     if not contents.startswith(b'%PDF'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
+    
+    # Get chunking mode from request or use default
+    chunking_mode = request.chunking_mode if request else ChunkingMode.token_fixed
     
     # Convert PDF to images
     images = convert_from_bytes(contents)
@@ -121,11 +141,11 @@ async def upload_pdf_as_images(
         # Create filename for this page
         page_filename = f"{file.filename}_page_{i+1}.png"
         
-        # Ingest the image
+        # Ingest the image with specified chunking mode
         if i == 0:
-            doc_id = await ingest_file(img_byte_arr, page_filename, current_user.id, db)
+            doc_id = await ingest_file(img_byte_arr, page_filename, current_user.id, db, chunking_mode)
         else:
-            await ingest_file(img_byte_arr, page_filename, current_user.id, db)
+            await ingest_file(img_byte_arr, page_filename, current_user.id, db, chunking_mode)
     
     return {"doc_id": doc_id}
 
@@ -185,6 +205,60 @@ async def chat(
         "user_id": current_user.id
     })
     return result
+
+@app.post("/query")
+async def query_docs(
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = request.query
+    
+    # Query rewriting if requested
+    if request.rewrite_query:
+        query = await call_llm_to_rewrite(query)
+    
+    # Keyword extraction
+    if request.extract_keywords_with_llm:
+        keywords = await call_llm_to_extract_keywords(query)
+    else:
+        keywords = basic_keyword_extraction(query)
+    
+    # Build answer graph with specified chunking mode
+    answer_graph = build_answer_graph()
+    result = await answer_graph.ainvoke({
+        "question": query,
+        "keywords": keywords,
+        "route": "hybrid",
+        "chunking_mode": request.chunking_mode,
+        "user_id": current_user.id
+    })
+    
+    return result
+
+@app.post("/query/preview_chunks")
+async def preview_chunks(
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = request.query
+    
+    # Query rewriting if requested
+    if request.rewrite_query:
+        query = await call_llm_to_rewrite(query)
+    
+    # Get relevant chunks
+    answer_graph = build_answer_graph()
+    chunks = await answer_graph.ainvoke({
+        "question": query,
+        "route": "hybrid",
+        "chunking_mode": request.chunking_mode,
+        "user_id": current_user.id,
+        "preview_only": True
+    })
+    
+    return {"retrieved_chunks": chunks}
 
 @app.get("/answer/{doc_id}")
 async def get_answer(
@@ -255,3 +329,48 @@ async def browse_chunks(
         .all()
     
     return chunks 
+
+async def call_llm_to_rewrite(query: str) -> str:
+    """Use LLM to improve the query for better search performance."""
+    response = await aclient.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that improves search queries. Make the query more specific and effective for information retrieval while preserving the original intent."
+            },
+            {
+                "role": "user",
+                "content": f"Improve this search query: {query}"
+            }
+        ],
+        max_tokens=150
+    )
+    return response.choices[0].message.content
+
+async def call_llm_to_extract_keywords(query: str) -> List[str]:
+    """Use LLM to extract keywords from the query."""
+    response = await aclient.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that extracts key terms from queries. Return only the most important keywords or phrases, separated by commas."
+            },
+            {
+                "role": "user",
+                "content": f"Extract key terms from this query: {query}"
+            }
+        ],
+        max_tokens=100
+    )
+    keywords = response.choices[0].message.content.split(',')
+    return [k.strip() for k in keywords if k.strip()]
+
+def basic_keyword_extraction(query: str) -> List[str]:
+    """Basic keyword extraction using simple heuristics."""
+    # Remove common stop words and punctuation
+    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'as'}
+    words = query.lower().split()
+    keywords = [w for w in words if w not in stop_words and len(w) > 2]
+    return keywords 

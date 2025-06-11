@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from settings import get_settings
 from components import embeddings
 

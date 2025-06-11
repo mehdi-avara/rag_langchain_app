@@ -17,6 +17,7 @@ from settings import get_settings
 from db.models import Document, Chunk, ImageChunk
 from retrieval.vector.chroma_store import ChromaStore
 from retrieval.keyword.es_bm25 import BM25Retriever
+from core.chunking import ChunkingMode, chunk_text
 
 settings = get_settings()
 aclient = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -149,23 +150,17 @@ def add_captions_to_text(text: str, captions: List[str]) -> str:
         text += f"\n\nFigure {i}: {caption}"
     return text
 
-async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session) -> int:
+async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.token_fixed) -> int:
     """Main ingestion pipeline."""
     # Detect file type and extract text/images
     file_type = await detect_type(file_bytes)
     if file_type == 'pdf':
         text, n_pages, images_info = await extract_text_and_images_from_pdf(file_bytes)
     else:
-        print("hello")
         text, n_pages, images_info = await extract_text_from_image(file_bytes)
 
-    # Split into chunks
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=400,
-        chunk_overlap=50,
-        length_function=len,
-    )
-    chunks = splitter.split_text(text)
+    # Split into chunks using specified mode
+    chunks = chunk_text(text, chunking_mode)
 
     # Create document record
     doc = Document(
@@ -186,21 +181,21 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
 
     current_pos = 0
     # Add text chunks
-    for i, chunk_text in enumerate(chunks):
-        start_pos = text.find(chunk_text, current_pos)
-        end_pos = start_pos + len(chunk_text)
+    for i, chunk in enumerate(chunks):
+        start_pos = text.find(chunk, current_pos)
+        end_pos = start_pos + len(chunk)
         current_pos = end_pos
 
-        chunk = Chunk(
+        holder = Chunk(
             doc_id=doc.id,
             page_num=i // (approx_chunks_per_page),  # Approximate page number
-            token_count=len(chunk_text.split()),
-            content=chunk_text,
+            token_count=len(chunk.split()),
+            content=chunk,
             start_pos=start_pos,
             end_pos=end_pos,
             chunk_type="text"
         )
-        chunk_records.append(chunk)
+        chunk_records.append(holder)
 
     # Add image chunks
     for img_info in images_info:
