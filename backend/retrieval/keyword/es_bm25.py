@@ -70,7 +70,6 @@ class BM25Retriever(Runnable):
         # Get top k indices
         top_idx = np.argsort(scores)[-self.k:][::-1]
         
-        print(scores)        
         # Build Document objects expected by downstream code
         return [
             Document(
