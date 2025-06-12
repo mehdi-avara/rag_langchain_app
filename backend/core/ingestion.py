@@ -149,7 +149,7 @@ def add_captions_to_text(text: str, captions: List[str]) -> str:
         text += f"\n\nFigure {i}: {caption}"
     return text
 
-async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.token_fixed) -> int:
+async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.sentence_3) -> int:
     """Main ingestion pipeline."""
     # Detect file type and extract text/images
     file_type = await detect_type(file_bytes)

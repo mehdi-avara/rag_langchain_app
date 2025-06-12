@@ -108,7 +108,8 @@ async def upload_file(
     db: Session = Depends(get_db)
 ):
     contents = await file.read()
-    chunking_mode = request.chunking_mode if request else ChunkingMode.token_fixed
+    chunking_mode = request.chunking_mode if request else ChunkingMode.sentence_3
+    print(chunking_mode)
     doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
     return {"doc_id": doc_id}
 
