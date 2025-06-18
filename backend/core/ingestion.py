@@ -64,14 +64,55 @@ async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int,
     images_info = []
     current_pos = 0
 
+    extracted_fields = {
+        "product_name": None,
+        "company": None,
+        "product_type": None,
+        "usage": None,
+        "content_summary": None
+    }
+
+    async def extract_summary_info(text: str) -> Dict[str, str]:
+        """Call LLM to extract structured info from text."""
+        response = await aclient.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""You are a smart assistant. Extract the following information from this text:
+1. Product name
+2. Company that made it
+3. What product it is?
+4. Where is it used?
+5. What data is in this file
+
+Only provide the values. If a value is missing, write 'Unknown'.
+
+Text:
+{text}"""
+                }
+            ],
+            max_tokens=300
+        )
+        content = response.choices[0].message.content
+        fields = content.strip().split('\n')
+        result = {}
+        for field in fields:
+            if ':' in field:
+                key, value = field.split(':', 1)
+                result[key.strip().lower().replace(' ', '_')] = value.strip()
+        return result
+
     for page_num, page_layout in enumerate(extract_pages(io.BytesIO(file_bytes))):
+        if page_num >= 5:
+            break
         page_text = ""
         for element in page_layout:
             if isinstance(element, LTTextBox):
                 element_text = element.get_text()
                 # Clean and fix Persian text
                 element_text = get_display(arabic_reshaper.reshape(element_text))
-  # Skip reshaping if libraries are not available
+                # Skip reshaping if libraries are not available
                 page_text += element_text
                 text += element_text
             elif isinstance(element, LTImage):
@@ -105,8 +146,15 @@ async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int,
                         'image_data': img_base64,
                         'caption': caption
                     })
+        if page_num < 5 and any(value is None for value in extracted_fields.values()):
+            summary_info = await extract_summary_info(page_text)
+            for key, val in summary_info.items():
+                if extracted_fields.get(key) is None and val != 'Unknown':
+                    extracted_fields[key] = val
 
     page_count = sum(1 for _ in extract_pages(io.BytesIO(file_bytes)))
+    # Append extracted metadata
+    images_info.insert(0, {"metadata_extracted": extracted_fields})
     return text, page_count, images_info
 
 async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
