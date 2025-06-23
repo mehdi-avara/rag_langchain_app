@@ -36,3 +36,22 @@ def search_keyword(
     """
     pass
     # searching(query,state["session_id"])
+    
+def document_loader():
+    pass
+
+def text_splitter():
+    pass
+
+def vector_store():
+    pass
+
+def embedding_model():
+    pass
+
+def retrieval_component():
+    pass
+
+def summarization():
+    pass
+
