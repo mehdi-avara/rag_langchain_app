@@ -13,7 +13,8 @@ st.title("Upload Documents")
 # Upload type selection
 upload_type = st.radio(
     "Select upload type",
-    ["Standard Upload", "PDF as Images"],
+    ["PDF as Images"],
+    # ["Standard Upload", "PDF as Images"],
     help="Standard Upload processes the document normally. PDF as Images converts each PDF page to a separate image document."
 )
 

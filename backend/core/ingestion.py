@@ -37,7 +37,7 @@ async def generate_image_caption(image: Image.Image) -> str:
             "content": [
                 {
                     "type": "text",
-                    "text": "Please describe this image in detail, focusing on its content, context, and any visible text. Be specific and thorough. Include any written text in persian exactly as it appears in the image."
+                    "text": """Please describe this image in detail, focusing on its content, context, and any visible text. Be specific and thorough. Include any written text in persian exactly as it appears in the image."""
                 },
                 {
                     "type": "image_url",
@@ -52,371 +52,77 @@ async def generate_image_caption(image: Image.Image) -> str:
 
     return response.choices[0].message.content
 
-async def detect_type(file_bytes: bytes) -> str:
-    """Detect if file is PDF or image."""
-    if file_bytes.startswith(b'%PDF'):
-        return 'pdf'
-    return 'image'
-
-async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
-    """Extract text and images from PDF and return (text, page_count, images_info)."""
-    text = ""
-    images_info = []
-    current_pos = 0
-
-    extracted_fields = {
-        "product_name": None,
-        "company": None,
-        "product_type": None,
-        "usage": None,
-        "content_summary": None
-    }
-
-    async def extract_summary_info(text: str) -> Dict[str, str]:
-        """Call LLM to extract structured info from text."""
-        response = await aclient.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"""You are a smart assistant. Extract the following information from this text:
-1. Product name
-2. Company that made it
-3. What product it is?
-4. Where is it used?
-5. What data is in this file
-
-Only provide the values. If a value is missing, write 'Unknown'.
-
-Text:
-{text}"""
-                }
-            ],
-            max_tokens=300
-        )
-        content = response.choices[0].message.content
-        fields = content.strip().split('\n')
-        result = {}
-        for field in fields:
-            if ':' in field:
-                key, value = field.split(':', 1)
-                result[key.strip().lower().replace(' ', '_')] = value.strip()
-        return result
-
-    for page_num, page_layout in enumerate(extract_pages(io.BytesIO(file_bytes))):
-        if page_num >= 5:
-            break
-        page_text = ""
-        for element in page_layout:
-            if isinstance(element, LTTextBox):
-                element_text = element.get_text()
-                # Clean and fix Persian text
-                element_text = get_display(arabic_reshaper.reshape(element_text))
-                # Skip reshaping if libraries are not available
-                page_text += element_text
-                text += element_text
-            elif isinstance(element, LTImage):
-                # Convert PDF page to image
-                pdf_images = convert_from_bytes(file_bytes, first_page=page_num+1, last_page=page_num+1)
-                if pdf_images:
-                    # Get image position
-                    x0, y0, x1, y1 = element.bbox
-                    position = "center"
-                    if x0 < page_layout.width * 0.3:
-                        position = "left"
-                    elif x0 > page_layout.width * 0.7:
-                        position = "right"
-                    if y0 < page_layout.height * 0.3:
-                        position = f"top-{position}"
-                    elif y0 > page_layout.height * 0.7:
-                        position = f"bottom-{position}"
-
-                    # Convert image to base64
-                    img_byte_arr = io.BytesIO()
-                    pdf_images[0].save(img_byte_arr, format='PNG')
-                    img_byte_arr = img_byte_arr.getvalue()
-                    img_base64 = base64.b64encode(img_byte_arr).decode()
-
-                    # Generate caption 
-                    caption = await generate_image_caption(pdf_images[0])
-
-                    images_info.append({
-                        'page_num': page_num,
-                        'position': position,
-                        'image_data': img_base64,
-                        'caption': caption
-                    })
-        if page_num < 5 and any(value is None for value in extracted_fields.values()):
-            summary_info = await extract_summary_info(page_text)
-            for key, val in summary_info.items():
-                if extracted_fields.get(key) is None and val != 'Unknown':
-                    extracted_fields[key] = val
-
-    page_count = sum(1 for _ in extract_pages(io.BytesIO(file_bytes)))
-    # Append extracted metadata
-    images_info.insert(0, {"metadata_extracted": extracted_fields})
-    return text, page_count, images_info
 
 async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
     """Extract text from image using OCR and generate caption."""
     image = Image.open(io.BytesIO(file_bytes))
-    text = pytesseract.image_to_string(image)
 
     caption = await generate_image_caption(image)
 
-    # Convert image to base64
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format='PNG')
-    img_byte_arr = img_byte_arr.getvalue()
-    img_base64 = base64.b64encode(img_byte_arr).decode()
 
-    images_info = [{
-        'page_num': 0,
-        'position': 'center',
-        'image_data': img_base64,
-        'caption': caption
-    }]
+    return caption
 
-    return text, 1, images_info
-
-async def extract_images_from_pdf(file_bytes: bytes) -> List[Image.Image]:
-    """Extract images from PDF pages."""
-    # Implementation depends on specific PDF library
-    # This is a placeholder
-    return []
-
-async def caption_images(images: List[Image.Image]) -> List[str]:
-    """Generate captions for images using GPT-4."""
-    # Implementation using OpenAI API
-    # This is a placeholder
-    return []
-
-def add_captions_to_text(text: str, captions: List[str]) -> str:
-    """Add image captions to the text."""
-    for i, caption in enumerate(captions, 1):
-        text += f"\n\nFigure {i}: {caption}"
-    return text
-
-async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.sentence_3) -> int:
-    """Main ingestion pipeline."""
-    # Detect file type and extract text/images
-    file_type = await detect_type(file_bytes)
-    if file_type == 'pdf':
-        text, n_pages, images_info = await extract_text_and_images_from_pdf(file_bytes)
-    else:
-        text, n_pages, images_info = await extract_text_from_image(file_bytes)
-
-    # Split into chunks using specified mode
-    chunks = chunk_text(text, chunking_mode)
-
-    # Create document record
-    doc = Document(
-        owner_id=user_id,
-        filename=filename,
-        n_pages=n_pages,
-        n_chunks=len(chunks) + len(images_info),
-    )
-    db.add(doc)
-    db.flush()
-
-    # Create chunk records
-    chunk_records = []
-    if len(chunks) > 0 and n_pages > 0:
-        approx_chunks_per_page = max(1, len(chunks) // n_pages)
-    else:
-        approx_chunks_per_page = 1
-
-    current_pos = 0
-    # Add text chunks
-    for i, chunk in enumerate(chunks):
-        start_pos = text.find(chunk, current_pos)
-        end_pos = start_pos + len(chunk)
-        current_pos = end_pos
-
-        holder = Chunk(
-            doc_id=doc.id,
-            page_num=i // (approx_chunks_per_page),  # Approximate page number
-            token_count=len(chunk.split()),
-            content=chunk,
-            start_pos=start_pos,
-            end_pos=end_pos,
-            chunk_type="text"
-        )
-        chunk_records.append(holder)
-
-    # Add image chunks
-    for img_info in images_info:
-        chunk = Chunk(
-            doc_id=doc.id,
-            page_num=img_info['page_num'],
-            token_count=len(img_info['caption'].split()),
-            content=img_info['caption'],
-            chunk_type="image"
-        )
-        db.add(chunk)
-        db.flush()  # Get chunk.id
-
-        chunk_records.append(chunk)
-
-        # Create image chunk record
-        image_chunk = ImageChunk(
-            chunk_id=chunk.id,
-            image_data=img_info['image_data'],
-            caption=img_info['caption'],
-            position=img_info['position']
-        )
-        db.add(image_chunk)
-
-    db.bulk_save_objects(chunk_records)
-    db.flush()
-
-    # Update chunk IDs
-    for i, chunk in enumerate(chunk_records):
-        chunk.vdb_id = f"{doc.id}_{i}"
-        chunk.es_id = f"{doc.id}_{i}"
-
-    db.flush()
-
-    # Store in Chroma
-    chroma_store = ChromaStore()
-    chroma_store.add_texts(
-        texts=[c.content for c in chunk_records],
-        metadatas=[{
-            "doc_id": doc.id,
-            "chunk_id": c.id,
-            "page_num": c.page_num,
-            "chunk_type": c.chunk_type,
-            "position": c.start_pos if c.chunk_type == "text" else None
-        } for c in chunk_records],
-        ids=[c.vdb_id for c in chunk_records]
-    )
-
-    # Store in Elasticsearch
-    bm25 = get_bm25_retriever()
-    await bm25.add_texts(
-        texts=[c.content for c in chunk_records],
-        metadatas=[{
-            "doc_id": doc.id,
-            "chunk_id": c.id,
-            "page_num": c.page_num,
-            "chunk_type": c.chunk_type,
-            "position": c.start_pos if c.chunk_type == "text" else None
-        } for c in chunk_records],
-        ids=[c.es_id for c in chunk_records]
-    )
-    bm25.save()
-
-    db.commit()
-    return doc.id 
 
 async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.token_fixed) -> int:
     """Ingest a PDF as a single document, processing all pages together."""
-    try:
-        # Convert PDF to images
-        images = convert_from_bytes(file_bytes)
-        if not images:
-            raise ValueError("No pages found in PDF")
+
+    # Convert PDF to images
+    images = convert_from_bytes(file_bytes)
+    if not images:
+        raise ValueError("No pages found in PDF")
+    
+    # Create a single document for all pages
+    doc = Document(
+        owner_id=user_id,
+        filename=filename,
+        n_pages=len(images),
+        n_chunks=0,  # Will be updated after processing
+    )
+    db.add(doc)
+    db.flush()
+    chunks_count = 0
+            
+    # Create chunk records
+    chunk_records = []
+    # Process each page
+    for i, image in enumerate(images):
+
+        # Convert image to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
         
-        # Create a single document for all pages
-        doc = Document(
-            owner_id=user_id,
-            filename=filename,
-            n_pages=len(images),
-            n_chunks=0,  # Will be updated after processing
-        )
-        db.add(doc)
-        db.flush()
-        
-        all_text = ""
-        all_images_info = []
-        
-        # Process each page
-        for i, image in enumerate(images):
-            try:
-                # Convert image to bytes
-                img_byte_arr = io.BytesIO()
-                image.save(img_byte_arr, format='PNG')
-                img_byte_arr = img_byte_arr.getvalue()
-                
-                # Extract text and image info from this page
-                text, _, images_info = await extract_text_from_image(img_byte_arr)
-                
-                # Update page numbers in images_info
-                for img_info in images_info:
-                    img_info['page_num'] = i
-                
-                all_text += f"\n\nPage {i+1}:\n{text}"
-                all_images_info.extend(images_info)
-            except Exception as e:
-                print(f"Error processing page {i+1}: {str(e)}")
-                # Continue with next page even if this one fails
-                continue
-        
-        if not all_text.strip():
-            raise ValueError("No text could be extracted from the PDF")
-        
-        # Split the combined text into chunks
-        chunks = chunk_text(all_text, chunking_mode)
+        # Extract text and image info from this page
+        caption = await extract_text_from_image(img_byte_arr)
+        images_info = {
+            'page_num': i,
+            'caption': caption
+        }
+
+        chunks = chunk_text(caption, chunking_mode)
         if not chunks:
             raise ValueError("No chunks could be created from the text")
+        chunks_count += len(chunks)
         
-        # Update document with total chunk count
-        doc.n_chunks = len(chunks) + len(all_images_info)
-        db.flush()
-        
-        # Create chunk records
-        chunk_records = []
-        approx_chunks_per_page = max(1, len(chunks) // len(images))
-        
-        current_pos = 0
-        # Add text chunks
-        for i, chunk in enumerate(chunks):
-            start_pos = all_text.find(chunk, current_pos)
-            if start_pos == -1:
-                start_pos = current_pos
-            end_pos = start_pos + len(chunk)
-            current_pos = end_pos
-            
+        for j,chunck in enumerate(chunks):
             holder = Chunk(
                 doc_id=doc.id,
-                page_num=i // approx_chunks_per_page,  # Approximate page number
-                token_count=len(chunk.split()),
-                content=chunk,
-                start_pos=start_pos,
-                end_pos=end_pos,
+                page_num=i, 
+                token_count=len(chunck.split()),
+                start_pos=j,
+                content=chunck,
                 chunk_type="text"
             )
             chunk_records.append(holder)
         
-        # Add image chunks
-        for img_info in all_images_info:
-            chunk = Chunk(
-                doc_id=doc.id,
-                page_num=img_info['page_num'],
-                token_count=len(img_info['caption'].split()),
-                content=img_info['caption'],
-                chunk_type="image"
-            )
-            db.add(chunk)
-            db.flush()  # ✅ Assign chunk.id
-
-            # Now you can use chunk.id
-            image_chunk = ImageChunk(
-                chunk_id=chunk.id,
-                image_data=img_info['image_data'],
-                caption=img_info['caption'],
-                position=img_info['position']
-            )
-            db.add(image_chunk)
-
-            chunk_records.append(chunk)
-        # Add all chunks to database
-        db.add_all(chunk_records)
-        db.commit()
         
-        return doc.id
-        
-    except Exception as e:
-        # Rollback the transaction in case of error
-        db.rollback()
-        raise ValueError(f"Error processing PDF: {str(e)}")
+    
+    # Update document with total chunk count
+    doc.n_chunks = chunks_count
+    db.flush()
+
+    # Add all chunks to database
+    db.add_all(chunk_records)
+    db.commit()
+    
+    return doc.id
