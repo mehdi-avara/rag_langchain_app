@@ -11,6 +11,7 @@ from db.models import User, Document, Chunk
 from db.init_db import get_db
 from deps import get_current_user, create_access_token
 from core.ingestion import  ingest_pdf_as_single_document
+from core.simple_ingestion import  ingest_file
 from core.summarise import summarise_document
 from core.graph import build_answer_graph
 from core.chunking  import ChunkingMode
@@ -98,6 +99,20 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
             detail="Incorrect username or password"
         )
     return {"access_token": create_access_token(user.id)}
+
+# Document routes
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    request: UploadRequest = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    contents = await file.read()
+    chunking_mode = request.chunking_mode if request else ChunkingMode.sentence_3
+    print(chunking_mode)
+    doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
+    return {"doc_id": doc_id}
 
 
 @app.post("/upload-pdf-as-images")
