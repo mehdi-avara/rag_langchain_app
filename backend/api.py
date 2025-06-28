@@ -354,7 +354,7 @@ async def browse_chunks(
 async def call_llm_to_rewrite(query: str) -> str:
     """Use LLM to improve the query for better search performance."""
     response = await aclient.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
@@ -372,7 +372,7 @@ async def call_llm_to_rewrite(query: str) -> str:
 async def call_llm_to_extract_keywords(query: str) -> List[str]:
     """Use LLM to extract keywords from the query."""
     response = await aclient.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
