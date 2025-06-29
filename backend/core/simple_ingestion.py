@@ -154,7 +154,6 @@ Text:
 
     page_count = sum(1 for _ in extract_pages(io.BytesIO(file_bytes)))
     # Append extracted metadata
-    images_info.insert(0, {"metadata_extracted": extracted_fields})
     return text, page_count, images_info
 
 async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
