@@ -33,7 +33,18 @@ class ChromaStore:
             metadatas=metadatas,
             ids=ids
         )
+    
+    def delete_by_doc_id(self, doc_id: str) -> None:
+        """Delete all chunks related to a given doc_id."""
+        # Perform a metadata-based filter query
+        results = self.store.get(where={"doc_id": doc_id})
 
+        if results and "ids" in results:
+            ids_to_delete = results["ids"]
+            if ids_to_delete:
+                self.store.delete(ids=ids_to_delete)
+                
+    
     def as_retriever(
         self,
         search_kwargs: Optional[Dict[str, Any]] = None

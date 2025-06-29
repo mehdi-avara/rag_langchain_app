@@ -25,17 +25,6 @@ class GraphState(TypedDict):
     citations: List[int]
     mode: str  # Can be "preview" or "full"
 
-def classify_question(state: GraphState) -> GraphState:
-    """Classify question type and choose retrieval route."""
-    question = state["question"]
-    words = len(question.split())
-    
-    if words <= 3:
-        route = "keyword"
-    else:
-        route = "hybrid"
-    
-    return {**state, "route": route}
 
 async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""

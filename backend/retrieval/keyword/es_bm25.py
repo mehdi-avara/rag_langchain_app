@@ -25,7 +25,7 @@ class BM25Retriever(Runnable):
     NOTE: Corpus must fit in RAM; not thread‑safe beyond a single process.
     """
 
-    def __init__(self, k: int = 4):
+    def __init__(self, k: int = 40):
         self.k = k
         self.texts = []
         self.metadatas = []

@@ -160,6 +160,9 @@ async def delete_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    from retrieval.vector.chroma_store import ChromaStore
+    chat_store = ChromaStore()
+    chat_store.delete_by_doc_id(doc_id)
     doc = db.query(Document).filter(
         Document.id == doc_id,
         Document.owner_id == current_user.id
