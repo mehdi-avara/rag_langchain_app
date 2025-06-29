@@ -113,7 +113,9 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
                 content=chunck,
                 chunk_type="text"
             )
-            chunk_records.append(holder)
+            db.add_all([holder])
+            db.commit()
+            print(f"Added chunk {j+1}/{len(chunks)} for page {i+1}/{len(images)}")
         
         
     
@@ -121,8 +123,8 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
     doc.n_chunks = chunks_count
     db.flush()
 
-    # Add all chunks to database
-    db.add_all(chunk_records)
-    db.commit()
+    # # Add all chunks to database
+    # db.add_all(chunk_records)
+    # db.commit()
     
     return doc.id

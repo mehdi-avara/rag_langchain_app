@@ -123,45 +123,29 @@ async def upload_pdf_as_images(
     db: Session = Depends(get_db)
 ):
     """Upload a PDF file and process it as images."""
-    try:
-        # Read file content
-        file_bytes = await file.read()
+
+    # Read file content
+    file_bytes = await file.read()
+    
+    # Validate PDF file
+    if not file_bytes.startswith(b'%PDF'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
         
-        # Validate PDF file
-        if not file_bytes.startswith(b'%PDF'):
-            raise HTTPException(status_code=400, detail="File must be a PDF")
+    # Validate file extension
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must have .pdf extension")
+    
+# Use the new ingestion function
+    doc_id = await ingest_pdf_as_single_document(
+        file_bytes=file_bytes,
+        filename=file.filename,
+        user_id=current_user.id,
+        db=db,
+        chunking_mode=chunking_mode
+    )
+    return {"message": "PDF processed successfully", "doc_id": doc_id}
+
             
-        # Validate file extension
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="File must have .pdf extension")
-        
-        # Use the new ingestion function
-        try:
-            doc_id = await ingest_pdf_as_single_document(
-                file_bytes=file_bytes,
-                filename=file.filename,
-                user_id=current_user.id,
-                db=db,
-                chunking_mode=chunking_mode
-            )
-            return {"message": "PDF processed successfully", "doc_id": doc_id}
-        except Exception as e:
-            # Log the error for debugging
-            print(f"Error processing PDF: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing PDF: {str(e)}"
-            )
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Log the error for debugging
-        print(f"Unexpected error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error: {str(e)}"
-        )
 
 @app.get("/documents", response_model=List[DocumentOut])
 async def list_documents(

@@ -8,7 +8,7 @@ from settings import get_settings
 settings = get_settings()
 
 def init_db():
-    engine = create_engine(settings.postgres_url)
+    engine = create_engine(settings.postgres_url,pool_pre_ping=True)
 
     # Create pgvector extension
     with engine.connect() as conn:
