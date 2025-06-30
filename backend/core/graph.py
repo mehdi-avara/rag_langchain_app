@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from db.models import Document as DBDocument
 from retrieval.vector.chroma_store import ChromaStore
 from settings import get_settings
-from retrieval.keyword.es_bm25 import get_bm25_retriever
+from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
 
 
 from langchain_core.runnables import Runnable
@@ -24,6 +24,7 @@ class GraphState(TypedDict):
     answer: str
     citations: List[int]
     mode: str  # Can be "preview" or "full"
+    db: Session  # SQLAlchemy session for database access
 
 
 async def retrieve_docs(state: GraphState) -> GraphState:
@@ -31,9 +32,8 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     question = state["question"]
     route = state["route"]
     mode = state.get("mode", "full")  # Default to full mode if not specified
-    
-    # Initialize retrievers
-    keyword_retriever = get_bm25_retriever()
+    db = state.get("db")  # Assume db session is passed in state
+    keyword_retriever = FullTextRetrieverFromDB(db)
     vector_retriever = ChromaStore().as_retriever(
         search_kwargs={"k": 6 if mode == "full" else 3}  # Use fewer results for preview
     )
@@ -41,6 +41,7 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     # Manual routing logic
     if route == "keyword":
         docs = await keyword_retriever.ainvoke(question)
+        print(f"Keyword retrieval returned {len(docs)} documents.")
     elif route == "vector":
         docs = await vector_retriever.ainvoke(question)
     elif route == "hybrid":
@@ -184,7 +185,8 @@ async def build_answer_graph_with_id(doc_id: int, question: str, db: Session) ->
         "docs": [],
         "answer": "",
         "citations": [],
-        "mode": "full"
+        "mode": "full",
+        "db": db
     })
     
     return result["answer"], result["citations"], 1.0  # Confidence score

@@ -31,28 +31,25 @@ class BM25Retriever(Runnable):
         self.metadatas = []
         self._bm25 = None
 
+    # FIXED add_texts
     async def add_texts(
         self,
         texts: List[str],
         metadatas: List[Dict[str, Any]] = None,
         ids: List[str] = None
     ) -> None:
-        """Add texts to the retriever."""
         if metadatas is None:
             metadatas = [{} for _ in texts]
-        
-        # Tokenize texts
-        tokenized_texts = [text.lower().split() for text in texts]
-        
-        # Initialize or update BM25
-        if self._bm25 is None:
-            self._bm25 = BM25Okapi(tokenized_texts)
-        else:
-            self._bm25 = BM25Okapi(tokenized_texts + [text.lower().split() for text in self.texts])
-        
-        # Update stored texts and metadata
+
+        # Update internal lists
         self.texts.extend(texts)
         self.metadatas.extend(metadatas)
+
+        # Tokenize all texts
+        tokenized_texts = [text.lower().split() for text in self.texts]
+        
+        # Rebuild BM25 index
+        self._bm25 = BM25Okapi(tokenized_texts)
 
     async def ainvoke(self, query: str, **kwargs) -> List[Document]:
         """

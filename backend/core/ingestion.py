@@ -94,10 +94,6 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
         
         # Extract text and image info from this page
         caption = await extract_text_from_image(img_byte_arr)
-        images_info = {
-            'page_num': i,
-            'caption': caption
-        }
 
         chunks = chunk_text(caption, chunking_mode)
         if not chunks:

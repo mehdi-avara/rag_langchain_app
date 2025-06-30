@@ -203,7 +203,8 @@ async def chat(
     result = await answer_graph.ainvoke({
         "question": request.query,
         "route": "hybrid",  # Default to hybrid search
-        "user_id": current_user.id
+        "user_id": current_user.id,
+        "db": db,  # Pass the database session
     })
     return result
 
@@ -233,7 +234,8 @@ async def query_docs(
         "route": "hybrid",
         "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
-        "mode": "full"
+        "mode": "full",
+        "db": db
     })
     
     return result
@@ -254,9 +256,10 @@ async def preview_query(
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
         "question": query,
-        "route": "hybrid",
+        "route": "keyword",
         "user_id": current_user.id,
-        "mode": "end"
+        "mode": "end",
+        "db": db,  # Pass the database session
     })
     
     # Transform LangChain Document objects into dictionaries
