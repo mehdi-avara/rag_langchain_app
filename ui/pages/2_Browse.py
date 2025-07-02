@@ -88,10 +88,12 @@ elif st.session_state["docs"]:
     st.markdown("### Your Documents")
     
     for doc in st.session_state["docs"]:
-        col1, col2, col3, col4, col5, col6 = st.columns([3, 1, 1, 1, 1, 1])
-        
+        col1,col1_2, col2, col3, col4, col5, col6 = st.columns([3, 1, 1, 1, 1, 1, 1])
+
         with col1:
             st.write(f"📝 {doc['filename']}")
+        with col1_2:
+            st.write(f"📅 {doc['id']}")
         with col2:
             st.write(f"📄 {doc['n_pages']} pages")
         with col3:
@@ -125,6 +127,7 @@ elif st.session_state["docs"]:
                 st.session_state["viewing_chunks"] = doc["id"]
                 st.session_state["chunks_page"] = 1
                 st.rerun()
+
         
         st.markdown("---")
 else:
