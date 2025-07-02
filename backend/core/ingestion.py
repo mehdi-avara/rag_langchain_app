@@ -37,7 +37,7 @@ async def generate_image_caption(image: Image.Image) -> str:
             "content": [
                 {
                     "type": "text",
-                    "text": """Please describe this image in detail, focusing on its content, context, and any visible text. Be specific and thorough. Include any written text in persian exactly as it appears in the image."""
+                    "text": """Describe this image in detail, focusing on its content, context, and any visible text. Be specific and thorough."""
                 },
                 {
                     "type": "image_url",
@@ -48,7 +48,38 @@ async def generate_image_caption(image: Image.Image) -> str:
             ]
         }
     ],
-    max_tokens=300)
+    max_tokens=400)
+
+    return response.choices[0].message.content
+
+async def generate_image_persian_text(image: Image.Image) -> str:
+    """Generate caption for image using GPT-4 Vision."""
+    # Convert image to base64
+    img_byte_arr = io.BytesIO()
+    image.save(img_byte_arr, format='PNG')
+    img_byte_arr = img_byte_arr.getvalue()
+    img_base64 = base64.b64encode(img_byte_arr).decode()
+
+    # Call GPT-o4 Vision API
+    response = await aclient.chat.completions.create(model="gpt-4o",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": """Extract and transcribe all Persian (Farsi) text visible in the image. Ignore any non-Persian text. Maintain the reading order as it appears visually, from top to bottom and left to right."""
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{img_base64}"
+                    }
+                }
+            ]
+        }
+    ],
+    max_tokens=800)
 
     return response.choices[0].message.content
 
@@ -58,9 +89,10 @@ async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dic
     image = Image.open(io.BytesIO(file_bytes))
 
     caption = await generate_image_caption(image)
+    caption2 = await generate_image_persian_text(image)
 
 
-    return caption
+    return f"{caption} {caption2}"
 
 
 async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.token_fixed) -> int:
@@ -83,7 +115,6 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
     chunks_count = 0
             
     # Create chunk records
-    chunk_records = []
     # Process each page
     for i, image in enumerate(images):
 
@@ -99,7 +130,7 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
         if not chunks:
             raise ValueError("No chunks could be created from the text")
         chunks_count += len(chunks)
-        
+        doc.n_chunks = chunks_count
         for j,chunck in enumerate(chunks):
             holder = Chunk(
                 doc_id=doc.id,
@@ -116,8 +147,6 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
         
     
     # Update document with total chunk count
-    doc.n_chunks = chunks_count
-    db.flush()
 
     # # Add all chunks to database
     # db.add_all(chunk_records)
