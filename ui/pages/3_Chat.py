@@ -92,7 +92,7 @@ if prompt := st.chat_input("Ask a question about your documents"):
             # Display chunks preview
             st.subheader("Retrieved Chunks")
             for chunk in result.get("retrieved_chunks", []):
-                st.markdown(f"**Chunk from {chunk.get('doc_id', 'Unknown')} (Page {chunk.get('page_num', 'N/A')})**")
+                st.markdown(f"**Chunk from {chunk.get('doc_id', 'Unknown')} (Page {chunk.get('page_num', 'N/A')+1})**")
                 st.markdown(chunk.get("content", ""))
                 st.markdown("---")
         else:
