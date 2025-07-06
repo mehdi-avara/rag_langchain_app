@@ -23,14 +23,17 @@ class FullTextRetrieverFromDB(Runnable):
         self.db = db
             
     async def ainvoke(self, query: str, **kwargs) -> List[Document]:
-        results = (
-            self.db.query(Chunk)
-            .filter(
-                func.to_tsvector('simple', Chunk.content)
-                .op('@@')(func.plainto_tsquery('simple', query))
-            )
-            .all()
+        doc_id = kwargs.get("doc_id")
+
+        query_builder = self.db.query(Chunk).filter(
+            func.to_tsvector('simple', Chunk.content)
+            .op('@@')(func.plainto_tsquery('simple', query))
         )
+
+        if doc_id is not None:
+            query_builder = query_builder.filter(Chunk.doc_id == doc_id)
+
+        results = query_builder.all()
 
         return [
             Document(
