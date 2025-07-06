@@ -13,7 +13,7 @@ from deps import get_current_user, create_access_token
 from core.ingestion import  ingest_pdf_as_single_document
 from core.simple_ingestion import  ingest_file
 from core.summarise import summarise_document
-from core.graph import build_answer_graph
+from core.agents.langgraph import build_answer_graph
 from core.chunking  import ChunkingMode
 from db.models import LoginRequest
 from settings import get_settings
