@@ -22,7 +22,7 @@ if "chunks" not in st.session_state:
 if "docs" not in st.session_state:
     try:
         response = requests.get(
-            f"{API_URL}/documents",
+            f"{API_URL}/documents/",
             headers={"Authorization": f"Bearer {get_token()}"}
         )
         response.raise_for_status()
@@ -35,7 +35,7 @@ if "docs" not in st.session_state:
 def load_chunks(doc_id, page=1):
     try:
         response = requests.get(
-            f"{API_URL}/documents/{doc_id}/chunks",
+            f"{API_URL}/documents/{doc_id}/chunks/",
             params={"page": page, "page_size": 10},
             headers={"Authorization": f"Bearer {get_token()}"}
         )

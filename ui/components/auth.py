@@ -9,7 +9,7 @@ def login(username: str, password: str) -> Optional[str]:
     """Attempt to log in and return JWT token if successful."""
     try:
         response = requests.post(
-            f"{API_URL}/auth/login",
+            f"{API_URL}/auth/login/",
             json={"username": username, "password": password}
         )
         response.raise_for_status()
