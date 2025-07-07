@@ -72,7 +72,7 @@ Answer:"""
 prompt = ChatPromptTemplate.from_template(template)
 
 llm = ChatOpenAI(
-    model="gpt-4",
+    model="gpt-4o",
     temperature=0.1,
     openai_api_key=settings.openai_api_key
 )

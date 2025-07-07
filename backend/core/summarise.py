@@ -27,7 +27,7 @@ Summary:"""
     
     # Initialize LLM
     llm = ChatOpenAI(
-        model="gpt-4",
+        model="gpt-4o",
         temperature=0,
         openai_api_key=settings.openai_api_key
     )
