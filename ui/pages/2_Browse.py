@@ -93,7 +93,7 @@ elif st.session_state["docs"]:
         with col1:
             st.write(f"📝 {doc['filename']}")
         with col1_2:
-            st.write(f"📅 {doc['id']}")
+            st.write(f"{doc['id']}")
         with col2:
             st.write(f"📄 {doc['n_pages']} pages")
         with col3:
@@ -112,7 +112,7 @@ elif st.session_state["docs"]:
                 except requests.exceptions.RequestException as e:
                     st.error(f"Failed to delete: {str(e)}")
         with col5:
-            if st.button("🛈", key=f"summary_{doc['id']}"):
+            if st.button("📝", key=f"summary_{doc['id']}"):
                 try:
                     response = requests.get(
                         f"{API_URL}/summary/{doc['id']}",
