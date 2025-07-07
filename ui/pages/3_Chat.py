@@ -40,15 +40,15 @@ with st.sidebar:
         help="Use AI to extract key terms from your question"
     )
     
-    # Chunking mode selection
-    chunking_mode = st.selectbox(
-        "Chunking strategy",
-        ["sentence-3", "paragraph", "token-fixed"],
-        help="""Choose how to split the document:
-        - sentence-3: Groups text into chunks of 3 sentences
-        - paragraph: Splits text by paragraphs
-        - token-fixed: Splits text into fixed-size chunks"""
-    )
+    # # Chunking mode selection
+    # chunking_mode = st.selectbox(
+    #     "Chunking strategy",
+    #     ["sentence-3", "paragraph", "token-fixed"],
+    #     help="""Choose how to split the document:
+    #     - sentence-3: Groups text into chunks of 3 sentences
+    #     - paragraph: Splits text by paragraphs
+    #     - token-fixed: Splits text into fixed-size chunks"""
+    # )
     
     # Preview chunks option
     preview_chunks = st.checkbox(

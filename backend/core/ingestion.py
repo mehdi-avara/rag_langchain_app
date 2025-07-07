@@ -1,21 +1,15 @@
 import io
 import base64
 from typing import List, Tuple, Dict
-import pytesseract
-from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTImage, LTTextBox
 from pdf2image import convert_from_bytes
 from PIL import Image
 from sqlalchemy.orm import Session
 from openai import AsyncOpenAI
 
-import arabic_reshaper
-from bidi.algorithm import get_display
+
 
 from settings import get_settings
-from db.models import Document, Chunk, ImageChunk
-from retrieval.vector.chroma_store import ChromaStore
-from retrieval.keyword.es_bm25 import get_bm25_retriever
+from db.models import Document, Chunk
 from core.chunking import ChunkingMode, chunk_text
 
 settings = get_settings()
