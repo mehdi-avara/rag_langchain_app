@@ -1,8 +1,15 @@
 import streamlit as st
 import requests
 import os
+from streamlit_pdf_viewer import pdf_viewer
 from components.auth import require_auth, get_token
 from components.chat_msg import render_message
+
+from settigs import get_settings
+
+settings = get_settings()
+files_address = settings.FILES_ADDRESS
+
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
@@ -39,16 +46,6 @@ with st.sidebar:
         "Extract keywords with LLM",
         help="Use AI to extract key terms from your question"
     )
-    
-    # # Chunking mode selection
-    # chunking_mode = st.selectbox(
-    #     "Chunking strategy",
-    #     ["sentence-3", "paragraph", "token-fixed"],
-    #     help="""Choose how to split the document:
-    #     - sentence-3: Groups text into chunks of 3 sentences
-    #     - paragraph: Splits text by paragraphs
-    #     - token-fixed: Splits text into fixed-size chunks"""
-    # )
     
     # Preview chunks option
     preview_chunks = st.checkbox(
@@ -90,10 +87,29 @@ if prompt := st.chat_input("Ask a question about your documents"):
         if preview_chunks:
             # Display chunks preview
             st.subheader("Retrieved Chunks")
-            for chunk in result.get("retrieved_chunks", []):
-                st.markdown(f"**Chunk from {chunk.get('doc_id', 'Unknown')} (Page {chunk.get('page_num', 'N/A')+1})**")
-                st.markdown(chunk.get("content", ""))
-                st.markdown("---")
+            for i, chunk in enumerate(result.get("retrieved_chunks", []), 1):
+                doc_id = chunk.get('doc_id', 'Unknown')
+                page_num = chunk.get('page_num', None)
+                pdf_path = f"{files_address}/{doc_id}.pdf"
+
+                with st.expander(f"📄 {doc_id} – Page {page_num + 1 if page_num is not None else 'N/A'}"):
+                    st.markdown(chunk.get("content", ""), unsafe_allow_html=True)
+
+                    if os.path.exists(pdf_path):
+                        st.markdown("**PDF Preview:**")
+
+# Display PDF with custom zoom, alignment, and separators
+                        pdf_viewer(
+                            pdf_path,
+                            scroll_to_page=page_num+1,
+                            width=700,
+                            height=1000,
+                            zoom_level=1.2,                    # 120% zoom
+                            viewer_align="center",             # Center alignment
+                            show_page_separator=True           # Show separators between pages
+                        )
+                    else:
+                        st.warning("PDF file not found.")
         else:
             # Add assistant message to history
             st.session_state["history"].append({
