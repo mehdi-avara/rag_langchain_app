@@ -272,6 +272,7 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         } for c in chunk_records],
         ids=[c.vdb_id for c in chunk_records]
     )
+    chroma_store.store.persist()
 
     # Store in Elasticsearch
     bm25 = get_bm25_retriever()

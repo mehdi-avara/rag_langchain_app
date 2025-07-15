@@ -32,11 +32,11 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""
     question = state["question"]
     route = state["route"]
-    mode = state.get("mode", "full")  # Default to full mode if not specified
+    mode = state.get("mode", "hybrid")  # Default to full mode if not specified
     db = state.get("db")  # Assume db session is passed in state
     keyword_retriever = FullTextRetrieverFromDB(db)
     vector_retriever = ChromaStore().as_retriever(
-        search_kwargs={"k": 6 if mode == "full" else 3}  # Use fewer results for preview
+        search_kwargs={"k": 6 if mode == "hybrid" else 3}  # Use fewer results for preview
     )
     
     # Manual routing logic

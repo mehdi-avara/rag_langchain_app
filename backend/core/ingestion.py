@@ -11,6 +11,8 @@ from openai import AsyncOpenAI
 from settings import get_settings
 from db.models import Document, Chunk
 from core.chunking import ChunkingMode, chunk_text
+from retrieval.vector.chroma_store import ChromaStore
+
 
 settings = get_settings()
 aclient = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -125,6 +127,7 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
             raise ValueError("No chunks could be created from the text")
         chunks_count += len(chunks)
         doc.n_chunks = chunks_count
+        texts, metadatas, ids = [], [], []
         for j,chunck in enumerate(chunks):
             holder = Chunk(
                 doc_id=doc.id,
@@ -134,10 +137,27 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
                 content=chunck,
                 chunk_type="text"
             )
+            texts.append(chunck)
+            metadatas.append({
+                "doc_id": doc.id,
+                "page_num": i,
+                "token_count": len(chunck.split()),
+                "chunk_type": "text",
+            })
+            ids.append(doc.id)
+            
             db.add_all([holder])
             db.commit()
             print(f"Added chunk {j+1}/{len(chunks)} for page {i+1}/{len(images)}")
         
+    chroma_store = ChromaStore()
+    batch_size = 700
+    for i in range(0, len(texts), batch_size):
+        chroma_store.add_texts(
+            texts=texts[i:i+batch_size],
+            metadatas=metadatas[i:i+batch_size],
+            ids=ids[i:i+batch_size]
+        )
         
     
     # Update document with total chunk count
