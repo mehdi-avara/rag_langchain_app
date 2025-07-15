@@ -72,7 +72,6 @@ if prompt := st.chat_input("Ask a question about your documents"):
         "query": prompt,
         "rewrite_query": rewrite_query,
         "extract_keywords_with_llm": extract_keywords_with_llm,
-        "chunking_mode": chunking_mode
     }
     
     # Select endpoint based on preview option

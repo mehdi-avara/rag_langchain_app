@@ -139,6 +139,7 @@ class MyCustomTool(Runnable):
         pass
 
 def end_node(state: GraphState) -> GraphState:
+    
     return state  # No-op, just returns the state
 
 def build_answer_graph() -> Graph:

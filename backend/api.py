@@ -58,7 +58,7 @@ class QueryRequest(BaseModel):
     query: str
     rewrite_query: bool = False
     extract_keywords_with_llm: bool = False
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed
+    # chunking_mode: ChunkingMode = ChunkingMode.token_fixed
 
 
 app.include_router(auth_router,prefix="/auth",tags=["Auth"])
@@ -75,7 +75,6 @@ async def upload_file(
 ):
     contents = await file.read()
     chunking_mode = request.chunking_mode if request else ChunkingMode.sentence_3
-    print(chunking_mode)
     doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
     return {"doc_id": doc_id}
 
@@ -127,7 +126,7 @@ async def chat(
     })
     return result
 
-@app.post("/query")
+@app.post("/query/preview")
 async def query_docs(
     request: QueryRequest,
     current_user: User = Depends(get_current_user),
@@ -139,48 +138,20 @@ async def query_docs(
     if request.rewrite_query:
         query = await call_llm_to_rewrite(query)
     
-    # Keyword extraction
-    if request.extract_keywords_with_llm:
-        keywords = await call_llm_to_extract_keywords(query)
-    else:
-        keywords = basic_keyword_extraction(query)
-    
+
+
     # Build answer graph with specified chunking mode
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
         "question": query,
-        "keywords": keywords,
+        "keywords": query,
         "route": "hybrid",
-        "chunking_mode": request.chunking_mode,
+        # "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
         "mode": "full",
         "db": db
     })
-    
-    return result
 
-@app.post("/query/preview")
-async def preview_query(
-    request: QueryRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    query = request.query
-    
-    # Query rewriting if requested
-    if request.rewrite_query:
-        query = await call_llm_to_rewrite(query)
-    
-    # Get relevant chunks
-    answer_graph = build_answer_graph()
-    result = await answer_graph.ainvoke({
-        "question": query,
-        "route": "keyword",
-        "user_id": current_user.id,
-        "mode": "end",
-        "db": db,  # Pass the database session
-    })
-    
     # Transform LangChain Document objects into dictionaries
     retrieved_chunks = []
     for doc in result["docs"]:
