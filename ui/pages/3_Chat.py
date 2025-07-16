@@ -106,7 +106,8 @@ if prompt := st.chat_input("Ask a question about your documents"):
                             height=1000,
                             zoom_level=1.2,                    # 120% zoom
                             viewer_align="center",             # Center alignment
-                            show_page_separator=True           # Show separators between pages
+                            show_page_separator=True,           # Show separators between pages
+                            key=f"{pdf_path},{i}"
                         )
                     else:
                         st.warning("PDF file not found.")
