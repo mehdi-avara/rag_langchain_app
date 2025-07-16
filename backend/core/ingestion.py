@@ -144,7 +144,7 @@ async def ingest_pdf_as_single_document(file_bytes: bytes, filename: str, user_i
                 "token_count": len(chunck.split()),
                 "chunk_type": "text",
             })
-            ids.append(doc.id)
+            ids.append(f"{doc.id},{i},{j}")
             
             db.add_all([holder])
             db.commit()
