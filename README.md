@@ -57,6 +57,6 @@ pytest tests/
 
 The application is containerized using Docker. Use the provided `docker-compose.yml` to deploy the services.
 
-## License
 
-This project is licensed under the MIT License. 
+A problem here is one thing that when I add a text it is ok but htere is a problem in adding to the chunks for semantic search
+I should search and get this problem

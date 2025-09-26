@@ -21,7 +21,7 @@ upload_type = st.radio(
 # Chunking mode selection (for both upload types)
 chunking_mode = st.selectbox(
     "Select chunking strategy",
-    ["sentence-3", "paragraph", "token-fixed"],
+    ["sentence-3", "paragraph", "word-fixed"],
     help="""Choose how to split the document:
     - sentence-3: Groups text into chunks of 3 sentences
     - paragraph: Splits text by paragraphs

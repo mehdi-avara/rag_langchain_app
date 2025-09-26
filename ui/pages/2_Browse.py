@@ -47,7 +47,7 @@ def load_chunks(doc_id, page=1):
 
 # Display chunks if viewing
 if st.session_state["viewing_chunks"]:
-    st.markdown("### Document Chunks")
+    st.markdown("### Document parts")
     doc = next((d for d in st.session_state["docs"] if d["id"] == st.session_state["viewing_chunks"]), None)
     if doc:
         st.write(f"📝 {doc['filename']}")
@@ -97,7 +97,7 @@ elif st.session_state["docs"]:
         with col2:
             st.write(f"📄 {doc['n_pages']} pages")
         with col3:
-            st.write(f"🧩 {doc['n_chunks']} chunks")
+            st.write(f"🧩 {doc['n_chunks']} Parts")
         with col4:
             if st.button("🗑️", key=f"delete_{doc['id']}"):
                 try:

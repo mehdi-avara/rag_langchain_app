@@ -1,7 +1,7 @@
 import streamlit as st
 from components.auth import login
 
-st.title("RAG System")
+st.title("Industorial search engine")
 
 # Check if already logged in
 if "token" in st.session_state:
