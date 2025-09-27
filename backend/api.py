@@ -135,11 +135,15 @@ async def chat(
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
         "question": request.query,
-        "route": "hybrid",  # Default to hybrid search
+        "keywords": request.query,
+        "route": "full",  # Default to hybrid search
         "user_id": current_user.id,
         "db": db,  # Pass the database session
+        "mode": "vector",
     })
-    return result
+    answer = result["answer"]
+    citations = result["citations"]
+    return {"answer": answer, "citations": citations}
 
 @app.post("/query/preview")
 async def query_docs(
@@ -160,7 +164,7 @@ async def query_docs(
     result = await answer_graph.ainvoke({
         "question": query,
         "keywords": query,
-        "route": "hybrid",
+        "route": "search",
         # "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
         "mode": "hybrid",

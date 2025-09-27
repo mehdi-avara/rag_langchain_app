@@ -5,6 +5,7 @@ from langgraph.graph import Graph, StateGraph
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
+from openai import base_url
 from sqlalchemy.orm import Session
 
 from db.models import Document as DBDocument
@@ -31,22 +32,20 @@ class GraphState(TypedDict):
 async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""
     question = state["question"]
-    route = state["route"]
     mode = state.get("mode", "hybrid")  # Default to full mode if not specified
     db = state.get("db")  # Assume db session is passed in state
     keyword_retriever = FullTextRetrieverFromDB(db)
     vector_store = PostgresVectorStore(db)
     vector_retriever = vector_store.as_retriever(
-        search_kwargs={"k": 6 if mode == "hybrid" else 3}  # Use fewer results for preview
+        search_kwargs={"k": 6 if mode == "vector" else 3}  # Use fewer results for preview
     )
     
     # Manual routing logic
-    if route == "keyword":
+    if mode == "keyword":
         docs = await keyword_retriever.ainvoke(question)
-        print(f"Keyword retrieval returned {len(docs)} documents.")
-    elif route == "vector":
+    elif mode == "vector":
         docs = vector_retriever.invoke(question)
-    elif route == "hybrid":
+    elif mode == "hybrid":
         docs = vector_retriever.invoke(question)
         holder = await keyword_retriever.ainvoke(question)
         docs += holder
@@ -74,17 +73,20 @@ Answer:"""
     
     # Initialize LLM
     llm = ChatOpenAI(
-        model="gpt-4o",
+        base_url=settings.openai_base_url,
+        model="gemma_3_vision",
         temperature=0.1,
         openai_api_key=settings.openai_api_key
     )
-    
     # Generate answer
     chain = prompt | llm
+    context = "\n\n".join(doc.page_content for doc in docs)
+    print(f"context: {context}")
     result = await chain.ainvoke({
-        "context": "\n\n".join(doc.page_content for doc in docs),
+        "context": context,
         "question": question
     })
+    print(f"result: {result}")
     
     # Extract citations
     citations = []
@@ -154,7 +156,7 @@ def build_answer_graph() -> Graph:
     workflow.add_node("end", end_node)
     # Add edges with conditional routing
     def should_generate(state: GraphState) -> str:
-        return "generate" if state.get("mode", "full") == "full" else "end"
+        return "generate" if state.get("route", "full") == "full" else "end"
     
     workflow.add_conditional_edges(
         "retrieve",
