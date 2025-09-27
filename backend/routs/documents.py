@@ -1,6 +1,8 @@
 from typing import List
 from fastapi import Depends, APIRouter, status, Response , HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from pathlib import Path
 
 
 from db.models import User,Document,Chunk
@@ -87,3 +89,38 @@ async def browse_chunks(
         .all()
     
     return chunks 
+
+@router.get("/download/{doc_id}")
+async def download_pdf(
+    doc_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Download the original PDF file for a document.
+    """
+    # Get document
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check ownership
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this document")
+    
+    # Check if the document has a file path
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="No file path found for this document")
+    
+    file_path = Path(doc.file_path)
+    
+    # Check if file exists
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    
+    # Return the file for download
+    return FileResponse(
+        path=file_path,
+        filename=file_path.name,
+        media_type='application/pdf'
+    )
