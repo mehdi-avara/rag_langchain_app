@@ -26,8 +26,8 @@ async def delete_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    from retrieval.vector.chroma_store import ChromaStore
-    chat_store = ChromaStore()
+    from retrieval.vector.postgres_store import PostgresVectorStore
+    chat_store = PostgresVectorStore(db)
     chat_store.delete_by_doc_id(doc_id)
     doc = db.query(Document).filter(
         Document.id == doc_id,

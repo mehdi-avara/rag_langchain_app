@@ -8,7 +8,7 @@ from langchain_core.documents import Document
 from sqlalchemy.orm import Session
 
 from db.models import Document as DBDocument
-from retrieval.vector.chroma_store import ChromaStore
+from retrieval.vector.postgres_store import PostgresVectorStore
 from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
 
@@ -35,7 +35,8 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     mode = state.get("mode", "hybrid")  # Default to full mode if not specified
     db = state.get("db")  # Assume db session is passed in state
     keyword_retriever = FullTextRetrieverFromDB(db)
-    vector_retriever = ChromaStore().as_retriever(
+    vector_store = PostgresVectorStore(db)
+    vector_retriever = vector_store.as_retriever(
         search_kwargs={"k": 6 if mode == "hybrid" else 3}  # Use fewer results for preview
     )
     
@@ -44,9 +45,9 @@ async def retrieve_docs(state: GraphState) -> GraphState:
         docs = await keyword_retriever.ainvoke(question)
         print(f"Keyword retrieval returned {len(docs)} documents.")
     elif route == "vector":
-        docs = await vector_retriever.ainvoke(question)
+        docs = vector_retriever.invoke(question)
     elif route == "hybrid":
-        docs = await vector_retriever.ainvoke(question)
+        docs = vector_retriever.invoke(question)
         holder = await keyword_retriever.ainvoke(question)
         docs += holder
     else:

@@ -14,12 +14,14 @@ from bidi.algorithm import get_display
 
 from settings import get_settings
 from db.models import Document, Chunk, ImageChunk
-from retrieval.vector.chroma_store import ChromaStore
+from retrieval.vector.postgres_store import PostgresVectorStore
 from retrieval.keyword.es_bm25 import get_bm25_retriever
 from core.chunking import ChunkingMode, chunk_text
+from components.embedding import JinaAPIEmbeddings
 
 settings = get_settings()
 aclient = AsyncOpenAI(api_key=settings.openai_api_key)
+embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
 
 async def generate_image_caption(image: Image.Image) -> str:
     """Generate caption for image using GPT-4 Vision."""
@@ -52,11 +54,26 @@ async def generate_image_caption(image: Image.Image) -> str:
 
     return response.choices[0].message.content
 
+async def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:
+    """Generate embeddings for a list of text chunks."""
+    try:
+        return embeddings.embed_documents(chunks)
+    except Exception as e:
+        print(f"Error generating embeddings: {e}")
+        # Return empty embeddings if generation fails
+        return [[] for _ in chunks]
+
 async def detect_type(file_bytes: bytes) -> str:
     """Detect if file is PDF or image."""
     if file_bytes.startswith(b'%PDF'):
         return 'pdf'
-    return 'image'
+    if file_bytes.startswith(b'---'):
+        return 'md'
+    if file_bytes.startswith(b'#'):
+        return 'txt'
+    if file_bytes.startswith(b'![') and file_bytes.endswith(b']'):
+        return 'image'
+    return 'unknown'
 
 async def extract_text_and_images_from_pdf(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
     """Extract text and images from PDF and return (text, page_count, images_info)."""
@@ -178,15 +195,25 @@ async def extract_text_from_image(file_bytes: bytes) -> Tuple[str, int, List[Dic
 
     return text, 1, images_info
 
+async def extract_text_from_md(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
+    """Extract text from markdown file."""
+    text = file_bytes.decode('utf-8')
+    return text, 1, []
 
 async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.sentence_3) -> int:
     """Main ingestion pipeline."""
     # Detect file type and extract text/images
     file_type = await detect_type(file_bytes)
+    print(f"File type: {file_type}")
     if file_type == 'pdf':
         text, n_pages, images_info = await extract_text_and_images_from_pdf(file_bytes)
-    else:
+    elif file_type == 'image':
         text, n_pages, images_info = await extract_text_from_image(file_bytes)
+    elif file_type == 'md' or file_type == 'txt':
+        text, n_pages, images_info = await extract_text_from_md(file_bytes)
+    else:
+        raise ValueError("Unsupported file type")
+    
 
     # Split into chunks using specified mode
     chunks = chunk_text(text, chunking_mode)
@@ -200,6 +227,11 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
     )
     db.add(doc)
     db.flush()
+
+    # Generate embeddings for text chunks
+    text_embeddings = []
+    if chunks:
+        text_embeddings = await generate_embeddings_for_chunks(chunks)
 
     # Create chunk records
     chunk_records = []
@@ -215,6 +247,9 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         end_pos = start_pos + len(chunk)
         current_pos = end_pos
 
+        # Get embedding for this chunk
+        chunk_embedding = text_embeddings[i] if i < len(text_embeddings) else None
+
         holder = Chunk(
             doc_id=doc.id,
             page_num=i // (approx_chunks_per_page),  # Approximate page number
@@ -222,18 +257,29 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
             content=chunk,
             start_pos=start_pos,
             end_pos=end_pos,
-            chunk_type="text"
+            chunk_type="text",
+            embedding=chunk_embedding
         )
         chunk_records.append(holder)
 
+    # Generate embeddings for image captions
+    image_captions = [img_info['caption'] for img_info in images_info]
+    image_embeddings = []
+    if image_captions:
+        image_embeddings = await generate_embeddings_for_chunks(image_captions)
+
     # Add image chunks
-    for img_info in images_info:
+    for i, img_info in enumerate(images_info):
+        # Get embedding for this image caption
+        image_embedding = image_embeddings[i] if i < len(image_embeddings) else None
+        
         chunk = Chunk(
             doc_id=doc.id,
             page_num=img_info['page_num'],
             token_count=len(img_info['caption'].split()),
             content=img_info['caption'],
-            chunk_type="image"
+            chunk_type="image",
+            embedding=image_embedding
         )
         db.add(chunk)
         db.flush()  # Get chunk.id
@@ -258,36 +304,18 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         chunk.es_id = f"{doc.id}_{i}"
 
     db.flush()
-
-    # Store in Chroma
-    chroma_store = ChromaStore()
-    chroma_store.add_texts(
-        texts=[c.content for c in chunk_records],
-        metadatas=[{
-            "doc_id": doc.id,
-            "chunk_id": c.id,
-            "page_num": c.page_num,
-            "chunk_type": c.chunk_type,
-            "position": c.start_pos if c.chunk_type == "text" else None
-        } for c in chunk_records],
-        ids=[c.vdb_id for c in chunk_records]
-    )
-    chroma_store.store.persist()
-
-    # Store in Elasticsearch
-    bm25 = get_bm25_retriever()
-    await bm25.add_texts(
-        texts=[c.content for c in chunk_records],
-        metadatas=[{
-            "doc_id": doc.id,
-            "chunk_id": c.id,
-            "page_num": c.page_num,
-            "chunk_type": c.chunk_type,
-            "position": c.start_pos if c.chunk_type == "text" else None
-        } for c in chunk_records],
-        ids=[c.es_id for c in chunk_records]
-    )
-    bm25.save()
-
     db.commit()
+    
+    # Populate PostgreSQL vector store with the new chunks
+    vector_store = PostgresVectorStore(db)
+    chunk_texts = [chunk.content for chunk in chunk_records]
+    chunk_metadatas = [{"chunk_id": chunk.id, "doc_id": chunk.doc_id} for chunk in chunk_records]
+    chunk_ids = [chunk.vdb_id for chunk in chunk_records]
+    
+    vector_store.add_texts(
+        texts=chunk_texts,
+        metadatas=chunk_metadatas,
+        ids=chunk_ids
+    )
+    
     return doc.id 

@@ -69,12 +69,27 @@ app.include_router(document_router,prefix="/documents",tags=["document"])
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    request: UploadRequest = None,
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     contents = await file.read()
-    chunking_mode = request.chunking_mode if request else ChunkingMode.sentence_3
+    doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
+    return {"doc_id": doc_id}
+
+@app.post("/upload-md-zip")
+async def upload_md_file(
+    file: UploadFile = File(...),
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a markdown file and process it."""
+    
+    if not file.filename.lower().endswith('.zip'):
+        pass
+                
+    contents = await file.read()
     doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
     return {"doc_id": doc_id}
 
