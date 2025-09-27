@@ -9,7 +9,6 @@ from openai import AsyncOpenAI
 from db.models import User, Document, Chunk
 from db.init_db import get_db
 from deps import get_current_user
-from core.ingestion import  ingest_pdf_as_single_document
 from core.simple_ingestion import  ingest_file
 from core.agents.langgraph import build_answer_graph
 from core.chunking  import ChunkingMode
@@ -114,15 +113,15 @@ async def upload_pdf_as_images(
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must have .pdf extension")
     
-# Use the new ingestion function
-    doc_id = await ingest_pdf_as_single_document(
-        file_bytes=file_bytes,
-        filename=file.filename,
-        user_id=current_user.id,
-        db=db,
-        chunking_mode=chunking_mode
-    )
-    return {"message": "PDF processed successfully", "doc_id": doc_id}
+# # Use the new ingestion function
+#     doc_id = await ingest_pdf_as_single_document(
+#         file_bytes=file_bytes,
+#         filename=file.filename,
+#         user_id=current_user.id,
+#         db=db,
+#         chunking_mode=chunking_mode
+#     )
+    raise HTTPException(status_code=501, detail="Not implemented")
 
 
 # Chat route
