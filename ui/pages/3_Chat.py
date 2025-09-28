@@ -23,9 +23,7 @@ for msg in st.session_state["history"]:
     render_message(
         role=msg["role"],
         content=msg["content"],
-        citations=msg.get("citations"),
         retrieved_chunks=msg.get("retrieved_chunks"),
-        token=get_token()
     )
 
 # Advanced options in sidebar
@@ -94,9 +92,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
             render_message(
                 role="assistant",
                 content=result.get("answer", "Sorry, I couldn't process your request."),
-                citations=result.get("citations", []),
                 retrieved_chunks=result.get("retrieved_chunks", []),
-                token=get_token()
             )
             
         except requests.exceptions.RequestException as e:

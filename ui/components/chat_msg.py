@@ -4,7 +4,6 @@ from typing import List, Dict, Any, Optional
 import os
 import re
 import markdown
-from markdown.extensions import codehilite, fenced_code
 
 from settigs import get_settings
 
@@ -57,9 +56,6 @@ def show_citation_preview(chunk_id: int, token: str):
         # Render markdown content
         render_markdown_content(chunk.get("content", ""))
         
-        # Add close button
-        if st.button("❌ Close Preview", key=f"close_{chunk_id}"):
-            st.rerun()
                 
     except requests.exceptions.RequestException:
         st.error(f"Failed to fetch citation {chunk_id}")

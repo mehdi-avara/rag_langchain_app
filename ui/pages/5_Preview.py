@@ -4,7 +4,10 @@ import os
 from components.auth import require_auth, get_token
 from components.chat_msg import render_markdown_content
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+from settigs import get_settings
+
+settings = get_settings()
+API_URL = settings.API_URL
 
 # Require authentication
 require_auth()
