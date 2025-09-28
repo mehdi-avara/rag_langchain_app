@@ -13,8 +13,7 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 
 from settings import get_settings
-from db.models import Document, Chunk, ImageChunk
-from retrieval.vector.postgres_store import PostgresVectorStore
+from db.models import Document, Chunk
 from core.chunking import ChunkingMode, chunk_text, token_len
 from components.embedding import JinaAPIEmbeddings
 
