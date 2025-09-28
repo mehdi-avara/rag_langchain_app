@@ -4,11 +4,10 @@ from fastapi import HTTPException
 from langgraph.graph import Graph, StateGraph
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from langchain_core.documents import Document
 from openai import base_url
 from sqlalchemy.orm import Session
 
-from db.models import Document as DBDocument
+from db.models import Chunk
 from retrieval.vector.postgres_store import PostgresVectorStore
 from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
@@ -22,7 +21,7 @@ settings = get_settings()
 class GraphState(TypedDict):
     question: str
     route: str
-    docs: List[Document]
+    chunks: List[Chunk]
     answer: str
     citations: List[int]
     mode: str  # Can be "preview" or "full"
@@ -42,22 +41,22 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     
     # Manual routing logic
     if mode == "keyword":
-        docs = await keyword_retriever.ainvoke(question)
+        chunks = await keyword_retriever.ainvoke(question)
     elif mode == "vector":
-        docs = vector_retriever.invoke(question)
+        chunks = vector_retriever.invoke(question)
     elif mode == "hybrid":
-        docs = vector_retriever.invoke(question)
+        chunks = vector_retriever.invoke(question)
         holder = await keyword_retriever.ainvoke(question)
-        docs += holder
+        chunks += holder
     else:
-        docs = []
+        chunks = []
     
-    return {**state, "docs": docs}
+    return {**state, "chunks": chunks}
 
 async def generate_answer(state: GraphState) -> GraphState:
     """Generate answer using retrieved documents."""
     question = state["question"]
-    docs = state["docs"]
+    chunks = state["chunks"]
     
     # Create prompt template
     template = """Use ONLY the provided context to answer the question. Cite sources using [chunk:id].
@@ -80,66 +79,25 @@ Answer:"""
     )
     # Generate answer
     chain = prompt | llm
-    context = "\n\n".join(doc.page_content for doc in docs)
-    # print(f"context: {context}")
+    context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
     result = await chain.ainvoke({
         "context": context,
         "question": question
     })
-    # print(f"result: {result}")
     
     # Extract citations
     citations = []
-    for doc in docs:
-        if "chunk_id" in doc.metadata:
-            citations.append(doc.metadata["chunk_id"])
+    for chunk in chunks:
+        if "chunk_id" in chunk.metadata:
+            citations.append(chunk.metadata["chunk_id"])
     
     return {
         **state,
         "answer": result.content.strip(),
+        "context": context,
         "citations": citations
     }
 
-class DocumentEnricher(Runnable):
-    """A tool that enriches documents with additional metadata."""
-    
-    def __init__(self, enrichment_type: str):
-        self.enrichment_type = enrichment_type
-    
-    async def ainvoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        docs = state["docs"]
-        enriched_docs = []
-        
-        for doc in docs:
-            # Add your enrichment logic here
-            enriched_doc = DBDocument(
-                page_content=doc.page_content,
-                metadata={
-                    **doc.metadata,
-                    "enriched": True,
-                    "enrichment_type": self.enrichment_type
-                }
-            )
-            enriched_docs.append(enriched_doc)
-        
-        return {**state, "docs": enriched_docs}
-    
-    def invoke(self, input: Dict[str, Any]) -> Dict[str, Any]:
-        """Synchronous version of ainvoke."""
-        raise NotImplementedError("DocumentEnricher only supports async usage via `ainvoke`.")
-
-class MyCustomTool(Runnable):
-    def __init__(self, some_param: str):
-        self.some_param = some_param
-    
-    async def ainvoke(self, input: str, **kwargs) -> Dict[str, Any]:
-        # Your tool's logic here
-        result = await self._process_input(input)
-        return {"result": result}
-    
-    async def _process_input(self, input: str):
-        # Implement your processing logic
-        pass
 
 def end_node(state: GraphState) -> GraphState:
     
@@ -172,26 +130,3 @@ def build_answer_graph() -> Graph:
     
     # Compile
     return workflow.compile()
-
-async def build_answer_graph_with_id(doc_id: int, question: str, db: Session) -> Tuple[str, List[Dict], float]:
-    """Build answer graph for a specific document."""
-    # Get document
-    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # Initialize graph
-    graph = build_answer_graph()
-    
-    # Run graph
-    result = await graph.ainvoke({
-        "question": question,
-        "route": "hybrid",
-        "docs": [],
-        "answer": "",
-        "citations": [],
-        "mode": "full",
-        "db": db
-    })
-    
-    return result["answer"], result["citations"], 1.0  # Confidence score

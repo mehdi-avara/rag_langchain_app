@@ -141,8 +141,16 @@ async def chat(
         "mode": "vector",
     })
     answer = result["answer"]
-    citations = result["citations"]
-    return {"answer": answer, "citations": citations}
+    retrieved_chunks = []
+    citations = []
+    for chunk in result["chunks"]:
+        retrieved_chunks.append({
+            "content": chunk.content,
+            "doc_id": chunk.doc_id,
+            "chunk_id": chunk.id,
+        })
+        citations.append(chunk.id)
+    return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_chunks}
 
 @app.post("/query/preview")
 async def query_docs(
@@ -172,11 +180,11 @@ async def query_docs(
 
     # Transform LangChain Document objects into dictionaries
     retrieved_chunks = []
-    for doc in result["docs"]:
+    for chunk in result["chunks"]:
         retrieved_chunks.append({
-            "content": doc.page_content,
-            "page_num": doc.metadata.get("page_num", "N/A"),
-            "doc_id": doc.metadata.get("doc_id", None),
+            "content": chunk.content,
+            "doc_id": chunk.doc_id,
+            "chunk_id": chunk.id,
         })
 
     return {"retrieved_chunks": retrieved_chunks}

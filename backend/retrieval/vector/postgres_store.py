@@ -125,20 +125,13 @@ class PostgresVectorRetriever:
         )
         
         # Convert to the format expected by LangChain
-        documents = []
+        chunks = []
         for chunk, similarity in results:
-            doc = Document(
-                page_content=chunk.content,
-                metadata={
-                    "chunk_id": chunk.id,
-                    "doc_id": chunk.doc_id,
-                    "page_num": chunk.page_num,
-                    "chunk_type": chunk.chunk_type,
-                    "similarity": similarity
-                }
-            )
-            documents.append(doc)        
-        return documents
+            if similarity > 0.5:
+                #TODO: similarity check
+                pass
+            chunks.append(chunk)        
+        return chunks
 
     def invoke(self, query: str) -> List[Dict[str, Any]]:
         """Invoke the retriever (alias for get_relevant_documents)."""
