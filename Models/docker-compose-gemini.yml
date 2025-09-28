@@ -1,0 +1,27 @@
+services:
+  llama_cpp_server:
+    image: local/llama.cpp:server-cuda-12.2
+    gpus: all
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./Models:/model:ro
+    command:
+      - -m
+      - /model/google/gemma-3-27b-it-qat-q4_0-gguf/gemma-3-27b-it-q4_0.gguf
+      - --mmproj
+      - /model/google/gemma-3-27b-it-qat-q4_0-gguf/mmproj-model-f16-27B.gguf
+      - --kv-unified
+      - -b
+      - "128"          # start conservative; raise if stable
+      - -t
+      - "18"
+      - -c
+      - "22768"        # 30k ctx is heavy; increase gradually
+      - -ngl
+      - "110"          # 3090 (24GB): start ~60; try 80–110 if VRAM allows
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    restart: unless-stopped

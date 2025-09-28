@@ -15,8 +15,7 @@ from bidi.algorithm import get_display
 from settings import get_settings
 from db.models import Document, Chunk, ImageChunk
 from retrieval.vector.postgres_store import PostgresVectorStore
-from retrieval.keyword.es_bm25 import get_bm25_retriever
-from core.chunking import ChunkingMode, chunk_text
+from core.chunking import ChunkingMode, chunk_text, token_len
 from components.embedding import JinaAPIEmbeddings
 
 settings = get_settings()
@@ -203,17 +202,7 @@ async def extract_text_from_md(file_bytes: bytes) -> Tuple[str, int, List[Dict]]
 async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode = ChunkingMode.sentence_3) -> int:
     """Main ingestion pipeline."""
     # Detect file type and extract text/images
-    file_type = await detect_type(file_bytes)
-    print(f"File type: {file_type}")
-    if file_type == 'pdf':
-        text, n_pages, images_info = await extract_text_and_images_from_pdf(file_bytes)
-    elif file_type == 'image':
-        text, n_pages, images_info = await extract_text_from_image(file_bytes)
-    elif file_type == 'md' or file_type == 'txt':
-        text, n_pages, images_info = await extract_text_from_md(file_bytes)
-    else:
-        raise ValueError("Unsupported file type")
-    
+    text, n_pages, images_info = await extract_text_from_md(file_bytes)
 
     # Split into chunks using specified mode
     chunks = chunk_text(text, chunking_mode)
@@ -243,17 +232,21 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
     current_pos = 0
     # Add text chunks
     for i, chunk in enumerate(chunks):
-        start_pos = text.find(chunk, current_pos)
+        start_pos = current_pos
         end_pos = start_pos + len(chunk)
         current_pos = end_pos
 
         # Get embedding for this chunk
         chunk_embedding = text_embeddings[i] if i < len(text_embeddings) else None
+    
+        # Skip chunks with empty embeddings (indicates embedding generation failed)
+        if chunk_embedding == [] or (isinstance(chunk_embedding, list) and all(not x for x in chunk_embedding)):
+            continue
 
         holder = Chunk(
             doc_id=doc.id,
             page_num=i // (approx_chunks_per_page),  # Approximate page number
-            token_count=len(chunk.split()),
+            token_count=token_len(chunk),
             content=chunk,
             start_pos=start_pos,
             end_pos=end_pos,

@@ -5,7 +5,7 @@ class JinaAPIEmbeddings(Embeddings):
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.model = "jina-embeddings-v3"
-        self.api_url = "https://api.jina.ai/v1/embeddings"
+        self.api_url = "http://10.0.0.10:8088/v1/embeddings"
         self.task = "text-matching"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -14,8 +14,8 @@ class JinaAPIEmbeddings(Embeddings):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": self.model,
-            "task": self.task,
+            # "model": self.model,
+            # "task": self.task,
             "input": texts
         }
         response = requests.post(self.api_url, headers=headers, json=payload)

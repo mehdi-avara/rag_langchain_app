@@ -96,19 +96,33 @@ if prompt := st.chat_input("Ask a question about your documents"):
                     st.markdown(chunk.get("content", ""), unsafe_allow_html=True)
 
                     if os.path.exists(pdf_path):
-                        st.markdown("**PDF Preview:**")
-
-# Display PDF with custom zoom, alignment, and separators
-                        pdf_viewer(
-                            pdf_path,
-                            scroll_to_page=page_num+1,
-                            width=700,
-                            height=1000,
-                            zoom_level=1.2,                    # 120% zoom
-                            viewer_align="center",             # Center alignment
-                            show_page_separator=True,           # Show separators between pages
-                            key=f"{pdf_path},{i}"
+                        st.markdown("**Download PDF:**")
+                        
+                        # Read the PDF file and provide download button
+                        with open(pdf_path, "rb") as pdf_file:
+                            pdf_bytes = pdf_file.read()
+                        
+                        st.download_button(
+                            label=f"📥 Download {doc_id}.pdf",
+                            data=pdf_bytes,
+                            file_name=f"{doc_id}.pdf",
+                            mime="application/pdf",
+                            key=f"download_{doc_id}_{i}"
                         )
+                        
+                        # Commented out PDF preview section
+                        # st.markdown("**PDF Preview:**")
+                        # # Display PDF with custom zoom, alignment, and separators
+                        # pdf_viewer(
+                        #     pdf_path,
+                        #     scroll_to_page=page_num+1,
+                        #     width=700,
+                        #     height=1000,
+                        #     zoom_level=1.2,                    # 120% zoom
+                        #     viewer_align="center",             # Center alignment
+                        #     show_page_separator=True,           # Show separators between pages
+                        #     key=f"{pdf_path},{i}"
+                        # )
                     else:
                         st.warning("PDF file not found.")
         else:

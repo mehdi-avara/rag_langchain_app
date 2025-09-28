@@ -37,14 +37,14 @@ def chunk_by_paragraph(text: str) -> List[str]:
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     return paragraphs
 
-def chunk_by_tokens(text: str, max_tokens: int = 800, overlap: int = 100, model: str = "gpt-4o-mini") -> List[str]:
-    """Split text into chunks of ~max_tokens using actual token counts."""
-
+def token_len(s: str) -> int:
+    model = "gpt-4o-mini"
     enc = tiktoken.encoding_for_model(model)
+    return len(enc.encode(s))
 
-    def token_len(s: str) -> int:
-        return len(enc.encode(s))
 
+def chunk_by_tokens(text: str, max_tokens: int = 800, overlap: int = 100, ) -> List[str]:
+    """Split text into chunks of ~max_tokens using actual token counts."""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=max_tokens,
         chunk_overlap=overlap,
