@@ -189,6 +189,7 @@ async def query_docs(
 
     return {"retrieved_chunks": retrieved_chunks}
 
+
 @app.get("/answer/{doc_id}")
 async def get_answer(
     doc_id: int,
@@ -197,37 +198,38 @@ async def get_answer(
     db: Session = Depends(get_db)
 ):
     # Get document
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    # doc = db.query(Document).filter(Document.id == doc_id).first()
+    # if not doc:
+    #     raise HTTPException(status_code=404, detail="Document not found")
     
-    # Check ownership
-    if doc.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this document")
+    # # Check ownership
+    # if doc.owner_id != current_user.id:
+    #     raise HTTPException(status_code=403, detail="Not authorized to access this document")
     
-    # Get answer and sources
-    answer, sources, confidence = await build_answer_graph(doc_id, question, db)
+    # # Get answer and sources
+    # answer, sources, confidence = await build_answer_graph(doc_id, question, db)
     
-    # Format sources
-    formatted_sources = []
-    for source in sources:
-        chunk = db.query(Chunk).filter(Chunk.id == source["chunk_id"]).first()
-        if chunk:
-            formatted_sources.append(ChunkSource(
-                doc_id=doc.id,
-                filename=doc.filename,
-                page_num=chunk.page_num,
-                chunk_type=chunk.chunk_type,
-                position=chunk.start_pos if chunk.chunk_type == "text" else None,
-                start_pos=chunk.start_pos,
-                end_pos=chunk.end_pos
-            ))
+    # # Format sources
+    # formatted_sources = []
+    # for source in sources:
+    #     chunk = db.query(Chunk).filter(Chunk.id == source["chunk_id"]).first()
+    #     if chunk:
+    #         formatted_sources.append(ChunkSource(
+    #             doc_id=doc.id,
+    #             filename=doc.filename,
+    #             page_num=chunk.page_num,
+    #             chunk_type=chunk.chunk_type,
+    #             position=chunk.start_pos if chunk.chunk_type == "text" else None,
+    #             start_pos=chunk.start_pos,
+    #             end_pos=chunk.end_pos
+    #         ))
     
-    return AnswerResponse(
-        answer=answer,
-        sources=formatted_sources,
-        confidence=confidence
-    ) 
+    # return AnswerResponse(
+    #     answer=answer,
+    #     sources=formatted_sources,
+    #     confidence=confidence
+    # ) 
+    raise HTTPException(status_code=501, detail="Not implemented")
 
 
 async def call_llm_to_rewrite(query: str) -> str:
