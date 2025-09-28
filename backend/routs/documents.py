@@ -134,4 +134,13 @@ async def get_chunk(
     chunk = db.query(Chunk).filter(Chunk.id == chunk_id).first()
     if not chunk:
         raise HTTPException(status_code=404, detail="Chunk not found")
-    return chunk
+    result = {
+        "id": chunk.id,
+        "doc_id": chunk.doc_id,
+        "page_num": chunk.page_num,
+        "start_pos": chunk.start_pos,
+        "end_pos": chunk.end_pos,
+        "chunk_type": chunk.chunk_type,
+        "content": chunk.content,
+    }
+    return result
