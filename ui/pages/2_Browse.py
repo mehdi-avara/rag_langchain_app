@@ -3,7 +3,10 @@ import requests
 import os
 from components.auth import require_auth, get_token
 
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+from settigs import get_settings
+
+settings = get_settings()
+API_URL = settings.API_URL
 
 # Require authentication
 require_auth()
@@ -135,10 +138,13 @@ else:
 
 # Navigation
 st.markdown("---")
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
-    if st.button("← Back to Upload"):
+    if st.button("← Back to Upload", use_container_width=True):
         st.switch_page("pages/1_Upload.py")
 with col2:
-    if st.button("Chat with Documents →"):
-        st.switch_page("pages/3_Chat.py") 
+    if st.button("💬 Chat with Documents", use_container_width=True):
+        st.switch_page("pages/3_Chat.py")
+with col3:
+    if st.button("🔍 Preview Mode", use_container_width=True):
+        st.switch_page("pages/5_Preview.py") 

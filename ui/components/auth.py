@@ -1,9 +1,11 @@
 import streamlit as st
 import requests
 from typing import Optional
-import os
 
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+from settigs import get_settings
+
+settings = get_settings()
+API_URL = settings.API_URL
 
 def login(username: str, password: str) -> Optional[str]:
     """Attempt to log in and return JWT token if successful."""

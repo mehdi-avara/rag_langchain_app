@@ -4,6 +4,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     FILES_ADDRESS: str
+    API_URL: str
     class Config:
         env_file = ".env"
         case_sensitive = False

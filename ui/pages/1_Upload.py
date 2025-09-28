@@ -2,8 +2,10 @@ import streamlit as st
 import requests
 import os
 from components.auth import require_auth, get_token
+from settigs import get_settings
 
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+settings = get_settings()
+API_URL = settings.API_URL
 
 # Require authentication
 require_auth()
