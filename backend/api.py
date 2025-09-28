@@ -166,7 +166,7 @@ async def query_docs(
         "route": "search",
         # "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
-        "mode": "hybrid",
+        "mode": "vector",
         "db": db
     })
 

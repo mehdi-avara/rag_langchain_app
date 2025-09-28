@@ -81,12 +81,12 @@ Answer:"""
     # Generate answer
     chain = prompt | llm
     context = "\n\n".join(doc.page_content for doc in docs)
-    print(f"context: {context}")
+    # print(f"context: {context}")
     result = await chain.ainvoke({
         "context": context,
         "question": question
     })
-    print(f"result: {result}")
+    # print(f"result: {result}")
     
     # Extract citations
     citations = []

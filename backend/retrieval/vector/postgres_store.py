@@ -48,11 +48,9 @@ class PostgresVectorStore:
         """Perform similarity search using PostgreSQL vector operations."""
         # Generate embedding for the query
         query_embedding = self.embeddings.embed_query(query)
-        
         # Build the SQL query for vector similarity search
         # Format the embedding as a PostgreSQL vector string
         embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        
         if doc_id:
             # Search within a specific document
             sql = text(f"""

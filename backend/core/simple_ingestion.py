@@ -236,10 +236,10 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         # Get embedding for this chunk
         chunk_embedding = text_embeddings[i] if i < len(text_embeddings) else None
     
-        # Skip chunks with empty embeddings (indicates embedding generation failed)
-        if chunk_embedding == [] or (isinstance(chunk_embedding, list) and all(not x for x in chunk_embedding)):
-            continue
-
+        # # Skip chunks with empty embeddings (indicates embedding generation failed)
+        # if chunk_embedding == [] or (isinstance(chunk_embedding, list) and all(not x for x in chunk_embedding)):
+        #     continue
+        
         holder = Chunk(
             doc_id=doc.id,
             page_num=i // (approx_chunks_per_page),  # Approximate page number
@@ -257,19 +257,20 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         chunk.vdb_id = f"{doc.id}_{i}"
         chunk.es_id = f"{doc.id}_{i}"
 
+    db.bulk_save_objects(chunk_records)
     db.flush()
     db.commit()
     
-    # Populate PostgreSQL vector store with the new chunks
-    vector_store = PostgresVectorStore(db)
-    chunk_texts = [chunk.content for chunk in chunk_records]
-    chunk_metadatas = [{"chunk_id": chunk.id, "doc_id": chunk.doc_id} for chunk in chunk_records]
-    chunk_ids = [chunk.vdb_id for chunk in chunk_records]
+    # # Populate PostgreSQL vector store with the new chunks
+    # vector_store = PostgresVectorStore(db)
+    # chunk_texts = [chunk.content for chunk in chunk_records]
+    # chunk_metadatas = [{"chunk_id": chunk.id, "doc_id": chunk.doc_id} for chunk in chunk_records]
+    # chunk_ids = [chunk.vdb_id for chunk in chunk_records]
     
-    vector_store.add_texts(
-        texts=chunk_texts,
-        metadatas=chunk_metadatas,
-        ids=chunk_ids
-    )
+    # vector_store.add_texts(
+    #     texts=chunk_texts,
+    #     metadatas=chunk_metadatas,
+    #     ids=chunk_ids
+    # )
     
     return doc.id 
