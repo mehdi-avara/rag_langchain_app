@@ -31,7 +31,7 @@ class GraphState(TypedDict):
 
 async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""
-    question = state["question"]
+    question = f"search_query: {state["question"]}"
     mode = state.get("mode", "hybrid")  # Default to full mode if not specified
     db = state.get("db")  # Assume db session is passed in state
     keyword_retriever = FullTextRetrieverFromDB(db)

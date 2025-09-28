@@ -55,12 +55,8 @@ async def generate_image_caption(image: Image.Image) -> str:
 
 async def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:
     """Generate embeddings for a list of text chunks."""
-    try:
-        return embeddings.embed_documents(chunks)
-    except Exception as e:
-        print(f"Error generating embeddings: {e}")
-        # Return empty embeddings if generation fails
-        return [[] for _ in chunks]
+    return embeddings.embed_documents(chunks)
+
 
 async def detect_type(file_bytes: bytes) -> str:
     """Detect if file is PDF or image."""
@@ -219,8 +215,9 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
 
     # Generate embeddings for text chunks
     text_embeddings = []
+    embedding_chunks = [f"search_document: {c}" for c in chunks]
     if chunks:
-        text_embeddings = await generate_embeddings_for_chunks(chunks)
+        text_embeddings = await generate_embeddings_for_chunks(embedding_chunks)
 
     # Create chunk records
     chunk_records = []
@@ -254,42 +251,6 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
             embedding=chunk_embedding
         )
         chunk_records.append(holder)
-
-    # Generate embeddings for image captions
-    image_captions = [img_info['caption'] for img_info in images_info]
-    image_embeddings = []
-    if image_captions:
-        image_embeddings = await generate_embeddings_for_chunks(image_captions)
-
-    # Add image chunks
-    for i, img_info in enumerate(images_info):
-        # Get embedding for this image caption
-        image_embedding = image_embeddings[i] if i < len(image_embeddings) else None
-        
-        chunk = Chunk(
-            doc_id=doc.id,
-            page_num=img_info['page_num'],
-            token_count=len(img_info['caption'].split()),
-            content=img_info['caption'],
-            chunk_type="image",
-            embedding=image_embedding
-        )
-        db.add(chunk)
-        db.flush()  # Get chunk.id
-
-        chunk_records.append(chunk)
-
-        # Create image chunk record
-        image_chunk = ImageChunk(
-            chunk_id=chunk.id,
-            image_data=img_info['image_data'],
-            caption=img_info['caption'],
-            position=img_info['position']
-        )
-        db.add(image_chunk)
-
-    db.bulk_save_objects(chunk_records)
-    db.flush()
 
     # Update chunk IDs
     for i, chunk in enumerate(chunk_records):
