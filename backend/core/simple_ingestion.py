@@ -261,16 +261,6 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
     db.flush()
     db.commit()
     
-    # # Populate PostgreSQL vector store with the new chunks
-    # vector_store = PostgresVectorStore(db)
-    # chunk_texts = [chunk.content for chunk in chunk_records]
-    # chunk_metadatas = [{"chunk_id": chunk.id, "doc_id": chunk.doc_id} for chunk in chunk_records]
-    # chunk_ids = [chunk.vdb_id for chunk in chunk_records]
-    
-    # vector_store.add_texts(
-    #     texts=chunk_texts,
-    #     metadatas=chunk_metadatas,
-    #     ids=chunk_ids
-    # )
+
     
     return doc.id 

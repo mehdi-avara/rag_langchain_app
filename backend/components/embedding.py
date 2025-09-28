@@ -9,19 +9,16 @@ class JinaAPIEmbeddings(Embeddings):
         self.task = "text-matching"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        # print(f"texts: {texts}")
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         payload = {
-            # "model": self.model,
-            # "task": self.task,
+
             "input": texts
         }
         response = requests.post(self.api_url, headers=headers, json=payload)
         response.raise_for_status()
-        # print(f"response: {response.json()}")
         
         return [item["embedding"] for item in response.json()["data"]]
 
