@@ -49,6 +49,7 @@ class AnswerResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     query: str
+    doc_ids: List[int] | None = None
 
 class UploadRequest(BaseModel):
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed
@@ -57,6 +58,7 @@ class QueryRequest(BaseModel):
     query: str
     rewrite_query: bool = False
     extract_keywords_with_llm: bool = False
+    doc_ids: List[int] | None = None
     # chunking_mode: ChunkingMode = ChunkingMode.token_fixed
 
 
@@ -139,6 +141,7 @@ async def chat(
         "user_id": current_user.id,
         "db": db,  # Pass the database session
         "mode": "vector",
+        "doc_ids": request.doc_ids
     })
     answer = result["answer"]
     retrieved_chunks = []
@@ -175,7 +178,8 @@ async def query_docs(
         # "chunking_mode": request.chunking_mode,
         "user_id": current_user.id,
         "mode": "vector",
-        "db": db
+        "db": db,
+        "doc_ids": request.doc_ids
     })
 
     # Transform LangChain Document objects into dictionaries

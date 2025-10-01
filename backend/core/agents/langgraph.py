@@ -26,7 +26,7 @@ class GraphState(TypedDict):
     citations: List[int]
     mode: str  # Can be "preview" or "full"
     db: Session  # SQLAlchemy session for database access
-
+    doc_ids: List[int] | None
 
 async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""
@@ -36,7 +36,8 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     keyword_retriever = FullTextRetrieverFromDB(db)
     vector_store = PostgresVectorStore(db)
     vector_retriever = vector_store.as_retriever(
-        search_kwargs={"k": 6 if mode == "vector" else 3}  # Use fewer results for preview
+        search_kwargs={"k": 6 if mode == "vector" else 3},  # Use fewer results for preview
+        doc_ids=state.get("doc_ids", None)
     )
     
     # Manual routing logic

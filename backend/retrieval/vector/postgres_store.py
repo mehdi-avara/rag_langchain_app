@@ -1,10 +1,10 @@
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from db.models import Chunk, Document
 from components.embedding import JinaAPIEmbeddings
 from settings import get_settings
-from langchain_core.documents import Document
+from langchain_core.documents import Document as LangchainDocument
 
 
 settings = get_settings()
@@ -43,7 +43,7 @@ class PostgresVectorStore:
         self,
         query: str,
         k: int = 6,
-        doc_id: Optional[int] = None
+        doc_ids: Optional[List[int]] = None
     ) -> List[Tuple[Chunk, float]]:
         """Perform similarity search using PostgreSQL vector operations."""
         # Generate embedding for the query
@@ -51,20 +51,25 @@ class PostgresVectorStore:
         # Build the SQL query for vector similarity search
         # Format the embedding as a PostgreSQL vector string
         embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        if doc_id:
-            # Search within a specific document
-            sql = text(f"""
-                SELECT c.*, 1 - (c.embedding <=> '{embedding_str}'::vector) as similarity
-                FROM chunks c
-                WHERE c.doc_id = :doc_id 
-                AND c.embedding IS NOT NULL
-                ORDER BY c.embedding <=> '{embedding_str}'::vector
-                LIMIT :k
-            """)
-            result = self.db.execute(sql, {
-                'doc_id': doc_id,
-                'k': k
-            })
+        
+        if doc_ids is not None:
+            if isinstance(doc_ids, list) and len(doc_ids) > 0:
+                # Search within a list of documents
+                placeholders = ','.join([f':doc_id_{i}' for i in range(len(doc_ids))])
+                sql = text(f"""
+                    SELECT c.*, 1 - (c.embedding <=> '{embedding_str}'::vector) as similarity
+                    FROM chunks c
+                    WHERE c.doc_id IN ({placeholders})
+                    AND c.embedding IS NOT NULL
+                    ORDER BY c.embedding <=> '{embedding_str}'::vector
+                    LIMIT :k
+                """)
+                params = {f'doc_id_{i}': doc_id for i, doc_id in enumerate(doc_ids)}
+                params['k'] = k
+                result = self.db.execute(sql, params)
+
+            else:
+                raise ValueError(f"Invalid doc_ids type, {type(doc_ids)}")
         else:
             # Search across all documents
             sql = text(f"""
@@ -90,7 +95,7 @@ class PostgresVectorStore:
     def as_retriever(
         self,
         search_kwargs: Optional[Dict[str, Any]] = None,
-        doc_id: Optional[int] = None
+        doc_ids: Optional[List[int]] = None
     ) -> 'PostgresVectorRetriever':
         """Get retriever interface."""
         if search_kwargs is None:
@@ -98,7 +103,7 @@ class PostgresVectorStore:
         return PostgresVectorRetriever(
             vector_store=self,
             search_kwargs=search_kwargs,
-            doc_id=doc_id
+            doc_ids=doc_ids
         )
 
 
@@ -109,11 +114,11 @@ class PostgresVectorRetriever:
         self,
         vector_store: PostgresVectorStore,
         search_kwargs: Dict[str, Any],
-        doc_id: Optional[int] = None
+        doc_ids: Optional[List[int]] = None
     ):
         self.vector_store = vector_store
         self.search_kwargs = search_kwargs
-        self.doc_id = doc_id
+        self.doc_ids = doc_ids
 
     def get_relevant_documents(self, query: str) -> List[Dict[str, Any]]:
         """Get relevant documents for a query."""
@@ -121,7 +126,7 @@ class PostgresVectorRetriever:
         results = self.vector_store.similarity_search(
             query=query,
             k=k,
-            doc_id=self.doc_id
+            doc_ids=self.doc_ids
         )
         
         # Convert to the format expected by LangChain
