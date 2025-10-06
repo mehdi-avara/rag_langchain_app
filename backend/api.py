@@ -50,6 +50,8 @@ class AnswerResponse(BaseModel):
 class ChatRequest(BaseModel):
     query: str
     doc_ids: List[int] | None = None
+    rewrite_query: bool = False
+    extract_keywords_with_llm: bool = False
 
 class UploadRequest(BaseModel):
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed
@@ -133,10 +135,16 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    query = request.query
+    
+    # Query rewriting if requested
+    if request.rewrite_query:
+        query = await call_llm_to_rewrite(query)
+    
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
-        "question": request.query,
-        "keywords": request.query,
+        "question": query,
+        "keywords": query,
         "route": "full",  # Default to hybrid search
         "user_id": current_user.id,
         "db": db,  # Pass the database session
