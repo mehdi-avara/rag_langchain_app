@@ -18,6 +18,10 @@ st.title("💬 Chat with Documents")
 if "history" not in st.session_state:
     st.session_state["history"] = []
 
+# Initialize document IDs list
+if "selected_doc_ids" not in st.session_state:
+    st.session_state["selected_doc_ids"] = []
+
 # Display chat history
 for msg in st.session_state["history"]:
     render_message(
@@ -50,6 +54,70 @@ with st.sidebar:
         help="Choose how to search through your documents"
     )
 
+# Document ID input section
+st.markdown("### 📄 Document Filter")
+if st.session_state["selected_doc_ids"]:
+    st.info(f"🔍 Filtering to {len(st.session_state['selected_doc_ids'])} document(s). Leave empty to search all documents.")
+else:
+    st.info("🔍 Searching all documents. Add document IDs below to filter to specific documents.")
+
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    doc_id_input = st.text_input(
+        "Add Document ID(s)",
+        placeholder="Enter document ID(s) (e.g., 1, 2, 3 or 1,2,3)",
+        help="Enter document ID(s) to filter search to specific documents. You can enter multiple IDs separated by commas. Leave empty to search all documents.",
+        key="doc_id_input"
+    )
+
+with col2:
+    if st.button("➕ Add", use_container_width=True):
+        if doc_id_input.strip():
+            try:
+                # Split by comma and clean up whitespace
+                doc_ids_str = [id_str.strip() for id_str in doc_id_input.split(',')]
+                doc_ids = [int(id_str) for id_str in doc_ids_str if id_str]
+                
+                added_count = 0
+                for doc_id in doc_ids:
+                    if doc_id not in st.session_state["selected_doc_ids"]:
+                        st.session_state["selected_doc_ids"].append(doc_id)
+                        added_count += 1
+                
+                if added_count > 0:
+                    st.session_state["doc_id_input"] = ""  # Clear input
+                    st.rerun()
+                else:
+                    st.warning("All document IDs are already added.")
+                    
+            except ValueError:
+                st.error("Please enter valid numbers for document IDs (e.g., 1, 2, 3).")
+        else:
+            st.warning("Please enter a document ID.")
+
+# Display selected document IDs as removable tags
+if st.session_state["selected_doc_ids"]:
+    st.markdown("**Selected Documents:**")
+    
+    # Sort document IDs for better organization
+    sorted_doc_ids = sorted(st.session_state["selected_doc_ids"])
+    
+    cols = st.columns(min(len(sorted_doc_ids), 5))  # Max 5 columns
+    
+    for i, doc_id in enumerate(sorted_doc_ids):
+        with cols[i % 5]:
+            if st.button(f"❌ {doc_id}", key=f"remove_doc_{doc_id}", help=f"Remove document {doc_id}"):
+                st.session_state["selected_doc_ids"].remove(doc_id)
+                st.rerun()
+    
+    # Clear all button
+    if st.button("🗑️ Clear All Documents", type="secondary"):
+        st.session_state["selected_doc_ids"] = []
+        st.rerun()
+
+st.markdown("---")
+
 # Chat input
 if prompt := st.chat_input("Ask a question about your documents..."):
     # Add user message to history
@@ -66,6 +134,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
         "query": prompt,
         "rewrite_query": rewrite_query,
         "extract_keywords_with_llm": extract_keywords_with_llm,
+        "doc_ids": st.session_state["selected_doc_ids"] if st.session_state["selected_doc_ids"] else None,
     }
     
     # Show loading spinner

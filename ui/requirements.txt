@@ -1,4 +1,5 @@
 streamlit
 streamlit-authenticator
 requests
-x
+pydantic_settings
+markdown
