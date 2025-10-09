@@ -70,7 +70,7 @@ async def process_pdf_with_mineru(pdf_bytes: bytes, doc_id: int, base_dir: str, 
     
     # Run MinerU command
     # mineru -p "original.pdf" -o "."
-    cmd = ["mineru", "-p", str(original_pdf_path), "-o", str(doc_dir)]
+    cmd = [settings.mineru_running_address, "-p", str(original_pdf_path), "-o", str(doc_dir)]
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=doc_dir)
