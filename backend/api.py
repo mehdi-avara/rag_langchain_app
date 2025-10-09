@@ -67,36 +67,6 @@ class QueryRequest(BaseModel):
 app.include_router(auth_router,prefix="/auth",tags=["Auth"])
 app.include_router(document_router,prefix="/documents",tags=["document"])
 
-
-# # Document routes
-# @app.post("/upload")
-# async def upload_file(
-#     file: UploadFile = File(...),
-#     chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     contents = await file.read()
-#     doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
-#     return {"doc_id": doc_id}
-
-@app.post("/upload-md-zip")
-async def upload_md_file(
-    file: UploadFile = File(...),
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Upload a markdown file and process it."""
-    
-    if not file.filename.lower().endswith('.zip'):
-        pass
-                
-    contents = await file.read()
-    doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
-    return {"doc_id": doc_id}
-
-
 @app.post("/upload")
 async def upload_pdf_mineru(
     file: UploadFile,
@@ -129,36 +99,6 @@ async def upload_pdf_mineru(
         return {"doc_id": doc_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process PDF with MinerU: {str(e)}")
-
-@app.post("/upload-pdf-as-images")
-async def upload_pdf_as_images(
-    file: UploadFile,
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Upload a PDF file and process it as images."""
-
-    # Read file content
-    file_bytes = await file.read()
-    
-    # Validate PDF file
-    if not file_bytes.startswith(b'%PDF'):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-        
-    # Validate file extension
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="File must have .pdf extension")
-    
-# # Use the new ingestion function
-#     doc_id = await ingest_pdf_as_single_document(
-#         file_bytes=file_bytes,
-#         filename=file.filename,
-#         user_id=current_user.id,
-#         db=db,
-#         chunking_mode=chunking_mode
-#     )
-    raise HTTPException(status_code=501, detail="Not implemented")
 
 
 # Chat route
@@ -233,49 +173,6 @@ async def query_docs(
         })
 
     return {"retrieved_chunks": retrieved_chunks}
-
-
-@app.get("/answer/{doc_id}")
-async def get_answer(
-    doc_id: int,
-    question: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    # Get document
-    # doc = db.query(Document).filter(Document.id == doc_id).first()
-    # if not doc:
-    #     raise HTTPException(status_code=404, detail="Document not found")
-    
-    # # Check ownership
-    # if doc.owner_id != current_user.id:
-    #     raise HTTPException(status_code=403, detail="Not authorized to access this document")
-    
-    # # Get answer and sources
-    # answer, sources, confidence = await build_answer_graph(doc_id, question, db)
-    
-    # # Format sources
-    # formatted_sources = []
-    # for source in sources:
-    #     chunk = db.query(Chunk).filter(Chunk.id == source["chunk_id"]).first()
-    #     if chunk:
-    #         formatted_sources.append(ChunkSource(
-    #             doc_id=doc.id,
-    #             filename=doc.filename,
-    #             page_num=chunk.page_num,
-    #             chunk_type=chunk.chunk_type,
-    #             position=chunk.start_pos if chunk.chunk_type == "text" else None,
-    #             start_pos=chunk.start_pos,
-    #             end_pos=chunk.end_pos
-    #         ))
-    
-    # return AnswerResponse(
-    #     answer=answer,
-    #     sources=formatted_sources,
-    #     confidence=confidence
-    # ) 
-    raise HTTPException(status_code=501, detail="Not implemented")
-
 
 async def call_llm_to_rewrite(query: str) -> str:
     """Use LLM to improve the query for better search performance."""
