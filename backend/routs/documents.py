@@ -10,6 +10,9 @@ from db.init_db import get_db
 from core.summarise import summarise_document
 from schemas.document import DocumentOut,ChunkOut
 from deps import get_current_user
+from settings import get_settings
+
+settings = get_settings()
 
 
 router = APIRouter()
@@ -99,6 +102,7 @@ async def download_pdf(
     """
     Download the original PDF file for a document.
     """
+    
     # Get document
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
@@ -112,7 +116,8 @@ async def download_pdf(
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")
     
-    file_path = Path(doc.file_path)
+    # Construct full path: FILES_DIR/{doc_id}/original.pdf
+    file_path = Path(settings.files_dir) / doc.file_path / "original.pdf"
     
     # Check if file exists
     if not file_path.exists():
@@ -121,7 +126,7 @@ async def download_pdf(
     # Return the file for download
     return FileResponse(
         path=file_path,
-        filename=file_path.name,
+        filename=doc.filename,
         media_type='application/pdf'
     )
 

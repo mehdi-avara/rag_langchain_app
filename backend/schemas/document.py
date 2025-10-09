@@ -10,6 +10,7 @@ class DocumentOut(BaseModel):
     n_chunks: int
     created_at: datetime
     abstract: str | None
+    file_path: str | None
 
     class Config:
         orm_mode = True

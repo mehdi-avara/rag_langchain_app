@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     jina_api_key: str
     
     bm25_index_path: str = "data/bm25.pkl"
+    
+    files_dir: str = "uploaded_files"  # Relative to project root
 
 
     class Config:

@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 from db.models import User, Document, Chunk
 from db.init_db import get_db
 from deps import get_current_user
-from core.simple_ingestion import  ingest_file
+from core.simple_ingestion import  ingest_file, ingest_pdf_with_mineru
 from core.agents.langgraph import build_answer_graph
 from core.chunking  import ChunkingMode
 from settings import get_settings
@@ -68,17 +68,17 @@ app.include_router(auth_router,prefix="/auth",tags=["Auth"])
 app.include_router(document_router,prefix="/documents",tags=["document"])
 
 
-# Document routes
-@app.post("/upload")
-async def upload_file(
-    file: UploadFile = File(...),
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    contents = await file.read()
-    doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
-    return {"doc_id": doc_id}
+# # Document routes
+# @app.post("/upload")
+# async def upload_file(
+#     file: UploadFile = File(...),
+#     chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db)
+# ):
+#     contents = await file.read()
+#     doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
+#     return {"doc_id": doc_id}
 
 @app.post("/upload-md-zip")
 async def upload_md_file(
@@ -96,6 +96,39 @@ async def upload_md_file(
     doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
     return {"doc_id": doc_id}
 
+
+@app.post("/upload")
+async def upload_pdf_mineru(
+    file: UploadFile,
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a PDF file and process it with MinerU."""
+    
+    # Read file content
+    file_bytes = await file.read()
+    
+    # Validate PDF file
+    if not file_bytes.startswith(b'%PDF'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+        
+    # Validate file extension
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must have .pdf extension")
+    
+    try:
+        # Use the new MinerU ingestion function
+        doc_id = await ingest_pdf_with_mineru(
+            pdf_bytes=file_bytes,
+            filename=file.filename,
+            user_id=current_user.id,
+            db=db,
+            chunking_mode=chunking_mode
+        )
+        return {"doc_id": doc_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process PDF with MinerU: {str(e)}")
 
 @app.post("/upload-pdf-as-images")
 async def upload_pdf_as_images(

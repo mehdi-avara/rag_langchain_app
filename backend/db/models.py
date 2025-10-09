@@ -28,6 +28,7 @@ class Document(Base):
     n_pages = Column(Integer, nullable=False)
     n_chunks = Column(Integer, nullable=False)
     abstract = Column(Text)
+    file_path = Column(String, nullable=True)  # Relative path to FILES_DIR
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="documents")
