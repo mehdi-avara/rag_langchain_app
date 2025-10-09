@@ -2,7 +2,7 @@ fastapi==0.100.0
 uvicorn==0.22.0
 sqlalchemy==2.0.19
 psycopg2-binary
-pydantic==2.0.2
+pydantic>=2.12.0
 python-jose==3.3.0
 langchain==0.0.267
 langgraph
@@ -13,7 +13,7 @@ Pillow==10.0.0
 requests
 rank_bm25
 python-multipart==0.0.6
-passlib==1.7.4
+passlib>=1.7.4
 openai>=1.0.0
 bcrypt==4.0.1
 python-dotenv==1.0.0
@@ -21,3 +21,7 @@ elasticsearch==8.9.0
 pdf2image==1.16.3
 nltk>=3.8.1
 pgvector==0.2.4
+pydantic_settings>=2.11.0
+arabic-reshaper==3.0.0
+python-bidi>=0.6.6
+tiktoken>=0.12.0
