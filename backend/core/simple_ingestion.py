@@ -46,7 +46,20 @@ async def detect_type(file_bytes: bytes) -> str:
 
 async def extract_text_from_md(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
     """Extract text from markdown file."""
-    text = file_bytes.decode('utf-8')
+    # Try robust decoding: UTF-8 first, then common fallbacks; finally replace errors
+    candidate_encodings = ['utf-8', 'utf-8-sig', 'cp1252', 'latin-1']
+    for enc in candidate_encodings:
+        try:
+            text = file_bytes.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        # Last resort: decode with utf-8 replacing invalid bytes
+        text = file_bytes.decode('utf-8', errors='replace')
+
+    # Normalize newlines to "\n"
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
     return text, 1, []
 
 async def process_pdf_with_mineru(pdf_bytes: bytes, doc_id: int, base_dir: str, filename: str) -> str:
