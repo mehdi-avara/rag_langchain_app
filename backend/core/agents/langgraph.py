@@ -121,6 +121,8 @@ def build_answer_graph() -> Graph:
         }
     )
     
+    workflow.add_edge("generate", "end")
+    
     # Set entry point
     workflow.set_entry_point("retrieve")
     
