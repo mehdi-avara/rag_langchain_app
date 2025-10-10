@@ -227,8 +227,8 @@ async def ingest_file(file_bytes: bytes, filename: str, user_id: int, db: Sessio
         filename=filename,
         n_pages=n_pages,
         n_chunks=len(chunks) + len(images_info),
-        file_path=str(doc.id)
     )
+    doc.file_path = str(doc.id)
     db.add(doc)
     db.flush()
 
