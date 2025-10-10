@@ -8,7 +8,7 @@ from db.models import User, Document, Chunk
 from db.init_db import get_db
 from deps import get_current_user
 from core.simple_ingestion import  ingest_file, ingest_pdf_with_mineru
-from core.agents.langgraph import build_answer_graph
+from core.agents.langgraph import build_answer_graph , GraphState
 from core.chunking  import ChunkingMode
 from settings import get_settings
 from components.llm import llm_client
@@ -132,15 +132,17 @@ async def chat(
         query = await llm_client.rewrite_query(query)
     
     answer_graph = build_answer_graph()
-    result = await answer_graph.ainvoke({
-        "question": query,
-        "keywords": query,
-        "route": "full",  # Default to hybrid search
-        "user_id": current_user.id,
-        "db": db,  # Pass the database session
-        "mode": "vector",
-        "doc_ids": request.doc_ids
-    })
+    
+    state_graph = GraphState(
+        question=query,
+        keywords=query,
+        route="full",  # Default to hybrid search
+        user_id=current_user.id,
+        db=db,  # Pass the database session
+        mode="vector",
+        doc_ids=request.doc_ids
+    )
+    result = await answer_graph.ainvoke(state_graph)
     answer = result["answer"]
     retrieved_chunks = []
     citations = []
