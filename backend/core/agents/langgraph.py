@@ -2,15 +2,14 @@
 from typing import Dict, List, TypedDict, Tuple
 from fastapi import HTTPException
 from langgraph.graph import Graph, StateGraph
-from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from openai import base_url
 from sqlalchemy.orm import Session
 
 from db.models import Chunk
 from retrieval.vector.postgres_store import PostgresVectorStore
 from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
+from components.llm import llm_client
 
 
 from langchain_core.runnables import Runnable
@@ -71,13 +70,9 @@ Answer:"""
     
     prompt = ChatPromptTemplate.from_template(template)
     
-    # Initialize LLM
-    llm = ChatOpenAI(
-        base_url=settings.openai_base_url,
-        model="gemma_3_vision",
-        temperature=0.1,
-        openai_api_key=settings.openai_api_key
-    )
+    # Use centralized LLM client
+    llm = llm_client.langchain_llm
+    
     # Generate answer
     chain = prompt | llm
     context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)

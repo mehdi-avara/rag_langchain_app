@@ -1,7 +1,5 @@
 from typing import List, Dict, Any
 from fastapi import HTTPException
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from sqlalchemy.orm import Session
 
@@ -11,8 +9,7 @@ from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
 
 from langchain.tools import tool
-from langchain.chains import LLMChain
-from langchain.agents import initialize_agent, Tool, AgentType
+from components.llm import llm_client
 
 settings = get_settings()
 
@@ -60,44 +57,30 @@ async def fetch_adjacent_chunks_tool(docs: List[Document]) -> List[Document]:
     # Implement logic if needed; for now, just return input docs
     return docs
 
-template = """Use ONLY the provided context to answer the question. Cite sources using [chunk:id].
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-
-prompt = ChatPromptTemplate.from_template(template)
-
-llm = ChatOpenAI(
-    model="gpt-4o",
-    temperature=0.1,
-    openai_api_key=settings.openai_api_key
+template = (
+    "Use ONLY the provided context to answer the question. "
+    "Cite sources using [chunk:id].\n\n"
+    "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 )
 
-llm_chain = LLMChain(llm=llm, prompt=prompt)
-
-tools = [
-    Tool(
-        name="Retrieve Documents",
-        func=retrieve_docs_tool,
-        description="Use this tool to retrieve relevant documents given a question and route."
-    ),
-    Tool(
-        name="Fetch Adjacent Chunks",
-        func=fetch_adjacent_chunks_tool,
-        description="Use this tool to fetch adjacent chunks or additional context documents."
+async def run_llm(context: str, question: str) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant that answers strictly from the provided context."
+        },
+        {
+            "role": "user",
+            "content": template.format(context=context, question=question)
+        }
+    ]
+    response = await llm_client.async_openai_client.chat.completions.create(
+        model=llm_client.settings.llm_model,
+        temperature=llm_client.settings.llm_temperature,
+        max_tokens=llm_client.settings.llm_max_tokens,
+        messages=messages
     )
-]
-
-agent = initialize_agent(
-    tools=tools,
-    llm=llm,
-    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-    verbose=True
-)
+    return response.choices[0].message.content.strip()
 
 async def answer_question_with_agent(question: str, route: str, mode: str, db: Session) -> Dict[str, Any]:
     """Run the agent to answer the question using the specified route and mode."""
@@ -105,19 +88,15 @@ async def answer_question_with_agent(question: str, route: str, mode: str, db: S
     docs = await retrieve_docs_tool(question=question, route=route, mode=mode, db=db)
     # Optionally fetch adjacent chunks or enrich docs
     enriched_docs = await fetch_adjacent_chunks_tool(docs=docs)
-    # Prepare context for the LLM chain
+    # Prepare context and run async OpenAI
     context = "\n\n".join(doc.page_content for doc in enriched_docs)
-    # Run the LLM chain to generate answer
-    answer = await llm_chain.ainvoke({
-        "context": context,
-        "question": question
-    })
+    answer_text = await run_llm(context=context, question=question)
     # Extract citations
     citations = []
     for doc in enriched_docs:
         if "chunk_id" in doc.metadata:
             citations.append(doc.metadata["chunk_id"])
     return {
-        "answer": answer.content.strip(),
+        "answer": answer_text,
         "citations": citations
     }

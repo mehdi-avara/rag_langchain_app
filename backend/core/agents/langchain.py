@@ -13,6 +13,7 @@ from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
 from langchain.tools import tool
 from langchain.chains import LLMChain
 from langchain.agents import initialize_agent, Tool, AgentType
+from components.llm import llm_client
 
 settings = get_settings()
 
@@ -55,11 +56,8 @@ Answer:"""
 
 prompt = ChatPromptTemplate.from_template(template)
 
-llm = ChatOpenAI(
-    model="gpt-4o",
-    temperature=0.1,
-    openai_api_key=settings.openai_api_key
-)
+# Use centralized LLM client
+llm = llm_client.langchain_llm
 
 llm_chain = LLMChain(llm=llm, prompt=prompt)
 

@@ -16,12 +16,15 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 
 from settings import get_settings
+from components.llm import llm_client
 from db.models import Document, Chunk
 from core.chunking import ChunkingMode, chunk_text, token_len
 from components.embedding import JinaAPIEmbeddings
+import asyncio
 
 settings = get_settings()
-aclient = AsyncOpenAI(api_key=settings.openai_api_key)
+# Use centralized async client via llm_client
+aclient = llm_client.async_openai_client
 embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
 
 async def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:
@@ -73,7 +76,14 @@ async def process_pdf_with_mineru(pdf_bytes: bytes, doc_id: int, base_dir: str, 
     cmd = [settings.mineru_running_address, "-p", str(original_pdf_path), "-o", str(doc_dir)]
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=doc_dir)
+        # Run blocking subprocess in a background thread to avoid blocking the event loop
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=doc_dir
+        )
         if result.returncode != 0:
             raise Exception(f"MinerU failed: {result.stderr}")
     except Exception as e:

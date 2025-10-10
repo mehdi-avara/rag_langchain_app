@@ -3,8 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
-from openai import AsyncOpenAI
-
 
 from db.models import User, Document, Chunk
 from db.init_db import get_db
@@ -13,14 +11,14 @@ from core.simple_ingestion import  ingest_file, ingest_pdf_with_mineru
 from core.agents.langgraph import build_answer_graph
 from core.chunking  import ChunkingMode
 from settings import get_settings
+from components.llm import llm_client
 
 from routs.auth import router as auth_router
 from routs.documents import router as document_router
 
 settings = get_settings()
-aclient = AsyncOpenAI(api_key=settings.openai_api_key)
 
-app = FastAPI(title="RAG API")
+app = FastAPI(title="Porsa Search system")
 
 # CORS middleware
 app.add_middleware(
@@ -112,7 +110,7 @@ async def chat(
     
     # Query rewriting if requested
     if request.rewrite_query:
-        query = await call_llm_to_rewrite(query)
+        query = await llm_client.rewrite_query(query)
     
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
@@ -146,7 +144,7 @@ async def query_docs(
     
     # Query rewriting if requested
     if request.rewrite_query:
-        query = await call_llm_to_rewrite(query)
+        query = await llm_client.rewrite_query(query)
     
 
 
@@ -174,42 +172,9 @@ async def query_docs(
 
     return {"retrieved_chunks": retrieved_chunks}
 
-async def call_llm_to_rewrite(query: str) -> str:
-    """Use LLM to improve the query for better search performance."""
-    response = await aclient.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that improves search queries. Make the query more specific and effective for information retrieval while preserving the original intent."
-            },
-            {
-                "role": "user",
-                "content": f"Improve this search query: {query}"
-            }
-        ],
-        max_tokens=150
-    )
-    return response.choices[0].message.content
-
 async def call_llm_to_extract_keywords(query: str) -> List[str]:
     """Use LLM to extract keywords from the query."""
-    response = await aclient.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that extracts key terms from queries. Return only the most important keywords or phrases, separated by commas."
-            },
-            {
-                "role": "user",
-                "content": f"Extract key terms from this query: {query}"
-            }
-        ],
-        max_tokens=100
-    )
-    keywords = response.choices[0].message.content.split(',')
-    return [k.strip() for k in keywords if k.strip()]
+    return await llm_client.extract_keywords(query)
 
 def basic_keyword_extraction(query: str) -> List[str]:
     """Basic keyword extraction using simple heuristics."""

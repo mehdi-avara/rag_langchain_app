@@ -15,7 +15,14 @@ class Settings(BaseSettings):
 
     # API Keys
     openai_api_key: str
-    openai_base_url: str = "http://10.0.0.10:8085/v1"
+    openai_base_url: str = "http://10.0.0.10:11434/v1"
+    
+    # LLM Configuration
+    llm_model: str = "gemma3:27b"  # Default model for answer generation
+    llm_temperature: float = 0.1  # Default temperature for answer generation
+    llm_rewrite_model: str = "gemma3:27b"  # Model for query rewriting
+    llm_rewrite_temperature: float = 0.3  # Temperature for query rewriting
+    llm_max_tokens: int = 150  # Max tokens for query rewriting
 
     # Vector DB
     # elastic_host: str
