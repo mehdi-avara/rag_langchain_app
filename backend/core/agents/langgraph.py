@@ -125,6 +125,6 @@ def build_answer_graph() -> Graph:
     
     # Set entry point
     workflow.set_entry_point("retrieve")
-    
+    workflow.set_finish_point("end")
     # Compile
     return workflow.compile()
