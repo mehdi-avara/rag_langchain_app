@@ -135,9 +135,7 @@ async def chat(
     
     state_graph = GraphState(
         question=query,
-        keywords=query,
         route="full",  # Default to hybrid search
-        user_id=current_user.id,
         db=db,  # Pass the database session
         mode="vector",
         doc_ids=request.doc_ids
@@ -173,10 +171,8 @@ async def query_docs(
     answer_graph = build_answer_graph()
     result = await answer_graph.ainvoke({
         "question": query,
-        "keywords": query,
         "route": "search",
         # "chunking_mode": request.chunking_mode,
-        "user_id": current_user.id,
         "mode": "vector",
         "db": db,
         "doc_ids": request.doc_ids
