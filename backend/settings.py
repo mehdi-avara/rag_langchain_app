@@ -36,9 +36,9 @@ class Settings(BaseSettings):
     
     bm25_index_path: str = "data/bm25.pkl"
     
-    files_dir: str 
+    files_dir: str = "uploaded_files"
 
-    mineru_running_address: str
+    mineru_running_address: str = "./mineru"
 
 
     class Config:

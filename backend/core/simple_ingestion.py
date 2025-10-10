@@ -24,7 +24,6 @@ import asyncio
 
 settings = get_settings()
 # Use centralized async client via llm_client
-aclient = llm_client.async_openai_client
 embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
 
 async def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:

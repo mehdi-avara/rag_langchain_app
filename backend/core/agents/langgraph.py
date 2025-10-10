@@ -4,6 +4,8 @@ from fastapi import HTTPException
 from langgraph.graph import Graph, StateGraph
 from langchain.prompts import ChatPromptTemplate
 from sqlalchemy.orm import Session
+from langchain.chat_models import ChatOpenAI
+
 
 from db.models import Chunk
 from retrieval.vector.postgres_store import PostgresVectorStore
@@ -71,8 +73,13 @@ Answer:"""
     prompt = ChatPromptTemplate.from_template(template)
     
     # Use centralized LLM client
-    llm = llm_client.langchain_llm
-    
+    # Initialize LLM
+    llm = ChatOpenAI(
+        base_url=settings.openai_base_url,
+        model="gemma3:27b",
+        temperature=0.1,
+        openai_api_key=settings.openai_api_key
+    )    
     # Generate answer
     chain = prompt | llm
     context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
