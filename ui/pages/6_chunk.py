@@ -127,81 +127,87 @@ def render_text_markdown(text: str) -> None:
             'tables',       # Enable table support
             'fenced_code',  # Enable fenced code blocks
             'codehilite',   # Enable code highlighting
-            'nl2br',        # Convert newlines to <br>
         ]
     )
     
     # Convert markdown to HTML
     html_content = md.convert(text)
     
-    # Add custom CSS for better formatting
-    custom_css = """
-    <style>
-        .markdown-content {
-            font-size: 1rem;
-            line-height: 1.6;
-        }
-        .markdown-content table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 1rem 0;
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-        .markdown-content thead {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-        .markdown-content th {
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            padding: 0.75rem;
-            text-align: left;
-            font-weight: bold;
-        }
-        .markdown-content td {
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 0.75rem;
-        }
-        .markdown-content tr:hover {
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-        .markdown-content code {
-            background-color: rgba(0, 0, 0, 0.3);
-            padding: 0.2rem 0.4rem;
-            border-radius: 0.25rem;
-            font-family: monospace;
-        }
-        .markdown-content pre {
-            background-color: rgba(0, 0, 0, 0.3);
-            padding: 1rem;
-            border-radius: 0.5rem;
-            overflow-x: auto;
-        }
-        .markdown-content pre code {
-            background-color: transparent;
-            padding: 0;
-        }
-        .markdown-content h1, .markdown-content h2, .markdown-content h3,
-        .markdown-content h4, .markdown-content h5, .markdown-content h6 {
-            margin-top: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-        .markdown-content p {
-            margin: 0.5rem 0;
-        }
-        .markdown-content ul, .markdown-content ol {
-            margin: 0.5rem 0;
-            padding-left: 2rem;
-        }
-        .markdown-content blockquote {
-            border-left: 4px solid rgba(255, 255, 255, 0.3);
-            padding-left: 1rem;
-            margin: 1rem 0;
-            color: rgba(255, 255, 255, 0.7);
-        }
-    </style>
-    """
+    # Reset the markdown instance to avoid state issues
+    md.reset()
     
-    # Display the content with HTML rendering enabled
-    st.markdown(custom_css + f'<div class="markdown-content">{html_content}</div>', unsafe_allow_html=True)
+    # Add custom CSS for better formatting using st.html if available, otherwise st.markdown
+    try:
+        # Try using st.html for better HTML rendering (Streamlit >= 1.28)
+        css_and_html = f"""
+        <style>
+            .markdown-content {{
+                font-size: 1rem;
+                line-height: 1.6;
+            }}
+            .markdown-content table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 1rem 0;
+                background-color: rgba(255, 255, 255, 0.05);
+            }}
+            .markdown-content thead {{
+                background-color: rgba(255, 255, 255, 0.1);
+            }}
+            .markdown-content th {{
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                padding: 0.75rem;
+                text-align: left;
+                font-weight: bold;
+            }}
+            .markdown-content td {{
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                padding: 0.75rem;
+            }}
+            .markdown-content tr:hover {{
+                background-color: rgba(255, 255, 255, 0.05);
+            }}
+            .markdown-content code {{
+                background-color: rgba(0, 0, 0, 0.3);
+                padding: 0.2rem 0.4rem;
+                border-radius: 0.25rem;
+                font-family: monospace;
+            }}
+            .markdown-content pre {{
+                background-color: rgba(0, 0, 0, 0.3);
+                padding: 1rem;
+                border-radius: 0.5rem;
+                overflow-x: auto;
+            }}
+            .markdown-content pre code {{
+                background-color: transparent;
+                padding: 0;
+            }}
+            .markdown-content h1, .markdown-content h2, .markdown-content h3,
+            .markdown-content h4, .markdown-content h5, .markdown-content h6 {{
+                margin-top: 1.5rem;
+                margin-bottom: 0.5rem;
+            }}
+            .markdown-content p {{
+                margin: 0.5rem 0;
+            }}
+            .markdown-content ul, .markdown-content ol {{
+                margin: 0.5rem 0;
+                padding-left: 2rem;
+            }}
+            .markdown-content blockquote {{
+                border-left: 4px solid rgba(255, 255, 255, 0.3);
+                padding-left: 1rem;
+                margin: 1rem 0;
+                color: rgba(255, 255, 255, 0.7);
+            }}
+        </style>
+        <div class="markdown-content">{html_content}</div>
+        """
+        st.html(css_and_html)
+    except AttributeError:
+        # Fallback to st.markdown for older Streamlit versions
+        st.markdown(css_and_html, unsafe_allow_html=True)
 
 
 def render_chunk_viewer(
