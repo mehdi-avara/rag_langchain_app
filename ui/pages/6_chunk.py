@@ -56,32 +56,70 @@ def fetch_adjacent_chunks(doc_id: int, current_chunk_id: int, token: str) -> tup
         return None, None
 
 
+def fetch_image(doc_id: int, image_path: str, token: str) -> Optional[bytes]:
+    """Fetch an image from the API."""
+    try:
+        response = requests.get(
+            f"{API_URL}/documents/{doc_id}/images/{image_path}",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        response.raise_for_status()
+        return response.content
+    except requests.exceptions.RequestException:
+        return None
+
+
 def render_chunk_markdown(content: str, doc_id: int, token: str) -> None:
     """Render markdown content with proper image handling."""
     if not content:
         st.write("No content available")
         return
     
-    # Replace markdown image references with proper URLs
-    # Pattern: ![alt](images/hash.jpg)
-    def replace_image_url(match):
-        alt_text = match.group(1)
-        image_path = match.group(2)
-        
-        # If it's already a full URL, leave it as is
-        if image_path.startswith("http://") or image_path.startswith("https://"):
-            return match.group(0)
-        
-        # Otherwise, construct the API URL
-        api_image_url = f"{API_URL}/documents/{doc_id}/images/{image_path}"
-        return f'<img src="{api_image_url}" alt="{alt_text}" style="max-width: 100%; height: auto;" />'
+    # Find all image references
+    image_pattern = r'!\[(.*?)\]\((.*?)\)'
+    images = re.findall(image_pattern, content)
     
-    # Replace image references
-    content_with_images = re.sub(
-        r'!\[(.*?)\]\((.*?)\)',
-        replace_image_url,
-        content
-    )
+    # Split content by images to render text and images separately
+    parts = re.split(image_pattern, content)
+    
+    # Process content in parts
+    current_part = 0
+    text_buffer = ""
+    
+    for i, part in enumerate(parts):
+        # Every third element starting from 0 is text content
+        if i % 3 == 0:
+            text_buffer += part
+        # Every third element starting from 2 is an image path
+        elif i % 3 == 2:
+            # Render accumulated text first
+            if text_buffer.strip():
+                render_text_markdown(text_buffer)
+                text_buffer = ""
+            
+            image_path = part
+            alt_text = parts[i-1] if i > 0 else ""
+            
+            # Skip if it's an external URL
+            if image_path.startswith("http://") or image_path.startswith("https://"):
+                st.markdown(f"![{alt_text}]({image_path})")
+            else:
+                # Fetch and display image
+                image_data = fetch_image(doc_id, image_path, token)
+                if image_data:
+                    st.image(image_data, caption=alt_text if alt_text else None, use_container_width=True)
+                else:
+                    st.warning(f"⚠️ Failed to load image: {image_path}")
+    
+    # Render any remaining text
+    if text_buffer.strip():
+        render_text_markdown(text_buffer)
+
+
+def render_text_markdown(text: str) -> None:
+    """Render text markdown without images."""
+    if not text.strip():
+        return
     
     # Configure markdown with extensions
     md = markdown.Markdown(
@@ -100,7 +138,7 @@ def render_chunk_markdown(content: str, doc_id: int, token: str) -> None:
     )
     
     # Convert markdown to HTML
-    html_content = md.convert(content_with_images)
+    html_content = md.convert(text)
     
     # Add custom CSS for better formatting
     custom_css = """
@@ -109,13 +147,6 @@ def render_chunk_markdown(content: str, doc_id: int, token: str) -> None:
             padding: 1rem;
             border-radius: 0.5rem;
             background-color: rgba(255, 255, 255, 0.05);
-        }
-        .chunk-content img {
-            display: block;
-            margin: 1rem auto;
-            max-width: 100%;
-            height: auto;
-            border-radius: 0.5rem;
         }
         .chunk-content table {
             width: 100%;
@@ -313,4 +344,4 @@ def render_simple_chunk_content(chunk_id: int, doc_id: int) -> None:
     render_chunk_markdown(chunk.get("content", ""), doc_id, token)
 
 
-render_simple_chunk_content(16701, 103)
+render_simple_chunk_content(16706, 103)
