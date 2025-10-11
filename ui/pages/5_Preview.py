@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import os
 from components.auth import require_auth, get_token
-from components.chat_msg import render_markdown_content
+from components.chat_msg import render_markdown_content, fetch_document_data
 
 from settigs import get_settings
 
@@ -20,27 +20,69 @@ if "preview_history" not in st.session_state:
 
 # Display preview history
 for i, preview in enumerate(st.session_state["preview_history"]):
-    with st.expander(f"🔍 Query {i+1}: {preview['query'][:50]}...", expanded=False):
-        st.write(f"**Query:** {preview['query']}")
-        st.write(f"**Timestamp:** {preview['timestamp']}")
+    st.markdown("---")
+    # Display query info without expander nesting
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write(f"**🔍 Query {i+1}:** {preview['query']}")
+    with col2:
+        st.caption(f"🕐 {preview['timestamp']}")
+    
+    # Display retrieved chunks
+    if preview.get("retrieved_chunks"):
         
-        # Display retrieved chunks
-        if preview.get("retrieved_chunks"):
-            st.subheader("📚 Retrieved Chunks")
-            for j, chunk in enumerate(preview["retrieved_chunks"]):
-                chunk_id = chunk.get("chunk_id", f"unknown_{j}")
-                doc_id = chunk.get("doc_id", "Unknown")
-                content = chunk.get("content", "")
-                
-                with st.expander(f"📄 Chunk {j+1} (ID: {chunk_id}, Doc: {doc_id})", expanded=False):
-                    render_markdown_content(content)
+        # Pre-fetch unique document data for all chunks
+        unique_doc_ids = set()
+        for chunk in preview["retrieved_chunks"]:
+            doc_id = chunk.get("doc_id", "Unknown")
+            if doc_id != "Unknown":
+                unique_doc_ids.add(doc_id)
+        
+        # Fetch documents if not already cached
+        doc_cache = {}
+        if unique_doc_ids:
+            with st.spinner("Loading documents..."):
+                for doc_id in unique_doc_ids:
+                    cache_key = f"doc_cache_{doc_id}"
+                    if cache_key not in st.session_state:
+                        doc_data, filename = fetch_document_data(doc_id)
+                        if doc_data:
+                            st.session_state[cache_key] = {
+                                "data": doc_data,
+                                "filename": filename
+                            }
                     
-                    # Show chunk metadata
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.caption(f"**Chunk ID:** {chunk_id}")
-                    with col2:
-                        st.caption(f"**Document ID:** {doc_id}")
+                    # Get from cache
+                    if cache_key in st.session_state:
+                        doc_cache[doc_id] = st.session_state[cache_key]
+        
+        st.caption(f"📚 {len(preview['retrieved_chunks'])} chunks retrieved")
+        
+        for j, chunk in enumerate(preview["retrieved_chunks"]):
+            chunk_id = chunk.get("chunk_id", f"unknown_{j}")
+            doc_id = chunk.get("doc_id", "Unknown")
+            content = chunk.get("content", "")
+            
+            with st.expander(f"📄 Chunk {j+1} (ID: {chunk_id}, Doc: {doc_id})", expanded=False):
+                render_markdown_content(content)
+                
+                # Show chunk metadata and download button
+                col1, col2, col3 = st.columns([2, 2, 1])
+                with col1:
+                    st.caption(f"**Chunk ID:** {chunk_id}")
+                with col2:
+                    st.caption(f"**Document ID:** {doc_id}")
+                with col3:
+                    # Add download button
+                    if doc_id != "Unknown" and doc_id in doc_cache:
+                        st.download_button(
+                            label="⬇️",
+                            data=doc_cache[doc_id]["data"],
+                            file_name=doc_cache[doc_id]["filename"],
+                            mime="application/pdf",
+                            key=f"download_history_{i}_{doc_id}_{j}",
+                            help=f"Download {doc_cache[doc_id]['filename']}"
+                        )
 
 # Advanced options in sidebar
 with st.sidebar:
@@ -104,6 +146,31 @@ if prompt := st.chat_input("Enter your search query to preview retrieved chunks.
             else:
                 st.success(f"Found {len(retrieved_chunks)} chunks")
                 
+                # Pre-fetch unique document data for all chunks
+                unique_doc_ids = set()
+                for chunk in retrieved_chunks:
+                    doc_id = chunk.get("doc_id", "Unknown")
+                    if doc_id != "Unknown":
+                        unique_doc_ids.add(doc_id)
+                
+                # Fetch documents if not already cached
+                doc_cache = {}
+                if unique_doc_ids:
+                    with st.spinner("Loading documents..."):
+                        for doc_id in unique_doc_ids:
+                            cache_key = f"doc_cache_{doc_id}"
+                            if cache_key not in st.session_state:
+                                doc_data, filename = fetch_document_data(doc_id)
+                                if doc_data:
+                                    st.session_state[cache_key] = {
+                                        "data": doc_data,
+                                        "filename": filename
+                                    }
+                            
+                            # Get from cache
+                            if cache_key in st.session_state:
+                                doc_cache[doc_id] = st.session_state[cache_key]
+                
                 for i, chunk in enumerate(retrieved_chunks):
                     chunk_id = chunk.get("chunk_id", f"unknown_{i}")
                     doc_id = chunk.get("doc_id", "Unknown")
@@ -114,15 +181,26 @@ if prompt := st.chat_input("Enter your search query to preview retrieved chunks.
                         # Render markdown content
                         render_markdown_content(content)
                         
-                        # Show chunk metadata
-                        col1, col2 = st.columns(2)
+                        # Show chunk metadata and download button
+                        col1, col2, col3 = st.columns([2, 2, 1])
                         with col1:
                             st.caption(f"**Chunk ID:** {chunk_id}")
                         with col2:
                             st.caption(f"**Document ID:** {doc_id}")
+                        with col3:
+                            # Add download button
+                            if doc_id != "Unknown" and doc_id in doc_cache:
+                                st.download_button(
+                                    label="⬇️",
+                                    data=doc_cache[doc_id]["data"],
+                                    file_name=doc_cache[doc_id]["filename"],
+                                    mime="application/pdf",
+                                    key=f"download_current_{doc_id}_{i}",
+                                    help=f"Download {doc_cache[doc_id]['filename']}"
+                                )
                         
                         # Add action buttons
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2 = st.columns(2)
                         with col1:
                             if st.button(f"💬 Chat about this", key=f"chat_{chunk_id}"):
                                 # Store the query for chat
@@ -131,9 +209,6 @@ if prompt := st.chat_input("Enter your search query to preview retrieved chunks.
                         with col2:
                             if st.button(f"📋 Copy ID", key=f"copy_{chunk_id}"):
                                 st.write(f"Chunk ID: {chunk_id}")
-                        with col3:
-                            if st.button(f"📄 View Doc", key=f"doc_{chunk_id}"):
-                                st.write(f"Document ID: {doc_id}")
             
         except requests.exceptions.RequestException as e:
             st.error(f"❌ Failed to get response: {str(e)}")
