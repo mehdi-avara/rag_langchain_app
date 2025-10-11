@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 from typing import Dict, Optional, List
 import re
-import markdown
 
 from settigs import get_settings
 from components.auth import get_token
@@ -121,59 +120,9 @@ def render_text_markdown(text: str) -> None:
     if not text.strip():
         return
     
-    # Configure markdown with extensions
-    md = markdown.Markdown(
-        extensions=[
-            'codehilite',
-            'fenced_code',
-            'tables',
-            'toc'
-        ],
-        extension_configs={
-            'codehilite': {
-                'css_class': 'highlight',
-                'use_pygments': False
-            }
-        }
-    )
-    
-    # Convert markdown to HTML
-    html_content = md.convert(text)
-    
-    # Add custom CSS for better formatting
-    custom_css = """
-    <style>
-        .chunk-content {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-        .chunk-content table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 1rem 0;
-        }
-        .chunk-content th,
-        .chunk-content td {
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 0.5rem;
-        }
-        .chunk-content code {
-            background-color: rgba(0, 0, 0, 0.3);
-            padding: 0.2rem 0.4rem;
-            border-radius: 0.25rem;
-        }
-        .chunk-content pre {
-            background-color: rgba(0, 0, 0, 0.3);
-            padding: 1rem;
-            border-radius: 0.5rem;
-            overflow-x: auto;
-        }
-    </style>
-    """
-    
-    # Display the content
-    st.markdown(custom_css + f'<div class="chunk-content">{html_content}</div>', unsafe_allow_html=True)
+    # Simply use Streamlit's native markdown rendering
+    # This handles all markdown features including code blocks, tables, etc.
+    st.markdown(text)
 
 
 def render_chunk_viewer(
@@ -344,4 +293,4 @@ def render_simple_chunk_content(chunk_id: int, doc_id: int) -> None:
     render_chunk_markdown(chunk.get("content", ""), doc_id, token)
 
 
-render_simple_chunk_content(16706, 103)
+render_simple_chunk_content(16707, 103)
