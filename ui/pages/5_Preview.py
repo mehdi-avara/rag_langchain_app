@@ -3,7 +3,7 @@ import requests
 import os
 from components.auth import require_auth, get_token
 from components.chat_msg import render_markdown_content, fetch_document_data
-
+from components.chunk import render_simple_chunk_content
 from settigs import get_settings
 
 settings = get_settings()
@@ -61,28 +61,7 @@ for i, preview in enumerate(st.session_state["preview_history"]):
         for j, chunk in enumerate(preview["retrieved_chunks"]):
             chunk_id = chunk.get("chunk_id", f"unknown_{j}")
             doc_id = chunk.get("doc_id", "Unknown")
-            content = chunk.get("content", "")
-            
-            with st.expander(f"📄 Chunk {j+1} (ID: {chunk_id}, Doc: {doc_id})", expanded=False):
-                render_markdown_content(content)
-                
-                # Show chunk metadata and download button
-                col1, col2, col3 = st.columns([2, 2, 1])
-                with col1:
-                    st.caption(f"**Chunk ID:** {chunk_id}")
-                with col2:
-                    st.caption(f"**Document ID:** {doc_id}")
-                with col3:
-                    # Add download button
-                    if doc_id != "Unknown" and doc_id in doc_cache:
-                        st.download_button(
-                            label="⬇️",
-                            data=doc_cache[doc_id]["data"],
-                            file_name=doc_cache[doc_id]["filename"],
-                            mime="application/pdf",
-                            key=f"download_history_{i}_{doc_id}_{j}",
-                            help=f"Download {doc_cache[doc_id]['filename']}"
-                        )
+            render_simple_chunk_content(chunk_id, doc_id)
 
 # Advanced options in sidebar
 with st.sidebar:

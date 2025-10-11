@@ -376,6 +376,3 @@ def render_simple_chunk_content(chunk_id: int, doc_id: int) -> None:
         return
     
     render_chunk_markdown(chunk.get("content", ""), doc_id, token)
-
-
-render_simple_chunk_content(16707, 103)
