@@ -137,8 +137,11 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
         
         # Create expandable section for each chunk
         with st.expander(f"📄 Source {i+1} (Chunk ID: {chunk_id}, Doc: {doc_id})", expanded=False):
-            render_simple_chunk_content(chunk_id, doc_id)
-            
+            try:
+                render_simple_chunk_content(chunk_id, doc_id)
+            except Exception as e:
+                st.error(f"Failed to render chunk {chunk_id}: {str(e)}")
+                
             # Show chunk metadata and download button
             st.markdown("---")
             col1, col2, col3 = st.columns([2, 2, 1])
