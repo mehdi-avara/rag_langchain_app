@@ -50,7 +50,7 @@ with st.sidebar:
     # Search mode selection
     search_mode = st.selectbox(
         "🔎 Search Mode",
-        options=["hybrid", "vector", "keyword"],
+        options=["vector" ,"hybrid", "keyword"],
         index=0,
         help="Choose how to search through your documents"
     )
@@ -87,7 +87,6 @@ with col2:
                         added_count += 1
                 
                 if added_count > 0:
-                    st.session_state["doc_id_input"] = ""  # Clear input
                     st.rerun()
                 else:
                     st.warning("All document IDs are already added.")
