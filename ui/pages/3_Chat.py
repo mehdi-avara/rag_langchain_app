@@ -23,11 +23,12 @@ if "selected_doc_ids" not in st.session_state:
     st.session_state["selected_doc_ids"] = []
 
 # Display chat history
-for msg in st.session_state["history"]:
+for msg_idx, msg in enumerate(st.session_state["history"]):
     render_message(
         role=msg["role"],
         content=msg["content"],
         retrieved_chunks=msg.get("retrieved_chunks"),
+        message_id=msg_idx,
     )
 
 # Advanced options in sidebar
@@ -162,6 +163,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                 role="assistant",
                 content=result.get("answer", "Sorry, I couldn't process your request."),
                 retrieved_chunks=result.get("retrieved_chunks", []),
+                message_id=len(st.session_state["history"]) - 1,
             )
             
         except requests.exceptions.RequestException as e:

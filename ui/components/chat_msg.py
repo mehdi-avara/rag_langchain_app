@@ -15,6 +15,7 @@ def render_message(
     role: str,
     content: str,
     retrieved_chunks: List[Dict] = None,
+    message_id: int = 0,
 ) -> None:
     """Render a chat message with optional citations and retrieved chunks."""
     with st.chat_message(role):
@@ -24,7 +25,7 @@ def render_message(
             
             # Display retrieved chunks if available
             if retrieved_chunks:
-                render_retrieved_chunks(retrieved_chunks)
+                render_retrieved_chunks(retrieved_chunks, message_id)
         else:
             st.write(content)
 
@@ -84,7 +85,7 @@ def fetch_document_data(doc_id: int):
         st.error(f"❌ Failed to fetch document {doc_id}: {str(e)}")
         return None, None
 
-def download_document_button(doc_id: int, row_index: int, doc_data: bytes = None, filename: str = None):
+def download_document_button(doc_id: int, row_index: int, message_id: int = 0, doc_data: bytes = None, filename: str = None):
     """Render a download button for a document."""
     if doc_data and filename:
         # Data is already available, show download button
@@ -93,14 +94,14 @@ def download_document_button(doc_id: int, row_index: int, doc_data: bytes = None
             data=doc_data,
             file_name=filename,
             mime="application/pdf",
-            key=f"download_doc_{doc_id}_{row_index}",
+            key=f"download_doc_{message_id}_{doc_id}_{row_index}",
             help=f"Download {filename}"
         )
     else:
         # Show a disabled button or loading state
-        st.button("⬇️", key=f"download_doc_{doc_id}_{row_index}", disabled=True, help="Document not available")
+        st.button("⬇️", key=f"download_doc_{message_id}_{doc_id}_{row_index}", disabled=True, help="Document not available")
 
-def render_retrieved_chunks(retrieved_chunks: List[Dict]):
+def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
     """Render the retrieved chunks section with expandable content."""
     st.markdown("---")
     st.subheader("📚 Retrieved Sources")
@@ -151,12 +152,13 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict]):
                 if doc_id != "Unknown" and doc_id in doc_cache:
                     download_document_button(
                         doc_id, 
-                        i, 
+                        i,
+                        message_id,
                         doc_cache[doc_id]["data"],
                         doc_cache[doc_id]["filename"]
                     )
                 elif doc_id != "Unknown":
-                    download_document_button(doc_id, i)
+                    download_document_button(doc_id, i, message_id)
             
 
 def render_markdown_content(content: str):
