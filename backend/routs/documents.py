@@ -149,3 +149,65 @@ async def get_chunk(
         "content": chunk.content,
     }
     return result
+
+@router.get("/{doc_id}/images/{image_path:path}")
+async def get_document_image(
+    doc_id: int,
+    image_path: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve an image from a document's folder.
+    The image_path should be relative to the document's 'original/auto' directory.
+    Example: images/1909f77aa61d1702b3d74dab559a2781dc56ff85420b4535a7d6c29c4053373f.jpg
+    """
+    
+    # Get document
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check ownership
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this document")
+    
+    # Check if the document has a file path
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="No file path found for this document")
+    
+    # Construct full path: FILES_DIR/{doc_id}/original/auto/{image_path}
+    full_image_path = Path(settings.files_dir) / doc.file_path / "original" / "auto" / image_path
+    
+    # Security check: ensure the resolved path is within the expected directory
+    try:
+        full_image_path = full_image_path.resolve()
+        expected_base = (Path(settings.files_dir) / doc.file_path / "original" / "auto").resolve()
+        if not str(full_image_path).startswith(str(expected_base)):
+            raise HTTPException(status_code=403, detail="Invalid image path")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image path")
+    
+    # Check if file exists
+    if not full_image_path.exists() or not full_image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    # Determine media type based on file extension
+    media_types = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.bmp': 'image/bmp',
+    }
+    
+    file_ext = full_image_path.suffix.lower()
+    media_type = media_types.get(file_ext, 'application/octet-stream')
+    
+    # Return the image file
+    return FileResponse(
+        path=full_image_path,
+        media_type=media_type
+    )
