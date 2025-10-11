@@ -6,6 +6,7 @@ import re
 import markdown
 
 from settigs import get_settings
+from components.auth import get_token
 
 settings = get_settings()
 API_URL = settings.API_URL
@@ -60,11 +61,75 @@ def show_citation_preview(chunk_id: int, token: str):
     except requests.exceptions.RequestException:
         st.error(f"Failed to fetch citation {chunk_id}")
 
+def fetch_document_data(doc_id: int):
+    """Fetch document data from backend and return content and filename."""
+    try:
+        token = get_token()
+        response = requests.get(
+            f"{API_URL}/documents/download/{doc_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            stream=True
+        )
+        response.raise_for_status()
+        
+        # Get filename from content-disposition header or use default
+        filename = f"document_{doc_id}.pdf"
+        if 'content-disposition' in response.headers:
+            content_disposition = response.headers['content-disposition']
+            if 'filename=' in content_disposition:
+                filename = content_disposition.split('filename=')[1].strip('"')
+        
+        return response.content, filename
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Failed to fetch document {doc_id}: {str(e)}")
+        return None, None
+
+def download_document_button(doc_id: int, row_index: int, doc_data: bytes = None, filename: str = None):
+    """Render a download button for a document."""
+    if doc_data and filename:
+        # Data is already available, show download button
+        st.download_button(
+            label="⬇️",
+            data=doc_data,
+            file_name=filename,
+            mime="application/pdf",
+            key=f"download_doc_{doc_id}_{row_index}",
+            help=f"Download {filename}"
+        )
+    else:
+        # Show a disabled button or loading state
+        st.button("⬇️", key=f"download_doc_{doc_id}_{row_index}", disabled=True, help="Document not available")
+
 def render_retrieved_chunks(retrieved_chunks: List[Dict]):
     """Render the retrieved chunks section with expandable content."""
     st.markdown("---")
     st.subheader("📚 Retrieved Sources")
     
+    # Pre-fetch unique document data for all chunks
+    unique_doc_ids = set()
+    for chunk in retrieved_chunks:
+        doc_id = chunk.get("doc_id", "Unknown")
+        if doc_id != "Unknown":
+            unique_doc_ids.add(doc_id)
+    
+    # Fetch documents if not already cached
+    doc_cache = {}
+    with st.spinner("Loading documents..."):
+        for doc_id in unique_doc_ids:
+            cache_key = f"doc_cache_{doc_id}"
+            if cache_key not in st.session_state:
+                doc_data, filename = fetch_document_data(doc_id)
+                if doc_data:
+                    st.session_state[cache_key] = {
+                        "data": doc_data,
+                        "filename": filename
+                    }
+            
+            # Get from cache
+            if cache_key in st.session_state:
+                doc_cache[doc_id] = st.session_state[cache_key]
+    
+    # Render chunks with download buttons
     for i, chunk in enumerate(retrieved_chunks):
         chunk_id = chunk.get("chunk_id", f"unknown_{i}")
         doc_id = chunk.get("doc_id", "Unknown")
@@ -75,12 +140,24 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict]):
             # Render markdown content
             render_markdown_content(content)
             
-            # Show chunk metadata
-            col1, col2 = st.columns(2)
+            # Show chunk metadata and download button
+            col1, col2, col3 = st.columns([2, 2, 1])
             with col1:
                 st.caption(f"**Chunk ID:** {chunk_id}")
             with col2:
                 st.caption(f"**Document ID:** {doc_id}")
+            with col3:
+                # Add download button with pre-fetched data
+                if doc_id != "Unknown" and doc_id in doc_cache:
+                    download_document_button(
+                        doc_id, 
+                        i, 
+                        doc_cache[doc_id]["data"],
+                        doc_cache[doc_id]["filename"]
+                    )
+                elif doc_id != "Unknown":
+                    download_document_button(doc_id, i)
+            
 
 def render_markdown_content(content: str):
     """Render markdown content with proper formatting."""
