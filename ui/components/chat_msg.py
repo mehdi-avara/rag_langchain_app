@@ -7,7 +7,7 @@ import markdown
 
 from settigs import get_settings
 from components.auth import get_token
-
+from components.chunk import render_simple_chunk_content
 settings = get_settings()
 API_URL = settings.API_URL
 
@@ -134,14 +134,13 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
     for i, chunk in enumerate(retrieved_chunks):
         chunk_id = chunk.get("chunk_id", f"unknown_{i}")
         doc_id = chunk.get("doc_id", "Unknown")
-        content = chunk.get("content", "")
         
         # Create expandable section for each chunk
         with st.expander(f"📄 Source {i+1} (Chunk ID: {chunk_id}, Doc: {doc_id})", expanded=False):
-            # Render markdown content
-            render_markdown_content(content)
+            render_simple_chunk_content(chunk_id, doc_id)
             
             # Show chunk metadata and download button
+            st.markdown("---")
             col1, col2, col3 = st.columns([2, 2, 1])
             with col1:
                 st.caption(f"**Chunk ID:** {chunk_id}")
@@ -159,7 +158,6 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
                     )
                 elif doc_id != "Unknown":
                     download_document_button(doc_id, i, message_id)
-            
 
 def render_markdown_content(content: str):
     """Render markdown content with proper formatting."""
