@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import os
 from components.auth import require_auth, get_token
+from components.chunk import render_chunk_markdown
 
 from settigs import get_settings
 
@@ -62,10 +63,11 @@ if st.session_state["viewing_chunks"]:
         
         # Display chunks
         for chunk in st.session_state["chunks"]:
-            with st.expander(f"Page {chunk['page_num']} - {chunk['chunk_type']}"):
-                st.write(chunk["content"])
-                if chunk["start_pos"] is not None:
-                    st.caption(f"Position: {chunk['start_pos']} - {chunk['end_pos']}")
+            st.markdown(f"### 📄 Page {chunk['page_num']} - {chunk['chunk_type']}")
+            if chunk["start_pos"] is not None:
+                st.caption(f"Position: {chunk['start_pos']} - {chunk['end_pos']}")
+            render_chunk_markdown(chunk["content"], doc["id"], get_token())
+            st.markdown("---")
         
         # Pagination controls
         col1, col2, col3 = st.columns([1, 2, 1])
