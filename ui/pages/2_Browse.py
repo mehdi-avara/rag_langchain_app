@@ -63,7 +63,7 @@ if st.session_state["viewing_chunks"]:
         
         # Display chunks
         for chunk in st.session_state["chunks"]:
-            st.markdown(f"### 📄 Page {chunk['page_num']} - {chunk['chunk_type']}")
+            st.markdown(f"### Part {chunk['id']}")
             if chunk["start_pos"] is not None:
                 st.caption(f"Position: {chunk['start_pos']} - {chunk['end_pos']}")
             render_chunk_markdown(chunk["content"], doc["id"], get_token())
