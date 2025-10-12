@@ -3,12 +3,12 @@ import requests
 import os
 from components.auth import require_auth, get_token
 from components.chat_msg import render_markdown_content, fetch_document_data
-from components.chunk import render_simple_chunk_content
+from components.chunk import render_chunk_markdown
 from settigs import get_settings
 
 settings = get_settings()
 API_URL = settings.API_URL
-
+token = get_token()
 # Require authentication
 require_auth()
 
@@ -61,7 +61,8 @@ for i, preview in enumerate(st.session_state["preview_history"]):
         for j, chunk in enumerate(preview["retrieved_chunks"]):
             chunk_id = chunk.get("chunk_id", f"unknown_{j}")
             doc_id = chunk.get("doc_id", "Unknown")
-            render_simple_chunk_content(chunk_id, doc_id)
+            content = chunk.get("content", "")
+            render_chunk_markdown(content, doc_id, token)
 
 # Advanced options in sidebar
 with st.sidebar:
