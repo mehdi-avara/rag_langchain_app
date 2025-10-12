@@ -86,34 +86,47 @@ def fetch_document_data(doc_id: int):
         return None, None
 
 def download_document_button(doc_id: int, row_index: int, message_id: int = 0):
-    """Render a download button for a document that fetches on-demand."""
+    """
+    Render a download button for a document that fetches on-demand.
+    
+    Behavior:
+    - First click: Fetches document and reloads page (happens once)
+    - After cache: Direct download without reload
+    """
     cache_key = f"doc_cache_{doc_id}"
     
     # Check if document is already cached
-    if cache_key not in st.session_state:
-        # Document not cached, show button to load it
-        if st.button("📥", key=f"load_doc_{message_id}_{doc_id}_{row_index}", help="Click to load document"):
-            with st.spinner(f"Loading document {doc_id}..."):
-                doc_data, filename = fetch_document_data(doc_id)
-                if doc_data and filename:
-                    st.session_state[cache_key] = {
-                        "data": doc_data,
-                        "filename": filename
-                    }
-                    st.rerun()  # Rerun to show the download button
-                else:
-                    st.error("Failed to load document")
-    else:
-        # Document is cached, show download button
+    if cache_key in st.session_state:
+        # Document is cached - show download button
+        # Clicking this will NOT cause a page reload
         doc_info = st.session_state[cache_key]
         st.download_button(
             label="📥",
             data=doc_info["data"],
             file_name=doc_info["filename"],
             mime="application/pdf",
-            key=f"download_doc_{message_id}_{doc_id}_{row_index}",
-            help=f"Download {doc_info['filename']}"
+            key=f"dl_{message_id}_{doc_id}_{row_index}",
+            help=f"📄 {doc_info['filename']}"
         )
+    else:
+        # Document not cached - show fetch button
+        # Clicking this WILL cause one reload to cache the document
+        if st.button(
+            "📥", 
+            key=f"fetch_{message_id}_{doc_id}_{row_index}", 
+            help="⚠️ First click will load document"
+        ):
+            with st.spinner(f"Fetching document {doc_id}..."):
+                doc_data, filename = fetch_document_data(doc_id)
+                if doc_data and filename:
+                    st.session_state[cache_key] = {
+                        "data": doc_data,
+                        "filename": filename
+                    }
+                    # Rerun to show the download button
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to load document")
 
 def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
     """Render the retrieved chunks section with expandable content."""
