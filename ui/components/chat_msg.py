@@ -7,7 +7,7 @@ import markdown
 
 from settigs import get_settings
 from components.auth import get_token
-from components.chunk import render_simple_chunk_content, fetch_adjacent_chunks, fetch_chunk
+from components.chunk import render_simple_chunk_content, fetch_adjacent_chunks, fetch_chunk, render_chunk_markdown
 settings = get_settings()
 API_URL = settings.API_URL
 
@@ -137,6 +137,7 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
     for i, chunk in enumerate(retrieved_chunks):
         chunk_id = chunk.get("chunk_id", f"unknown_{i}")
         doc_id = chunk.get("doc_id", "Unknown")
+        content = chunk.get("content", "")
         
         # Initialize session state for this chunk's current view
         state_key = f"chat_chunk_{message_id}_{i}_current"
@@ -176,7 +177,7 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
             
             # Render the chunk content
             try:
-                render_simple_chunk_content(current_viewing_chunk_id, doc_id)
+                render_chunk_markdown(content, doc_id, token)
             except Exception as e:
                 st.error(f"Failed to render chunk {current_viewing_chunk_id}: {str(e)}")
                 

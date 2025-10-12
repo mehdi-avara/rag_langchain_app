@@ -68,7 +68,7 @@ def fetch_image(doc_id: int, image_path: str, token: str) -> Optional[bytes]:
     except requests.exceptions.RequestException:
         return None
 
-
+@st.cache_resource
 def render_chunk_markdown(content: str, doc_id: int, token: str) -> None:
     """Render markdown content with proper image handling."""
     if not content:
