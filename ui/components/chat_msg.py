@@ -62,6 +62,7 @@ def show_citation_preview(chunk_id: int, token: str):
     except requests.exceptions.RequestException:
         st.error(f"Failed to fetch citation {chunk_id}")
 
+@st.cache_resource
 def fetch_document_data(doc_id: int):
     """Fetch document data from backend and return content and filename."""
     try:
