@@ -7,7 +7,7 @@ import markdown
 
 from settigs import get_settings
 from components.auth import get_token
-from components.chunk import render_simple_chunk_content
+from components.chunk import render_simple_chunk_content, fetch_adjacent_chunks, fetch_chunk
 settings = get_settings()
 API_URL = settings.API_URL
 
@@ -85,81 +85,107 @@ def fetch_document_data(doc_id: int):
         st.error(f"❌ Failed to fetch document {doc_id}: {str(e)}")
         return None, None
 
-def download_document_button(doc_id: int, row_index: int, message_id: int = 0, doc_data: bytes = None, filename: str = None):
-    """Render a download button for a document."""
-    if doc_data and filename:
-        # Data is already available, show download button
-        st.download_button(
-            label="⬇️",
-            data=doc_data,
-            file_name=filename,
-            mime="application/pdf",
-            key=f"download_doc_{message_id}_{doc_id}_{row_index}",
-            help=f"Download {filename}"
-        )
-    else:
-        # Show a disabled button or loading state
-        st.button("⬇️", key=f"download_doc_{message_id}_{doc_id}_{row_index}", disabled=True, help="Document not available")
-
-def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
-    """Render the retrieved chunks section with expandable content."""
-    st.markdown("---")
-    st.subheader("📚 Retrieved Sources")
+def download_document_button(doc_id: int, row_index: int, message_id: int = 0):
+    """Render a download button for a document that fetches on-demand."""
+    # Check if document is already cached
+    cache_key = f"doc_cache_{doc_id}"
     
-    # Pre-fetch unique document data for all chunks
-    unique_doc_ids = set()
-    for chunk in retrieved_chunks:
-        doc_id = chunk.get("doc_id", "Unknown")
-        if doc_id != "Unknown":
-            unique_doc_ids.add(doc_id)
-    
-    # Fetch documents if not already cached
-    doc_cache = {}
-    with st.spinner("Loading documents..."):
-        for doc_id in unique_doc_ids:
-            cache_key = f"doc_cache_{doc_id}"
-            if cache_key not in st.session_state:
+    # Button to trigger download
+    if st.button("📥", key=f"download_doc_{message_id}_{doc_id}_{row_index}", help="Download document"):
+        # Fetch document if not in cache
+        if cache_key not in st.session_state:
+            with st.spinner(f"Loading document {doc_id}..."):
                 doc_data, filename = fetch_document_data(doc_id)
                 if doc_data:
                     st.session_state[cache_key] = {
                         "data": doc_data,
                         "filename": filename
                     }
-            
-            # Get from cache
-            if cache_key in st.session_state:
-                doc_cache[doc_id] = st.session_state[cache_key]
+                else:
+                    st.error("Failed to load document")
+                    return
+        
+        # Trigger download by setting a flag
+        st.session_state[f"trigger_download_{message_id}_{doc_id}_{row_index}"] = True
+        st.rerun()
     
-    # Render chunks with download buttons
+    # If download was triggered, show the download button
+    if st.session_state.get(f"trigger_download_{message_id}_{doc_id}_{row_index}", False):
+        if cache_key in st.session_state:
+            doc_info = st.session_state[cache_key]
+            st.download_button(
+                label="⬇️ Download",
+                data=doc_info["data"],
+                file_name=doc_info["filename"],
+                mime="application/pdf",
+                key=f"actual_download_{message_id}_{doc_id}_{row_index}",
+                help=f"Download {doc_info['filename']}"
+            )
+            # Reset the trigger after showing download button
+            st.session_state[f"trigger_download_{message_id}_{doc_id}_{row_index}"] = False
+
+def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
+    """Render the retrieved chunks section with expandable content."""
+    st.markdown("---")
+    st.subheader("📚 Retrieved Sources")
+    
+    # Render chunks with download buttons and navigation
     for i, chunk in enumerate(retrieved_chunks):
         chunk_id = chunk.get("chunk_id", f"unknown_{i}")
         doc_id = chunk.get("doc_id", "Unknown")
         
+        # Initialize session state for this chunk's current view
+        state_key = f"chat_chunk_{message_id}_{i}_current"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = chunk_id
+        
+        current_viewing_chunk_id = st.session_state[state_key]
+        
         # Create expandable section for each chunk
-        with st.expander(f"📄 Source {i+1} (Chunk ID: {chunk_id}, Doc: {doc_id})", expanded=False):
+        with st.expander(f"📄 Source {i+1} (Chunk ID: {current_viewing_chunk_id}, Doc: {doc_id})", expanded=False):
+            # Get adjacent chunk IDs
+            token = get_token()
+            prev_chunk_id, next_chunk_id = fetch_adjacent_chunks(doc_id, current_viewing_chunk_id, token) if token and doc_id != "Unknown" else (None, None)
+            
+            # Navigation buttons at the top
+            nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+            with nav_col1:
+                if prev_chunk_id:
+                    if st.button("⬆️ Previous", key=f"chat_prev_{message_id}_{i}", use_container_width=True):
+                        st.session_state[state_key] = prev_chunk_id
+                        st.rerun()
+                else:
+                    st.button("⬆️ Previous", key=f"chat_prev_{message_id}_{i}_disabled", disabled=True, use_container_width=True)
+            
+            with nav_col2:
+                st.markdown(f"<div style='text-align: center; padding: 0.3rem;'><small>Navigate chunks</small></div>", unsafe_allow_html=True)
+            
+            with nav_col3:
+                if next_chunk_id:
+                    if st.button("⬇️ Next", key=f"chat_next_{message_id}_{i}", use_container_width=True):
+                        st.session_state[state_key] = next_chunk_id
+                        st.rerun()
+                else:
+                    st.button("⬇️ Next", key=f"chat_next_{message_id}_{i}_disabled", disabled=True, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Render the chunk content
             try:
-                render_simple_chunk_content(chunk_id, doc_id)
+                render_simple_chunk_content(current_viewing_chunk_id, doc_id)
             except Exception as e:
-                st.error(f"Failed to render chunk {chunk_id}: {str(e)}")
+                st.error(f"Failed to render chunk {current_viewing_chunk_id}: {str(e)}")
                 
             # Show chunk metadata and download button
             st.markdown("---")
             col1, col2, col3 = st.columns([2, 2, 1])
             with col1:
-                st.caption(f"**Chunk ID:** {chunk_id}")
+                st.caption(f"**Chunk ID:** {current_viewing_chunk_id}")
             with col2:
                 st.caption(f"**Document ID:** {doc_id}")
             with col3:
-                # Add download button with pre-fetched data
-                if doc_id != "Unknown" and doc_id in doc_cache:
-                    download_document_button(
-                        doc_id, 
-                        i,
-                        message_id,
-                        doc_cache[doc_id]["data"],
-                        doc_cache[doc_id]["filename"]
-                    )
-                elif doc_id != "Unknown":
+                # Add on-demand download button
+                if doc_id != "Unknown":
                     download_document_button(doc_id, i, message_id)
 
 def render_markdown_content(content: str):
