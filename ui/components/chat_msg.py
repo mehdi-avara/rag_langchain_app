@@ -87,42 +87,33 @@ def fetch_document_data(doc_id: int):
 
 def download_document_button(doc_id: int, row_index: int, message_id: int = 0):
     """Render a download button for a document that fetches on-demand."""
-    # Check if document is already cached
     cache_key = f"doc_cache_{doc_id}"
     
-    # Button to trigger download
-    if st.button("📥", key=f"download_doc_{message_id}_{doc_id}_{row_index}", help="Download document"):
-        # Fetch document if not in cache
-        if cache_key not in st.session_state:
+    # Check if document is already cached
+    if cache_key not in st.session_state:
+        # Document not cached, show button to load it
+        if st.button("📥", key=f"load_doc_{message_id}_{doc_id}_{row_index}", help="Click to load document"):
             with st.spinner(f"Loading document {doc_id}..."):
                 doc_data, filename = fetch_document_data(doc_id)
-                if doc_data:
+                if doc_data and filename:
                     st.session_state[cache_key] = {
                         "data": doc_data,
                         "filename": filename
                     }
+                    st.rerun()  # Rerun to show the download button
                 else:
                     st.error("Failed to load document")
-                    return
-        
-        # Trigger download by setting a flag
-        st.session_state[f"trigger_download_{message_id}_{doc_id}_{row_index}"] = True
-        st.rerun()
-    
-    # If download was triggered, show the download button
-    if st.session_state.get(f"trigger_download_{message_id}_{doc_id}_{row_index}", False):
-        if cache_key in st.session_state:
-            doc_info = st.session_state[cache_key]
-            st.download_button(
-                label="⬇️ Download",
-                data=doc_info["data"],
-                file_name=doc_info["filename"],
-                mime="application/pdf",
-                key=f"actual_download_{message_id}_{doc_id}_{row_index}",
-                help=f"Download {doc_info['filename']}"
-            )
-            # Reset the trigger after showing download button
-            st.session_state[f"trigger_download_{message_id}_{doc_id}_{row_index}"] = False
+    else:
+        # Document is cached, show download button
+        doc_info = st.session_state[cache_key]
+        st.download_button(
+            label="📥",
+            data=doc_info["data"],
+            file_name=doc_info["filename"],
+            mime="application/pdf",
+            key=f"download_doc_{message_id}_{doc_id}_{row_index}",
+            help=f"Download {doc_info['filename']}"
+        )
 
 def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
     """Render the retrieved chunks section with expandable content."""
