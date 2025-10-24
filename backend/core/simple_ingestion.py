@@ -85,21 +85,27 @@ async def process_pdf_with_mineru(pdf_bytes: bytes, doc_id: int, base_dir: str, 
     
     # Run MinerU command
     # mineru -p "original.pdf" -o "."
-    cmd = [settings.mineru_running_address, "-p", str(original_pdf_path), "-o", str(doc_dir)]
-    
+    cmd = ["taskset", "-c", "0-5",
+            settings.mineru_running_address,
+            "-p", str(original_pdf_path),
+            "-o", str(doc_dir)
+            ]
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = ""
     try:
-        # Run blocking subprocess in a background thread to avoid blocking the event loop
         result = await asyncio.to_thread(
             subprocess.run,
             cmd,
+            env=env,
+            check=True,
             capture_output=True,
             text=True,
             cwd=doc_dir
         )
-        if result.returncode != 0:
-            raise Exception(f"MinerU failed: {result.stderr}")
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"MinerU failed: {e.stderr}") from e
     except Exception as e:
-        raise Exception(f"Failed to run MinerU: {str(e)}")
+        raise Exception(f"Failed to run MinerU: {e}") from e
     
     # Find the generated markdown file
     # Look for {filename}.md in the auto directory
