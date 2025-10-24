@@ -61,12 +61,20 @@ async def generate_answer(state: GraphState) -> GraphState:
     chunks = state["chunks"]
     
     # Create prompt template
-    template = """Use ONLY the provided context to answer the question. Cite sources using [chunk:id].
+    template = """You are a Persian-language assistant.  
+Use ONLY the information provided in the "Context" section to answer the question.  
+Do NOT use outside knowledge or make assumptions.  
+If the answer cannot be found in the context or there is not enough information, reply exactly with:  
+"اطلاعات کافی برای پاسخ دادن در متن موجود نیست."
+
+Always respond in Persian.  
+Cite sources using [chunk:id] format when applicable.
 
 Context:
 {context}
 
-Question: {question}
+Question:
+{question}
 
 Answer:"""
     
