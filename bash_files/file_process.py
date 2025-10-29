@@ -24,6 +24,26 @@ ALLOWED_EXT = {
 }
 
 
+def run_cmd(cmd: list, capture_output: bool = True) -> subprocess.CompletedProcess:
+    """
+    Small helper to run shell commands.
+    Doesn't raise exception if fails; we handle manually.
+    """
+    try:
+        if capture_output:
+            return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        else:
+            return subprocess.run(cmd)
+    except Exception as e:
+        # We'll just fake a CompletedProcess-like object
+        class Fake:
+            def __init__(self, e):
+                self.returncode = 999
+                self.stdout = ""
+                self.stderr = str(e)
+        return Fake(e)
+
+
 # --------------------------
 # FILE LISTING (SORT BY SIZE)
 # --------------------------
@@ -65,9 +85,46 @@ def prepare_batch_dir(batch_files: List[str], batch_idx: int) -> str:
     return batch_tmp_dir
 
 
+def kill_scope(unit_name: str):
+    """
+    Force-kill the entire systemd scope for this batch.
+    This should kill mineru + any child processes like vllm.
+    Safe to call even if already dead.
+    """
+    # systemctl kill <unit> sends SIGTERM to all PIDs in the cgroup
+    kill_term = run_cmd(["sudo", "systemctl", "kill", unit_name])
+    if kill_term.returncode != 0:
+        print(f"[INFO] systemctl kill {unit_name} returncode={kill_term.returncode} stderr={kill_term.stderr.strip()}")
+
+    # As insurance, send SIGKILL (9) if anything still alive in that scope
+    kill_kill = run_cmd(["sudo", "systemctl", "kill", unit_name, "-s", "KILL"])
+    if kill_kill.returncode != 0:
+        print(f"[INFO] systemctl kill -s KILL {unit_name} returncode={kill_kill.returncode} stderr={kill_kill.stderr.strip()}")
+
+
+def kill_leftover_vllm():
+    """
+    Emergency cleanup. If for any reason vllm server is still alive
+    (holding GPU VRAM), nuke it.
+    We match on 'vllm' in the command line.
+    """
+    proc = run_cmd(["pgrep", "-fa", "VLLM::EngineCore"])
+    if proc.returncode == 0 and proc.stdout.strip():
+        print("⚠️  Leftover vllm processes detected:")
+        print(proc.stdout)
+        # kill -9 all those PIDs
+        run_cmd(["pkill", "-9", "-f", "vllm"], capture_output=False)
+        print("💀 Killed leftover vllm processes.")
+
+
 def run_mineru_on_batch(batch_tmp_dir: str, batch_idx: int) -> bool:
-    """Run mineru (via systemd-run limits) on a batch folder."""
+    """
+    Run mineru (via systemd-run limits) on a batch folder,
+    wait for it to finish, capture success/failure,
+    and ensure cleanup of child procs.
+    """
     unit_name = f"mineru_limit_batch_{batch_idx:04d}"
+
     cmd = [
         "sudo", "systemd-run", "--scope", f"--unit={unit_name}",
         "-p", "MemoryMax=65G",
@@ -83,20 +140,36 @@ def run_mineru_on_batch(batch_tmp_dir: str, batch_idx: int) -> bool:
 
     print(f"🚀 Running mineru on batch {batch_idx:04d} ({batch_tmp_dir})")
     try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
-
-        if process.returncode != 0:
-            print(f"[❌ ERROR] batch {batch_idx:04d} failed (exit {process.returncode})")
-            print(stderr.decode('utf-8', errors='ignore'))
-            return False
-        else:
-            print(f"[✅ OK] batch {batch_idx:04d} finished successfully")
-            return True
-
     except Exception as e:
-        print(f"[EXCEPTION] batch {batch_idx:04d}: {e}")
+        print(f"[EXCEPTION] Failed to launch mineru for batch {batch_idx:04d}: {e}")
+        # kill scope just in case something partially started
+        kill_scope(unit_name)
+        kill_leftover_vllm()
         return False
+
+    rc = process.returncode
+    if rc != 0:
+        print(f"[❌ ERROR] batch {batch_idx:04d} failed (exit {rc})")
+        if stdout:
+            print("----- mineru stdout -----")
+            print(stdout)
+        if stderr:
+            print("----- mineru stderr -----")
+            print(stderr)
+
+        # Force kill children from that scope (vllm, etc.)
+        kill_scope(unit_name)
+        kill_leftover_vllm()
+        return False
+
+    else:
+        print(f"[✅ OK] batch {batch_idx:04d} finished successfully")
+        # Even on success, be strict: kill scope so vllm doesn't keep running.
+        kill_scope(unit_name)
+        kill_leftover_vllm()
+        return True
 
 
 def cleanup_and_archive(batch_files: List[str], batch_tmp_dir: str, batch_idx: int):
@@ -124,9 +197,6 @@ def cleanup_and_archive(batch_files: List[str], batch_tmp_dir: str, batch_idx: i
     print(f"🏁 Batch {batch_idx:04d} completed (success or fail).")
 
 
-# --------------------------
-# MAIN LOGIC
-# --------------------------
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(TMP_BASE, exist_ok=True)
