@@ -7,20 +7,19 @@ from typing import List
 # CONFIG
 # =======================
 INPUT_DIR = "extracted_files"
-OUTPUT_DIR = "processed"
-ORIGINAL_DONE_DIR = "processed_pdf_original"
+OUTPUT_DIR = "processed1"
+ORIGINAL_DONE_DIR = "processed_pdf_original1"
 TMP_BASE = "work_tmp"
 
 BACKEND = "vlm-vllm-engine"
 DEVICE = "cuda"
 MINERU_BIN = "/home/habib/.conda/envs/mineru310/bin/mineru"
 
-BATCH_SIZE = 30  # process 30 at a time
+BATCH_SIZE = 5  # process 30 at a time
 
 # allow only these (lowercase; we always compare with ext.lower())
 ALLOWED_EXT = {
-    ".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif",
-    ".docx", ".pptx", ".xlsx", ".txt"
+    ".pdf"
 }
 
 
@@ -108,14 +107,19 @@ def kill_leftover_vllm():
     (holding GPU VRAM), nuke it.
     We match on 'vllm' in the command line.
     """
+    
     proc = run_cmd(["pgrep", "-fa", "VLLM::EngineCore"])
+    
     if proc.returncode == 0 and proc.stdout.strip():
         print("⚠️  Leftover vllm processes detected:")
         print(proc.stdout)
-        # kill -9 all those PIDs
-        run_cmd(["pkill", "-9", "-f", "vllm"], capture_output=False)
-        print("💀 Killed leftover vllm processes.")
 
+        # extract PIDs safely
+        pids = [line.split()[0] for line in proc.stdout.strip().splitlines()]
+        for pid in pids:
+            run_cmd(["kill", "-9", pid], capture_output=False)
+            print(f"💀 Killed leftover vllm process PID {pid}")
+            print("💀 Killed leftover vllm processes.")
 
 def run_mineru_on_batch(batch_tmp_dir: str, batch_idx: int) -> bool:
     """
@@ -137,7 +141,7 @@ def run_mineru_on_batch(batch_tmp_dir: str, batch_idx: int) -> bool:
         "-b", BACKEND,
         "-d", DEVICE
     ]
-
+    unit_name = f"{unit_name}.scope"
     print(f"🚀 Running mineru on batch {batch_idx:04d} ({batch_tmp_dir})")
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
