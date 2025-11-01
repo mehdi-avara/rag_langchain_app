@@ -114,6 +114,14 @@ async def process_pdf_with_mineru(pdf_bytes: bytes, doc_id: int, base_dir: str, 
         md_files = list(auto_dir.glob("*.md"))
         if md_files:
             return str(md_files[0])
+    else:
+        auto_dir = doc_dir / "vlm"
+        if auto_dir.exists():
+            md_files = list(auto_dir.glob("*.md"))
+            if md_files:
+                return str(md_files[0])
+        else:
+            raise Exception("Unable to process PDF with MinerU")
     
     # Fallback: look for any .md file in the doc directory
     md_files = list(doc_dir.glob("**/*.md"))
