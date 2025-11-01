@@ -55,6 +55,13 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     
     return {**state, "chunks": chunks}
 
+
+def add_page_numbers_to_chunks(state: GraphState):
+    """Add page numbers to chunk metadata if available."""
+    files_address = settings.files_dir
+    #TODO: implement this function to add page numbers to chunks based on file paths
+    return state
+
 async def generate_answer(state: GraphState) -> GraphState:
     """Generate answer using retrieved documents."""
     question = state["question"]
