@@ -63,6 +63,8 @@ class QueryRequest(BaseModel):
     doc_ids: List[int] | None = None
     # chunking_mode: ChunkingMode = ChunkingMode.token_fixed
 
+class ChunkePageRequest(BaseModel):
+    chunks: List[ChunkSource]
 
 app.include_router(auth_router,prefix="/auth",tags=["Auth"])
 app.include_router(document_router,prefix="/documents",tags=["document"])
@@ -191,7 +193,24 @@ async def query_docs(
 
     return {"retrieved_chunks": retrieved_chunks}
 
+# @app.post("/chunks/page_numbers")
+async def get_chunks_page_numbers(
+    request: ChunkePageRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+    ) -> List[ChunkSource]:
+    """Retrieve page numbers for chunks based on their document IDs."""
+    chunks = request.chunks
+    chunks = find_chunk_page_numbers(chunks)
+    return chunks
 
+def find_chunk_page_numbers(chunks: List[ChunkSource]) -> List[ChunkSource]:
+    """Retrieve page numbers for chunks based on their document IDs."""
+    for chunk in chunks:
+        # Logic to determine page number based on chunk.doc_id and chunk.position
+        # This is a placeholder; actual implementation will depend on how documents and chunks are stored
+        chunk.page_num = 1  # Replace with actual page number retrieval logic
+    return chunks
 
 async def call_llm_to_rewrite(query: str) -> str:
     """Use LLM to improve the query for better search performance."""
