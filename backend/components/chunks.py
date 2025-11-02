@@ -69,34 +69,21 @@ def _best_fuzzy(line_norm: str, page_lines: List[str]) -> float:
     """
     if not line_norm or not page_lines:
         return 0.0
-    try:
-        # Prefer rapidfuzz if installed
-        from rapidfuzz.fuzz import partial_ratio
-        best = 0.0
-        # small early-out for very short lines to avoid noisy matches
-        if len(line_norm) < 6:
-            return 0.0
-        for pl in page_lines:
-            # skip trivially short targets
-            if len(pl) < 6:
-                continue
-            sc = partial_ratio(line_norm, pl)
-            if sc > best:
-                best = sc
-        return float(best)
-    except Exception:
-        # Fallback: difflib (slower and less robust)
-        import difflib
-        best = 0.0
-        if len(line_norm) < 6:
-            return 0.0
-        for pl in page_lines:
-            if len(pl) < 6:
-                continue
-            sc = difflib.SequenceMatcher(None, line_norm, pl).ratio() * 100.0
-            if sc > best:
-                best = sc
-        return float(best)
+
+    from rapidfuzz.fuzz import partial_ratio
+    best = 0.0
+    # small early-out for very short lines to avoid noisy matches
+    if len(line_norm) < 6:
+        return 0.0
+    for pl in page_lines:
+        # skip trivially short targets
+        if len(pl) < 6:
+            continue
+        sc = partial_ratio(line_norm, pl)
+        if sc > best:
+            best = sc
+    return float(best)
+
 
 def get_chunk_page_using_json(chunk: Chunk) -> int:
     """Approximate the page number for a chunk using the extracted JSON."""
@@ -188,15 +175,21 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
 if __name__ == "__main__":
     with db_session() as db:
         # test run: find all chunks without page_num and try to assign
-        chunks = db.query(Chunk).limit(20).all()
+        chunks = db.query(Chunk).limit(400).all()
         print(f"Found {len(chunks)} chunks without page_num")
         updated = 0
+        not_updated = 0
         for ch in chunks:
             pg = get_chunk_page_using_json(ch)
             if pg != -1:
                 # ch.page_num = pg
                 updated += 1
                 print(f"Chunk {ch.id} to page {pg}")
-            input("testing pause...")
+            else:
+                not_updated+=1
+                print(f"Chunk {ch.id} not found")
+                
+            # input("testing pause...")
         # db.commit()
         print(f"Updated {updated} chunks with page numbers")
+        print(f"Not updated {not_updated} chunks")
