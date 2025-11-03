@@ -11,7 +11,7 @@ from deps import get_current_user
 
 from components import generate_embeddings_for_chunks
 
-router = APIRouter(prefix="/comments", tags=["comments"])
+router = APIRouter(prefix="/", tags=["comments"])
 
 
 # ---------- SCHEMAS ----------
