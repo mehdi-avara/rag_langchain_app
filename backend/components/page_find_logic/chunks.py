@@ -6,7 +6,7 @@ from settings import get_settings
 from db.session import db_session
 from db.models import Chunk, Document
 from components.folders import get_full_processed_file_path
-from components.mineru_main_file_creator import union_make
+from components.page_find_logic.mineru_main_file_creator import union_make
 
 
 def find_chunk_pos_in_text(chunk_text: str, md_text: str):
