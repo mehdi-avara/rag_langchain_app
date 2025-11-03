@@ -1,9 +1,12 @@
 from pathlib import Path
+from mineru.utils.enum_class import MakeMode
+import json
 
 from settings import get_settings
 from db.session import db_session
 from db.models import Chunk
 from components.folders import get_full_processed_file_path
+from components.mineru_main_file_creator import union_make
 
 
 def find_chunk_pos_in_text(chunk_text: str, md_text: str):
@@ -14,10 +17,29 @@ def find_chunk_pos_in_text(chunk_text: str, md_text: str):
     return start, end
 
 
+
+
 if __name__ == "__main__":
     settings = get_settings()
 
-    for doc_id in range(80, 200):
+    
+
+    for doc_id in range(80, 81):
+        doc_dir = Path(settings.files_dir) / str(doc_id)
+        # Load JSON
+        file_path = get_full_processed_file_path(doc_dir, "_middle.json")
+        with file_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Accept either {"pdf_info": [...]} or a raw list
+        pdf_info = data.get("pdf_info", data)
+        if not isinstance(pdf_info, list):
+            raise SystemExit("Input JSON must contain a list under key 'pdf_info' (or be a list itself).")
+
+        # Convert to Markdown using your function
+        md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
+
+        print(pages_list)
         with db_session() as db:
             chunks = (db.query(Chunk)
                         .filter(Chunk.doc_id == doc_id)
@@ -27,7 +49,6 @@ if __name__ == "__main__":
             if not chunks:
                 continue
 
-            doc_dir = Path(settings.files_dir) / str(doc_id)
             md_file_path = get_full_processed_file_path(doc_dir, ".md")
             md_text = Path(md_file_path).read_text(encoding="utf-8")
 

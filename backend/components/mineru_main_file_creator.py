@@ -188,93 +188,12 @@ def merge_para_with_text(para_block):
     return para_text
 
 
-def make_blocks_to_content_list(para_block, img_buket_path, page_idx, page_size):
-    para_type = para_block['type']
-    para_content = {}
-    if para_type in [
-        BlockType.TEXT,
-        BlockType.LIST,
-        BlockType.INDEX,
-    ]:
-        para_content = {
-            'type': ContentType.TEXT,
-            'text': merge_para_with_text(para_block),
-        }
-    elif para_type == BlockType.DISCARDED:
-        para_content = {
-            'type': para_type,
-            'text': merge_para_with_text(para_block),
-        }
-    elif para_type == BlockType.TITLE:
-        para_content = {
-            'type': ContentType.TEXT,
-            'text': merge_para_with_text(para_block),
-        }
-        title_level = get_title_level(para_block)
-        if title_level != 0:
-            para_content['text_level'] = title_level
-    elif para_type == BlockType.INTERLINE_EQUATION:
-        if len(para_block['lines']) == 0 or len(para_block['lines'][0]['spans']) == 0:
-            return None
-        para_content = {
-            'type': ContentType.EQUATION,
-            'img_path': f"{img_buket_path}/{para_block['lines'][0]['spans'][0].get('image_path', '')}",
-        }
-        if para_block['lines'][0]['spans'][0].get('content', ''):
-            para_content['text'] = merge_para_with_text(para_block)
-            para_content['text_format'] = 'latex'
-    elif para_type == BlockType.IMAGE:
-        para_content = {'type': ContentType.IMAGE, 'img_path': '', BlockType.IMAGE_CAPTION: [], BlockType.IMAGE_FOOTNOTE: []}
-        for block in para_block['blocks']:
-            if block['type'] == BlockType.IMAGE_BODY:
-                for line in block['lines']:
-                    for span in line['spans']:
-                        if span['type'] == ContentType.IMAGE:
-                            if span.get('image_path', ''):
-                                para_content['img_path'] = f"{img_buket_path}/{span['image_path']}"
-            if block['type'] == BlockType.IMAGE_CAPTION:
-                para_content[BlockType.IMAGE_CAPTION].append(merge_para_with_text(block))
-            if block['type'] == BlockType.IMAGE_FOOTNOTE:
-                para_content[BlockType.IMAGE_FOOTNOTE].append(merge_para_with_text(block))
-    elif para_type == BlockType.TABLE:
-        para_content = {'type': ContentType.TABLE, 'img_path': '', BlockType.TABLE_CAPTION: [], BlockType.TABLE_FOOTNOTE: []}
-        for block in para_block['blocks']:
-            if block['type'] == BlockType.TABLE_BODY:
-                for line in block['lines']:
-                    for span in line['spans']:
-                        if span['type'] == ContentType.TABLE:
-                            if span.get('html', ''):
-                                para_content[BlockType.TABLE_BODY] = f"{span['html']}"
-
-                            if span.get('image_path', ''):
-                                para_content['img_path'] = f"{img_buket_path}/{span['image_path']}"
-
-            if block['type'] == BlockType.TABLE_CAPTION:
-                para_content[BlockType.TABLE_CAPTION].append(merge_para_with_text(block))
-            if block['type'] == BlockType.TABLE_FOOTNOTE:
-                para_content[BlockType.TABLE_FOOTNOTE].append(merge_para_with_text(block))
-
-    page_width, page_height = page_size
-    para_bbox = para_block.get('bbox')
-    if para_bbox:
-        x0, y0, x1, y1 = para_bbox
-        para_content['bbox'] = [
-            int(x0 * 1000 / page_width),
-            int(y0 * 1000 / page_height),
-            int(x1 * 1000 / page_width),
-            int(y1 * 1000 / page_height),
-        ]
-
-    para_content['page_idx'] = page_idx
-
-    return para_content
-
-
 def union_make(pdf_info_dict: list,
                make_mode: str,
                img_buket_path: str = '',
                ):
     output_content = []
+    pages_list = []
     joined = ""
     for page_info in pdf_info_dict:
         paras_of_layout = page_info.get('para_blocks')
@@ -285,12 +204,24 @@ def union_make(pdf_info_dict: list,
             if not paras_of_layout:
                 continue
             page_markdown = make_blocks_to_markdown(paras_of_layout, make_mode, img_buket_path)
-            print(f"page {page_idx} start {len(joined)}")
-            output_content.extend(page_markdown)
-            joined = '\n\n'.join(output_content)
-            print(f"page {page_idx}  end {len(joined)}")
 
-    return joined
+                        # page start is current length of joined
+            start = len(joined)
+            print(f"page {page_idx} start {start}")
+
+            # add this page
+            output_content.append(page_markdown)
+            joined = '\n\n'.join(output_content)
+
+            end = len(joined)
+            pages_list.append({
+                "page_idx": page_idx,
+                "start": start,
+                "end": end,
+            })
+            print(f"page {page_idx} end {end}")
+
+    return joined , pages_list
 
 
 

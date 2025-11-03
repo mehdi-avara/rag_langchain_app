@@ -72,7 +72,7 @@ def main():
         raise SystemExit("Input JSON must contain a list under key 'pdf_info' (or be a list itself).")
 
     # Convert to Markdown using your function
-    md_text = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
+    md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
 
     # Decide output path
     out_path: Path = args.out if args.out else Path.cwd() / f"{args.json_path.stem}.md"
