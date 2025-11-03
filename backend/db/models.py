@@ -55,6 +55,17 @@ class Chunk(Base):
     image_data = relationship("ImageChunk", back_populates="chunk", cascade="all, delete-orphan")
 
 
+class Comment(Base):
+    __tablename__ = "comments"
+
+    id = Column(Integer, primary_key=True)
+    doc_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
+    chunk_id = Column(Integer, ForeignKey("chunks.id"), nullable=True)
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(1024), nullable=True)  
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class ImageChunk(Base):
     __tablename__ = "image_chunks"
 
