@@ -90,6 +90,8 @@ def main():
             ref_md = f.read()
         report = _similarity_report(md_text, ref_md)
         print(report)
+    print(len(md_text))
+    print(len(ref_md))
 
 if __name__ == "__main__":
     main()
