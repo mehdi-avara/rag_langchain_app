@@ -17,7 +17,7 @@ def find_chunk_pos_in_text(chunk_text: str, md_text: str):
 if __name__ == "__main__":
     settings = get_settings()
 
-    for doc_id in range(88, 195):
+    for doc_id in range(80, 200):
         with db_session() as db:
             chunks = (db.query(Chunk)
                         .filter(Chunk.doc_id == doc_id)
