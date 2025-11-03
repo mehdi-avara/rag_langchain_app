@@ -20,16 +20,10 @@ from settings import get_settings
 from components.llm import llm_client
 from db.models import Document, Chunk
 from core.chunking import ChunkingMode, chunk_text, token_len
-from components.embedding import JinaAPIEmbeddings
 from components.folders import get_full_processed_file_path
+from components import generate_embeddings_for_chunks
 
 settings = get_settings()
-# Use centralized async client via llm_client
-embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
-
-async def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:
-    """Generate embeddings for a list of text chunks."""
-    return embeddings.embed_documents(chunks)
 
 
 async def detect_type(file_bytes: bytes) -> str:
