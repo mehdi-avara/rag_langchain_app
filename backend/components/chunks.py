@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List, Tuple
+import html
 
 from settings import get_settings
 from db.session import db_session
@@ -11,6 +12,50 @@ from components.folders import get_full_processed_file_path
 
 
 _IMG_MD_RE = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
+_TABLE_BLOCK_RE = re.compile(r'<table\b[^>]*>.*?</table>', re.I | re.S)
+
+def _extract_table_blocks_from_markdown(text: str) -> List[str]:
+    """Return raw <table>...</table> HTML blocks from the markdown chunk."""
+    if not text:
+        return []
+    return _TABLE_BLOCK_RE.findall(text)
+
+def _table_html_to_lines(table_html: str) -> List[str]:
+    """
+    Convert an HTML <table>...</table> string into a list of row-like text lines.
+    We do a very light HTML-to-text without external libs:
+      - replace <tr> with row breaks
+      - replace <th>/<td> with cell separators
+      - strip tags, unescape entities, collapse whitespace
+    """
+    if not table_html:
+        return []
+
+    s = table_html
+    # normalize row/cell boundaries to make splitting easier
+    s = re.sub(r'(?is)</tr\s*>', '\n', s)
+    s = re.sub(r'(?is)<tr\b[^>]*>', '', s)
+    s = re.sub(r'(?is)</t[hd]\s*>', ' ', s)
+    s = re.sub(r'(?is)<t[hd]\b[^>]*>', ' ', s)
+
+    # drop the rest of tags
+    s = re.sub(r'(?is)<[^>]+>', ' ', s)
+
+    # HTML entities → text
+    s = html.unescape(s)
+
+    # Split rows, clean
+    lines = []
+    for raw in s.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        # collapse spaces and normalize
+        raw = re.sub(r'\s+', ' ', raw)
+        if raw:
+            lines.append(raw)
+    return lines
+
 
 def _normalize(s: str) -> str:
     """
@@ -58,6 +103,33 @@ def _build_page_text_and_images(content_list: List[dict]) -> Tuple[Dict[int, str
             name = Path(img_path).name
             if name:
                 image_name_to_page[name] = p
+        
+        elif item.get("type") == "table":
+            # map table image (if any)
+            img_path = item.get("img_path") or ""
+            name = Path(img_path).name
+            if name:
+                image_name_to_page[name] = p
+
+            # captions / footnotes
+            for part in (item.get("table_caption") or []):
+                nln = _normalize(part or "")
+                if nln:
+                    page_text_parts[p].append(nln)
+                    page_lines_norm[p].append(nln)
+            for part in (item.get("table_footnote") or []):
+                nln = _normalize(part or "")
+                if nln:
+                    page_text_parts[p].append(nln)
+                    page_lines_norm[p].append(nln)
+
+            # table body (HTML → lines)
+            tbody = item.get("table_body") or ""
+            for ln in _table_html_to_lines(tbody):
+                nln = _normalize(ln)
+                if nln:
+                    page_text_parts[p].append(nln)
+                    page_lines_norm[p].append(nln)
 
     page_text_norm = {p: " ".join(parts) for p, parts in page_text_parts.items()}
     return page_text_norm, image_name_to_page, page_lines_norm
@@ -127,6 +199,14 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
             continue
         norm_lines.append(nln)
 
+    # also parse any HTML <table> blocks present in the markdown chunk
+    md_table_blocks = _extract_table_blocks_from_markdown(chunk_content)
+    for tb in md_table_blocks:
+        for tln in _table_html_to_lines(tb):
+            nln = _normalize(tln)
+            if nln and len(nln) >= 6:
+                norm_lines.append(nln)
+
     if not norm_lines:
         return -1
 
@@ -173,23 +253,45 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
     return int(best_page)
 
 if __name__ == "__main__":
-    with db_session() as db:
-        # test run: find all chunks without page_num and try to assign
-        chunks = db.query(Chunk).limit(400).all()
-        print(f"Found {len(chunks)} chunks without page_num")
-        updated = 0
-        not_updated = 0
-        for ch in chunks:
-            pg = get_chunk_page_using_json(ch)
-            if pg != -1:
-                # ch.page_num = pg
-                updated += 1
-                print(f"Chunk {ch.id} to page {pg}")
-            else:
-                not_updated+=1
-                print(f"Chunk {ch.id} not found")
-                
-            # input("testing pause...")
-        # db.commit()
-        print(f"Updated {updated} chunks with page numbers")
-        print(f"Not updated {not_updated} chunks")
+    for doc_id in range(93, 97):
+        with db_session() as db:
+            # process only chunks missing page_num; drop .limit(400) or paginate
+            chunks = (db.query(Chunk)
+                        .filter(Chunk.doc_id == doc_id)
+                        .filter((Chunk.page_num == None) | (Chunk.page_num == -1))
+                        .order_by(Chunk.id)
+                        .all())
+
+            print(f"[doc {doc_id}] Found {len(chunks)} chunks without page_num")
+            updated = not_updated = 0
+            older_page = None  # don’t force 0 before first success
+
+            # simple per-doc cache to avoid reloading JSON for each chunk
+            _page_cache = {}  # optional if you modify get_chunk_page_using_json to accept cached indices
+
+            for ch in chunks:
+                pg = get_chunk_page_using_json(ch)  # ideally pass cache here
+
+                if pg != -1:
+                    # enforce non-decreasing pages if you really want that behavior
+                    if older_page is not None and pg < older_page:
+                        # choose one policy: clamp or skip
+                        # clamp:
+                        input("whattt...")
+                        # or: continue  # to skip assigning
+                    ch.page_num = pg
+                    older_page = pg if older_page is None or pg > older_page else older_page
+                    updated += 1
+                    print(f"  Chunk {ch.id} → page {pg}")
+                else:
+                    # only carry forward if we already have a valid page; else leave unset
+                    if older_page is not None:
+                        ch.page_num = older_page  # optional: carry-forward
+                        print(f"  Chunk {ch.id} not found; carry-forward {older_page}")
+                    else:
+                        # keep as NULL/-1 to revisit later
+                        print(f"  Chunk {ch.id} not found; leaving unset")
+                    not_updated += 1
+
+            db.commit()
+            print(f"[doc {doc_id}] ✅ Updated {updated} | ❌ Not updated {not_updated}")
