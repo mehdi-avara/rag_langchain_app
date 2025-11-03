@@ -38,6 +38,9 @@ if __name__ == "__main__":
 
     # 2) now loop over ids freely
     for doc_id in doc_ids:
+        
+        print(f"Processing doc: {doc_id}")
+
         doc_dir = Path(settings.files_dir) / str(doc_id)
         # Load JSON
         file_path = Path(get_full_processed_file_path(doc_dir, "_middle.json"))
