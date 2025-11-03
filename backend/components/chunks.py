@@ -18,6 +18,17 @@ def find_chunk_pos_in_text(chunk_text: str, md_text: str):
 
 
 
+def find_page_for_pos(pos: int, pages_list: list):
+    """
+    Given a character position and a list of page boundaries, return the page index.
+    Each item in pages_list: {"page_idx": int, "start": int, "end": int}
+    """
+    for p in pages_list:
+        if p["start"] <= pos < p["end"]:
+            return p["page_idx"]
+    return None
+
+
 
 if __name__ == "__main__":
     settings = get_settings()
@@ -40,8 +51,6 @@ if __name__ == "__main__":
 
         # Convert to Markdown using your function
         md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
-
-        print(pages_list)
         with db_session() as db:
             chunks = (db.query(Chunk)
                         .filter(Chunk.doc_id == doc_id)
@@ -65,6 +74,12 @@ if __name__ == "__main__":
                     ch.start_pos = start
                     ch.end_pos = end
                     db.flush()  # force SQLAlchemy to issue UPDATE
-                    print(f"[OK] doc {doc_id} chunk {ch.id} -> {start}..{end}")
+                                # find page number based on start position
+                page_idx = find_page_for_pos(start, pages_list)
+                if page_idx is not None:
+                    ch.page_num = page_idx
+                    db.flush()  # force SQLAlchemy to issue UPDATE
+                else:
+                    print(f"[WARN] Chunk {ch.id} position {start} not inside any page range.")
 
             db.commit()
