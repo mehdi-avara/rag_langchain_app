@@ -253,12 +253,12 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
     return int(best_page)
 
 if __name__ == "__main__":
-    for doc_id in range(93, 97):
+    for doc_id in range(93, 195):
         with db_session() as db:
             # process only chunks missing page_num; drop .limit(400) or paginate
             chunks = (db.query(Chunk)
                         .filter(Chunk.doc_id == doc_id)
-                        .filter((Chunk.page_num == None) | (Chunk.page_num == -1))
+                        # .filter((Chunk.page_num == None) | (Chunk.page_num == -1))
                         .order_by(Chunk.id)
                         .all())
 
@@ -277,7 +277,7 @@ if __name__ == "__main__":
                     if older_page is not None and pg < older_page:
                         # choose one policy: clamp or skip
                         # clamp:
-                        input("whattt...")
+                        pg = older_page
                         # or: continue  # to skip assigning
                     ch.page_num = pg
                     older_page = pg if older_page is None or pg > older_page else older_page
