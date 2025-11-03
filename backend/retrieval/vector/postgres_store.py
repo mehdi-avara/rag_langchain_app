@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional, Tuple, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from db.models import Chunk, Document
+from db.models import Chunk, Document, Comment
 from components.embedding import JinaAPIEmbeddings
 from settings import get_settings
 from langchain_core.documents import Document as LangchainDocument
@@ -91,6 +91,48 @@ class PostgresVectorStore:
                 results.append((chunk, row.similarity))
         
         return results
+    
+    def similarity_search_comments(
+        self,
+        query: str,
+        k: int = 6,
+        doc_ids: Optional[List[int]] = None,
+        chunk_id: Optional[int] = None,
+    ) -> List[Tuple[Comment, float]]:
+        # 1) embed query
+        query_embedding = self.embeddings.embed_query(query)
+        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+
+        params = {'k': k}
+        filters = ["c.embedding IS NOT NULL"]
+        if doc_ids:
+            placeholders = ','.join([f':doc_id_{i}' for i in range(len(doc_ids))])
+            filters.append(f"c.doc_id IN ({placeholders})")
+            for i, doc_id in enumerate(doc_ids):
+                params[f'doc_id_{i}'] = doc_id
+
+        if chunk_id is not None:
+            filters.append("c.chunk_id = :chunk_id")
+            params["chunk_id"] = chunk_id
+
+        where_clause = " AND ".join(filters)
+
+        sql = text(f"""
+            SELECT c.*, 1 - (c.embedding <=> '{embedding_str}'::vector) AS similarity
+            FROM comments c
+            WHERE {where_clause}
+            ORDER BY c.embedding <=> '{embedding_str}'::vector
+            LIMIT :k
+        """)
+
+        result = self.db.execute(sql, params)
+
+        out: List[Tuple[Comment, float]] = []
+        for row in result:
+            comment = self.db.query(Comment).filter(Comment.id == row.id).first()
+            if comment:
+                out.append((comment, row.similarity))
+        return out
 
     def as_retriever(
         self,
