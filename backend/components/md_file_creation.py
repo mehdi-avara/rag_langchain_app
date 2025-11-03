@@ -4,7 +4,7 @@ https://github.com/opendatalab/MinerU/blob/master/mineru/backend/pipeline/pipeli
 Convert MinerU middle-level JSON (pdf_info) to Markdown and optionally compare with an existing MD file.
 """
 from mineru.utils.enum_class import BlockType, ContentType, MakeMode
-from mineru.backend.pipeline.pipeline_middle_json_mkcontent import union_make
+from mineru_main_file_creator import union_make
 
 
 
@@ -72,7 +72,7 @@ def main():
         raise SystemExit("Input JSON must contain a list under key 'pdf_info' (or be a list itself).")
 
     # Convert to Markdown using your function
-    md_text = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD)
+    md_text = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
 
     # Decide output path
     out_path: Path = args.out if args.out else Path.cwd() / f"{args.json_path.stem}.md"
