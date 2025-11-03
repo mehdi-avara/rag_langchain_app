@@ -165,7 +165,7 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
     doc_dir = Path(settings.files_dir) / str(chunk.doc_id)
     json_path = get_full_processed_file_path(doc_dir, "_content_list.json")
     if not json_path or not Path(json_path).exists():
-        return -1
+        return -1 , 0
 
     # 2) load JSON + build indices
     with open(json_path, "r", encoding="utf-8") as f:
@@ -181,7 +181,7 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
     for ip in img_paths:
         name = Path(ip).name
         if name in image_name_to_page:
-            return int(image_name_to_page[name])
+            return int(image_name_to_page[name]) , 1
 
     # 4) Text-based scoring (exact substr + fuzzy)
     # Prepare chunk lines (skip markdown image lines)
@@ -208,7 +208,7 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
                 norm_lines.append(nln)
 
     if not norm_lines:
-        return -1
+        return -1 , 0
 
     # weights / thresholds
     W_EXACT = 3.0
@@ -243,14 +243,14 @@ def get_chunk_page_using_json(chunk: Chunk) -> int:
                 page_scores[p] += W_FUZZY * (best / 100.0)
 
     if not page_scores:
-        return -1
+        return -1 , 0
 
     # pick best page
     best_page, best_score = max(page_scores.items(), key=lambda kv: kv[1])
     if best_score < SCORE_MIN_ACCEPT:
-        return -1
+        return -1 , 0 
 
-    return int(best_page)
+    return int(best_page), best_score
 
 if __name__ == "__main__":
     for doc_id in range(93, 195):
@@ -270,9 +270,14 @@ if __name__ == "__main__":
             _page_cache = {}  # optional if you modify get_chunk_page_using_json to accept cached indices
 
             for ch in chunks:
-                pg = get_chunk_page_using_json(ch)  # ideally pass cache here
+                pg , score = get_chunk_page_using_json(ch)  # ideally pass cache here
 
-                if pg != -1:
+                if score == 1:
+                    ch.page_num = pg
+                    older_page = pg if older_page is None or pg > older_page else older_page
+                    updated += 1
+                    print(f"Sure  Chunk {ch.id} → page {pg}")
+                elif pg != -1:
                     # enforce non-decreasing pages if you really want that behavior
                     if older_page is not None and pg < older_page:
                         # choose one policy: clamp or skip
