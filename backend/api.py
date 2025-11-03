@@ -15,6 +15,7 @@ from settings import get_settings
 
 from routs.auth import router as auth_router
 from routs.documents import router as document_router
+from routs.comment import router as comment_router
 
 settings = get_settings()
 
@@ -68,6 +69,7 @@ class ChunkePageRequest(BaseModel):
 
 app.include_router(auth_router,prefix="/auth",tags=["Auth"])
 app.include_router(document_router,prefix="/documents",tags=["document"])
+app.include_router(comment_router, prefix="/comments", tags=["comments"])
 
 
 @app.post("/upload-md-file")
