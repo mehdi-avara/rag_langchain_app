@@ -4,7 +4,7 @@ import json
 
 from settings import get_settings
 from db.session import db_session
-from db.models import Chunk
+from db.models import Chunk, Document
 from components.folders import get_full_processed_file_path
 from components.mineru_main_file_creator import union_make
 
@@ -21,13 +21,15 @@ def find_chunk_pos_in_text(chunk_text: str, md_text: str):
 
 if __name__ == "__main__":
     settings = get_settings()
+    # 1) get only the IDs
+    with db_session() as db:
+        doc_ids = [d.id for d in db.query(Document).order_by(Document.id).all()]
 
-    
-
-    for doc_id in range(80, 81):
+    # 2) now loop over ids freely
+    for doc_id in doc_ids:
         doc_dir = Path(settings.files_dir) / str(doc_id)
         # Load JSON
-        file_path = get_full_processed_file_path(doc_dir, "_middle.json")
+        file_path = Path(get_full_processed_file_path(doc_dir, "_middle.json"))
         with file_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
 

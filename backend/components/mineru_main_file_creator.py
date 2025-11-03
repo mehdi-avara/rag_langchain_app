@@ -210,7 +210,7 @@ def union_make(pdf_info_dict: list,
             print(f"page {page_idx} start {start}")
 
             # add this page
-            output_content.append(page_markdown)
+            output_content.extend(page_markdown)
             joined = '\n\n'.join(output_content)
 
             end = len(joined)
