@@ -139,6 +139,7 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
         chunk_id = chunk.get("chunk_id", f"unknown_{i}")
         doc_id = chunk.get("doc_id", "Unknown")
         content = chunk.get("content", "")
+        page_number = chunk.get("chunk_page", "N/A")
         
         # Initialize session state for this chunk's current view
         state_key = f"chat_chunk_{message_id}_{i}_current"
@@ -148,7 +149,7 @@ def render_retrieved_chunks(retrieved_chunks: List[Dict], message_id: int = 0):
         current_viewing_chunk_id = st.session_state[state_key]
         
         # Create expandable section for each chunk
-        with st.expander(f"📄 Source {i+1} (Chunk ID: {current_viewing_chunk_id}, Doc: {doc_id})", expanded=False):
+        with st.expander(f"📄 Source {i+1} (Chunk ID: {current_viewing_chunk_id}, Doc: {doc_id}, Page: {page_number})", expanded=False):
             # Get adjacent chunk IDs
             token = get_token()
             prev_chunk_id, next_chunk_id = fetch_adjacent_chunks(doc_id, current_viewing_chunk_id, token) if token and doc_id != "Unknown" else (None, None)

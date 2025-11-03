@@ -153,6 +153,7 @@ async def chat(
             "content": chunk.content,
             "doc_id": chunk.doc_id,
             "chunk_id": chunk.id,
+            "chunk_page": chunk.page_num
         })
         citations.append(chunk.id)
     return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_chunks}
