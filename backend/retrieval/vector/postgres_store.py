@@ -217,9 +217,18 @@ class PostgresVectorRetriever:
             doc_ids=self.doc_ids,
             chunk_ids=self.chunk_ids
         )
-        #TODO: process results
-        return []
+        # Convert to the format expected by LangChain
+        comments = []
+        for comments, similarity in results:
+            if similarity > 0.5:
+                #TODO: similarity check
+                pass
+            comments.append(comments)        
+        return comments
 
     def invoke(self, query: str) -> List[Dict[str, Any]]:
         """Invoke the retriever (alias for get_relevant_documents)."""
-        return self.get_relevant_documents(query)
+        retrieved_contents = {}
+        retrieved_contents["chunks"] = self.get_relevant_documents(query)
+        retrieved_contents["comments"] = self.get_relevant_comments(query)
+        return retrieved_contents

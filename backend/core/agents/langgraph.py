@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from langchain.chat_models import ChatOpenAI
 
 
-from db.models import Chunk
+from db.models import Chunk, Comment
 from retrieval.vector.postgres_store import PostgresVectorStore
 from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
@@ -23,11 +23,13 @@ class GraphState(TypedDict):
     question: str
     route: str
     chunks: List[Chunk]
+    comments: List[Comment]
     answer: str
     citations: List[int]
     mode: str  # Can be "preview" or "full"
     db: Session  # SQLAlchemy session for database access
     doc_ids: List[int] | None
+    
 
 async def retrieve_docs(state: GraphState) -> GraphState:
     """Retrieve relevant documents based on route."""
@@ -37,23 +39,28 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     keyword_retriever = FullTextRetrieverFromDB(db)
     vector_store = PostgresVectorStore(db)
     vector_retriever = vector_store.as_retriever(
-        search_kwargs={"k": 6 if mode == "vector" else 3},  # Use fewer results for preview
+        search_kwargs={"k": 6},  # Use fewer results for preview
         doc_ids=state.get("doc_ids", None)
     )
-    
+    comments = []
+    chunks = []
     # Manual routing logic
     if mode == "keyword":
         chunks = await keyword_retriever.ainvoke(question)
     elif mode == "vector":
-        chunks = vector_retriever.invoke(question)
+        retrieved_content = vector_retriever.invoke(question)
+        chunks = retrieved_content["chunks"]  
+        comments = retrieved_content["comments"]
     elif mode == "hybrid":
-        chunks = vector_retriever.invoke(question)
+        retrieved_content = vector_retriever.invoke(question)
+        chunks = retrieved_content["chunks"]  
+        comments = retrieved_content["comments"]
         holder = await keyword_retriever.ainvoke(question)
         chunks += holder
-    else:
-        chunks = []
-    
-    return {**state, "chunks": chunks}
+        
+    return {**state, "chunks": chunks , "comments": comments}
+
+
 
 
 def add_page_numbers_to_chunks(state: GraphState):
@@ -66,9 +73,10 @@ async def generate_answer(state: GraphState) -> GraphState:
     """Generate answer using retrieved documents."""
     question = state["question"]
     chunks = state["chunks"]
+    comments = state["comments"]
     
     # Create prompt template
-    template = """Use ONLY the provided context to answer the question. Cite sources using [chunk:id].
+    template = """Use ONLY the provided context to answer the question. Cite sources using [chunk:id] or [comment:id].
 
 Context:
 {context}
@@ -90,6 +98,12 @@ Answer:"""
     # Generate answer
     chain = prompt | llm
     context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
+    context = context.join("\n\n").join(f"Comment Id:{comment.id}\ncontext content:{comment.content}" for comment in comments)
+    
+    print("Generated Context for LLM:")
+    print(context)
+    print("Question:")
+    print(question)
     result = await chain.ainvoke({
         "context": context,
         "question": question
