@@ -102,7 +102,7 @@ class PostgresVectorStore:
             query: str,
             k: int = 6,
             doc_ids: Optional[List[int]] = None,
-            chunk_id: Optional[int] = None,
+            chunk_ids: Optional[int] = None,
         ) -> List[Tuple[Comment, float]]:
             # 1) embed query
             query_embedding = self.embeddings.embed_query(query)
