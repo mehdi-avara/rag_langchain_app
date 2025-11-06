@@ -121,9 +121,9 @@ class PostgresVectorStore:
                 for i, doc_id in enumerate(doc_ids):
                     params[f"doc_id_{i}"] = doc_id
 
-            if chunk_id is not None:
+            if chunk_ids is not None:
                 filters.append("c.chunk_id = :chunk_id")
-                params["chunk_id"] = chunk_id
+                params["chunk_id"] = chunk_ids
 
             where_clause = " AND ".join(filters)
 
