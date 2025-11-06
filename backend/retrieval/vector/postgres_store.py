@@ -51,20 +51,21 @@ class PostgresVectorStore:
         # Build the SQL query for vector similarity search
         # Format the embedding as a PostgreSQL vector string
         embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
-        
         if doc_ids is not None:
             if isinstance(doc_ids, list) and len(doc_ids) > 0:
-                # Search within a list of documents
+                # Build placeholders for document IDs
                 placeholders = ','.join([f':doc_id_{i}' for i in range(len(doc_ids))])
                 sql = text(f"""
-                    SELECT c.*, 1 - (c.embedding <=> '{embedding_str}'::vector) as similarity
+                    SELECT c.*, 
+                        (-1 * (c.embedding <#> :query_vec)) AS similarity
                     FROM chunks c
                     WHERE c.doc_id IN ({placeholders})
                     AND c.embedding IS NOT NULL
-                    ORDER BY c.embedding <=> '{embedding_str}'::vector
+                    ORDER BY similarity DESC
                     LIMIT :k
                 """)
                 params = {f'doc_id_{i}': doc_id for i, doc_id in enumerate(doc_ids)}
+                params['query_vec'] = embedding_str
                 params['k'] = k
                 result = self.db.execute(sql, params)
 
@@ -73,13 +74,15 @@ class PostgresVectorStore:
         else:
             # Search across all documents
             sql = text(f"""
-                SELECT c.*, 1 - (c.embedding <=> '{embedding_str}'::vector) as similarity
+                SELECT c.*, 
+                    (-1 * (c.embedding <#> :query_vec)) AS similarity
                 FROM chunks c
                 WHERE c.embedding IS NOT NULL
-                ORDER BY c.embedding <=> '{embedding_str}'::vector
+                ORDER BY similarity DESC
                 LIMIT :k
             """)
             result = self.db.execute(sql, {
+                'query_vec': embedding_str,
                 'k': k
             })
         
@@ -92,47 +95,70 @@ class PostgresVectorStore:
         
         return results
     
+
+
     def similarity_search_comments(
-        self,
-        query: str,
-        k: int = 6,
-        doc_ids: Optional[List[int]] = None,
-        chunk_id: Optional[int] = None,
-    ) -> List[Tuple[Comment, float]]:
-        # 1) embed query
-        query_embedding = self.embeddings.embed_query(query)
-        embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
+            self,
+            query: str,
+            k: int = 6,
+            doc_ids: Optional[List[int]] = None,
+            chunk_id: Optional[int] = None,
+        ) -> List[Tuple[Comment, float]]:
+            # 1) embed query
+            query_embedding = self.embeddings.embed_query(query)
+            embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
 
-        params = {'k': k}
-        filters = ["c.embedding IS NOT NULL"]
-        if doc_ids:
-            placeholders = ','.join([f':doc_id_{i}' for i in range(len(doc_ids))])
-            filters.append(f"c.doc_id IN ({placeholders})")
-            for i, doc_id in enumerate(doc_ids):
-                params[f'doc_id_{i}'] = doc_id
+            # 2) build filters + params
+            filters = ["c.embedding IS NOT NULL"]
+            params: dict = {
+                "k": k,
+                "query_vec": embedding_str,
+            }
 
-        if chunk_id is not None:
-            filters.append("c.chunk_id = :chunk_id")
-            params["chunk_id"] = chunk_id
+            if doc_ids:
+                placeholders = ", ".join(f":doc_id_{i}" for i in range(len(doc_ids)))
+                filters.append(f"c.doc_id IN ({placeholders})")
+                for i, doc_id in enumerate(doc_ids):
+                    params[f"doc_id_{i}"] = doc_id
 
-        where_clause = " AND ".join(filters)
+            if chunk_id is not None:
+                filters.append("c.chunk_id = :chunk_id")
+                params["chunk_id"] = chunk_id
 
-        sql = text(f"""
-            SELECT c.*, 1 - (c.embedding <=> '{embedding_str}'::vector) AS similarity
-            FROM comments c
-            WHERE {where_clause}
-            ORDER BY c.embedding <=> '{embedding_str}'::vector
-            LIMIT :k
-        """)
+            where_clause = " AND ".join(filters)
 
-        result = self.db.execute(sql, params)
+            # 3) run cosine-sim query
+            sql = text(f"""
+                SELECT c.id AS id,
+                    (-1 * (c.embedding <#> :query_vec)) AS similarity
+                FROM comments c
+                WHERE {where_clause}
+                ORDER BY similarity DESC
+                LIMIT :k
+            """)
 
-        out: List[Tuple[Comment, float]] = []
-        for row in result:
-            comment = self.db.query(Comment).filter(Comment.id == row.id).first()
-            if comment:
-                out.append((comment, row.similarity))
-        return out
+            rows = self.db.execute(sql, params).fetchall()
+
+            if not rows:
+                return []
+
+            # 4) load all comments in one go
+            ids_in_order = [r.id for r in rows]
+            comments = (
+                self.db.query(Comment)
+                .filter(Comment.id.in_(ids_in_order))
+                .all()
+            )
+            comments_by_id = {c.id: c for c in comments}
+
+            # 5) return in similarity order
+            out: List[Tuple[Comment, float]] = []
+            for r in rows:
+                c = comments_by_id.get(r.id)
+                if c is not None:
+                    out.append((c, r.similarity))
+
+            return out
 
     def as_retriever(
         self,
@@ -156,11 +182,13 @@ class PostgresVectorRetriever:
         self,
         vector_store: PostgresVectorStore,
         search_kwargs: Dict[str, Any],
-        doc_ids: Optional[List[int]] = None
+        doc_ids: Optional[List[int]] = None,
+        chunk_ids: Optional[List[int]] = None
     ):
         self.vector_store = vector_store
         self.search_kwargs = search_kwargs
         self.doc_ids = doc_ids
+        self.chunk_ids = chunk_ids
 
     def get_relevant_documents(self, query: str) -> List[Dict[str, Any]]:
         """Get relevant documents for a query."""
@@ -179,6 +207,18 @@ class PostgresVectorRetriever:
                 pass
             chunks.append(chunk)        
         return chunks
+
+    def get_relevant_comments(self, query: str) -> List[Dict[str, Any]]:
+        """Get relevant comments for a query."""
+        k = self.search_kwargs.get("k", 6)
+        results = self.vector_store.similarity_search_comments(
+            query=query,
+            k=k,
+            doc_ids=self.doc_ids,
+            chunk_ids=self.chunk_ids
+        )
+        #TODO: process results
+        return []
 
     def invoke(self, query: str) -> List[Dict[str, Any]]:
         """Invoke the retriever (alias for get_relevant_documents)."""
