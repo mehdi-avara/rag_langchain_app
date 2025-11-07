@@ -5,7 +5,7 @@ from typing import List
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 
-from db.models import User
+from db.models import User, Document
 from db.init_db import get_db
 from deps import get_current_user
 from core.simple_ingestion import  ingest_file, ingest_pdf_with_mineru
@@ -57,6 +57,7 @@ class ChatRequest(BaseModel):
 class Retrieved_data(BaseModel):
     content: str
     doc_id: int
+    doc_name=str,
     chunk_id: int | None
     chunk_page: int | None
     comment_id: int | None
@@ -162,10 +163,19 @@ async def chat(
     answer = result["answer"]
     retrieved_data = []
     citations = []
+    # Fetch all needed doc_ids first to avoid multiple queries
+    doc_ids = {chunk.doc_id for chunk in result["chunks"]}
+    doc_ids |= {comment.doc_id for comment in result.get("comments", [])}
+
+    # Query all documents in one go (better performance)
+    docs = db.query(Document.id, Document.filename).filter(Document.id.in_(doc_ids)).all()
+    doc_map = {doc.id: doc.filename for doc in docs}
+
     for chunk in result["chunks"]:
         retrieved_data.append(Retrieved_data(
             content=chunk.content,
             doc_id=chunk.doc_id,
+            doc_name=doc_map.get(chunk.doc_id),
             chunk_id=chunk.id,
             chunk_page=chunk.page_num + 1,
             comment_id=None
@@ -176,6 +186,7 @@ async def chat(
         retrieved_data.append(Retrieved_data(
             content=comments.content,
             doc_id=comments.doc_id,
+            doc_name=doc_map.get(chunk.doc_id),
             chunk_id=comments.chunk_id,
             chunk_page=None,
             comment_id=comments.id
@@ -207,6 +218,14 @@ async def query_docs(
         "db": db,
         "doc_ids": request.doc_ids
     })
+
+    # Fetch all needed doc_ids first to avoid multiple queries
+    doc_ids = {chunk.doc_id for chunk in result["chunks"]}
+    doc_ids |= {comment.doc_id for comment in result.get("comments", [])}
+
+    # Query all documents in one go (better performance)
+    docs = db.query(Document.id, Document.filename).filter(Document.id.in_(doc_ids)).all()
+    doc_map = {doc.id: doc.filename for doc in docs}
 
     # Transform LangChain Document objects into dictionaries
     retrieved_chunks = []
