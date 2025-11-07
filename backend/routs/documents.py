@@ -23,6 +23,23 @@ async def list_documents(
 ):
     return db.query(Document).filter(Document.owner_id == current_user.id).all()
 
+
+
+@router.get("/{doc_id}", status_code=status.HTTP_200_OK, response_model=DocumentOut)
+async def get_document(
+    doc_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.owner_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     doc_id: int,
