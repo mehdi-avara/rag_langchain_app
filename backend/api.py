@@ -54,6 +54,18 @@ class ChatRequest(BaseModel):
     rewrite_query: bool = False
     extract_keywords_with_llm: bool = False
 
+class Retrieved_data(BaseModel):
+    content: str
+    doc_id: int
+    chunk_id: int | None
+    chunk_page: int | None
+    comment_id: int | None
+
+class ChatResponse(BaseModel):
+    answer: str
+    citations: List[int]
+    retrieved_chunks: List[Retrieved_data]
+
 class UploadRequest(BaseModel):
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed
 
@@ -130,7 +142,7 @@ async def chat(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
+) -> ChatResponse:
     query = request.query
     
     # Query rewriting if requested
@@ -148,24 +160,35 @@ async def chat(
     )
     result = await answer_graph.ainvoke(state_graph)
     answer = result["answer"]
-    retrieved_chunks = []
+    retrieved_data = []
     citations = []
     for chunk in result["chunks"]:
-        retrieved_chunks.append({
-            "content": chunk.content,
-            "doc_id": chunk.doc_id,
-            "chunk_id": chunk.id,
-            "chunk_page": chunk.page_num + 1
-        })
+        retrieved_data.append(Retrieved_data(
+            content=chunk.content,
+            doc_id=chunk.doc_id,
+            chunk_id=chunk.id,
+            chunk_page=chunk.page_num + 1,
+            comment_id=None
+        ))
         citations.append(chunk.id)
-    return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_chunks}
+          
+    for comments in result.get("comments", []):
+        retrieved_data.append(Retrieved_data(
+            content=comments.content,
+            doc_id=comments.doc_id,
+            chunk_id=comments.chunk_id,
+            chunk_page=None,
+            comment_id=comments.id
+        ))
+
+    return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data}
 
 @app.post("/query/preview")
 async def query_docs(
     request: QueryRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
+) :
     query = request.query
     
     # Query rewriting if requested
@@ -193,6 +216,15 @@ async def query_docs(
             "doc_id": chunk.doc_id,
             "chunk_id": chunk.id,
         })
+        
+    for comments in result.get("comments", []):
+        retrieved_chunks.append({
+            "content": comments.content,
+            "doc_id": comments.doc_id,
+            "chunk_id": comments.chunk_id,
+            "comment_id": comments.id,
+        })
+
 
     return {"retrieved_chunks": retrieved_chunks}
 
