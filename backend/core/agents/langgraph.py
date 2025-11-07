@@ -97,8 +97,9 @@ Answer:"""
     )    
     # Generate answer
     chain = prompt | llm
+    
     context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
-    context = context.join("\n\n").join(f"Comment Id:{comment.id}\ncontext content:{comment.content}" for comment in comments)
+    context += "\n\n" + "\n\n".join(f"Comment Id:{comment.id}\ncomment content:{comment.content}" for comment in comments)
     
     # print("Generated Context for LLM:")
     # print(context)
