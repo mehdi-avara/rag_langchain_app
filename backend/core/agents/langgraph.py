@@ -100,10 +100,10 @@ Answer:"""
     context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
     context = context.join("\n\n").join(f"Comment Id:{comment.id}\ncontext content:{comment.content}" for comment in comments)
     
-    print("Generated Context for LLM:")
-    print(context)
-    print("Question:")
-    print(question)
+    # print("Generated Context for LLM:")
+    # print(context)
+    # print("Question:")
+    # print(question)
     result = await chain.ainvoke({
         "context": context,
         "question": question
