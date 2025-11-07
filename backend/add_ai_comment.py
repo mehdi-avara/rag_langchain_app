@@ -10,34 +10,22 @@ from openai import OpenAI  # change if you use another client
 # CONFIG
 # =========================
 BASE_URL = "http://212.23.201.167:8080"
-JWT_TOKEN = os.getenv("APP_JWT_TOKEN", "eyJE")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY","sk-proj-zWD9syf8LXXHohck1E")
+JWT_TOKEN = os.getenv("APP_JWT_TOKEN", "eyJhbG")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY","sk-")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 
-DOC_ID = int(os.getenv("DOC_ID", "95"))   # your example doc
-MAX_DOC_PAGES = 14                     # we only want pages 0..9 or 1..10
-BIG_PAGE_SIZE = 14                     # big enough to get all chunks in 1 call
+# how many pages/chunks of each doc we want to feed to GPT
+MAX_DOC_PAGES = 14
+BIG_PAGE_SIZE = 14   # large enough to get all chunks in 1 call
 
+# =============== helpers ===============
 def clean_llm_json(text: str) -> str:
-    """
-    Make LLM JSON parseable:
-    - remove ```json ... ``` fences
-    - remove ``` ... ``` fences
-    - strip leading/trailing backticks
-    """
     text = text.strip()
-
-    # remove ```json ... ``` or ``` ... ```
     if text.startswith("```"):
-        # remove first fence
         text = re.sub(r"^```(?:json)?\s*", "", text)
-        # remove last fence
         text = re.sub(r"\s*```$", "", text)
-
-    # sometimes there's a stray backtick at start or end
     text = text.strip("`").strip()
     return text
-
 
 def auth_headers() -> Dict[str, str]:
     return {
@@ -45,6 +33,15 @@ def auth_headers() -> Dict[str, str]:
         "accept": "application/json",
     }
 
+# ---------------- API calls ----------------
+def list_documents() -> List[Dict[str, Any]]:
+    """
+    GET /documents/ -> list of docs
+    """
+    url = f"{BASE_URL}/documents/"
+    resp = requests.get(url, headers=auth_headers())
+    resp.raise_for_status()
+    return resp.json()
 
 def get_document(doc_id: int) -> Dict[str, Any]:
     url = f"{BASE_URL}/documents/{doc_id}"
@@ -52,13 +49,7 @@ def get_document(doc_id: int) -> Dict[str, Any]:
     resp.raise_for_status()
     return resp.json()
 
-
 def get_all_chunks_one_call(doc_id: int) -> List[Dict[str, Any]]:
-    """
-    Your endpoint already returns all needed chunks when you hit:
-      /documents/{doc_id}/chunks/?page=1&page_size=9
-    We'll just make the page_size BIG so we get everything at once.
-    """
     url = f"{BASE_URL}/documents/{doc_id}/chunks/"
     params = {
         "page": 1,
@@ -68,7 +59,22 @@ def get_all_chunks_one_call(doc_id: int) -> List[Dict[str, Any]]:
     resp.raise_for_status()
     return resp.json()
 
+def post_comment(doc_id: int, content: str) -> dict:
+    url = f"{BASE_URL}/comments/"
+    payload = {
+        "doc_id": doc_id,
+        "chunk_id": None,
+        "content": content,
+    }
+    resp = requests.post(
+        url,
+        headers={**auth_headers(), "Content-Type": "application/json"},
+        json=payload,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
+# ---------------- prompt building ----------------
 def build_user_prompt(doc: dict, chunks: List[dict]) -> str:
     parts = []
     for c in chunks:
@@ -76,7 +82,6 @@ def build_user_prompt(doc: dict, chunks: List[dict]) -> str:
         content = c.get("content") or ""
         parts.append(f"\n--- PAGE {pg} ---\n{content}")
 
-    # keep context manageable
     full_text = "".join(parts)[:10000]
 
     return f"""
@@ -89,7 +94,6 @@ Below are the first pages of the document (extracted text). Use them to understa
 Text:
 {full_text}
 """.strip()
-
 
 def call_gpt(user_prompt: str, doc: dict) -> dict:
     client = OpenAI(api_key=OPENAI_API_KEY)
@@ -107,6 +111,7 @@ def call_gpt(user_prompt: str, doc: dict) -> dict:
         - What main equipment, components, systems, or instructions are covered?
         - What engineering domains (mechanical, electrical, maintenance, etc.) are discussed?
         - What kinds of data, drawings, or tables appear?
+        - What part of content it has?
 
         Ignore company introductions, legal disclaimers, or marketing statements.
 
@@ -122,10 +127,9 @@ def call_gpt(user_prompt: str, doc: dict) -> dict:
         }
 
         Requirements:
-        - "summary": 4–8 sentences describing the *contents* of the document (manual sections, tables, drawings, etc.).
-        - "keywords": concise, content-based technical terms (equipment, topics, systems).
-        - Mention standards, drawings, tables, or manuals if referenced.
-        - Return ONLY JSON, no markdown or explanations.
+        - "summary": 20–23 sentences describing the *contents* of the document.
+        - "keywords": concise, content-based technical terms.
+        - Return ONLY JSON, no markdown.
         """
     )
 
@@ -140,11 +144,10 @@ def call_gpt(user_prompt: str, doc: dict) -> dict:
 
     content = res.choices[0].message.content
     cleaned = clean_llm_json(content)
-    
+
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        # fallback to something usable
         data = {
             "title": f"AI Summary for {doc['filename']}",
             "summary": cleaned,
@@ -152,7 +155,6 @@ def call_gpt(user_prompt: str, doc: dict) -> dict:
             "source": {"doc_id": doc["id"], "filename": doc["filename"]},
         }
     return data
-
 
 def json_to_markdown(data: dict) -> str:
     title = data.get("title", "AI Summary")
@@ -176,59 +178,60 @@ def json_to_markdown(data: dict) -> str:
     return md.strip()
 
 
-def post_comment(doc_id: int, content: str) -> dict:
-    url = f"{BASE_URL}/comments/"
-    payload = {
-        "doc_id": doc_id,
-        "chunk_id": None,
-        "content": content,
-    }
-    resp = requests.post(
-        url,
-        headers={**auth_headers(), "Content-Type": "application/json"},
-        json=payload,
-    )
-    resp.raise_for_status()
-    return resp.json()
+# =============== main orchestration ===============
+def process_single_document(doc_meta: dict):
+    doc_id = doc_meta["id"]
+    print(f"\n=== Processing doc {doc_id}: {doc_meta['filename']} ===")
 
+    # get full doc info (not strictly necessary if list has enough data)
+    doc = get_document(doc_id)
 
-def main():
-    # 1) get doc info
-    doc = get_document(DOC_ID)
+    # get chunks
+    all_chunks = get_all_chunks_one_call(doc_id)
+    if not all_chunks:
+        print("  -> no chunks, skipping")
+        return
 
-    # 2) get ALL chunks in ONE call to your endpoint
-    all_chunks = get_all_chunks_one_call(DOC_ID)
-
-    # 3) keep only pages we care about
-    # note: your sample had page_num 0,1,2,6,10,... so we filter client-side
+    # filter to first N pages
     selected = [
         c for c in all_chunks
         if c.get("page_num", 999999) <= MAX_DOC_PAGES
     ]
-
-    # sort them in reading order
     selected.sort(key=lambda c: (c.get("page_num", 0), c.get("start_pos") or 0))
 
     if not selected:
-        raise SystemExit("No chunks found in the requested page range.")
+        print("  -> chunks exist but not in allowed page range, skipping")
+        return
 
-    # 4) build prompt and call GPT
+    # build prompt
     user_prompt = build_user_prompt(doc, selected)
+
+    # call GPT
     ai_data = call_gpt(user_prompt, doc)
 
-    # 5) to Markdown for UI + embedding
+    # convert to markdown
     md_comment = json_to_markdown(ai_data)
 
-    # 6) send to your /comments/ route
-    created = post_comment(DOC_ID, md_comment)
-    print("------ AI Comment ------")
-    print(md_comment)
-    
-    print("✅ AI comment created")
-    # print("Comment ID:", created["id"])
-    
-    print("------ content ------")
-    print(md_comment)
+    # post it back
+    created = post_comment(doc_id, md_comment)
+    print("  -> ✅ comment created, id:", created.get("id"))
+
+
+def main():
+    docs = list_documents()
+    if not docs:
+        print("No documents found.")
+        return
+
+    # loop over all documents
+    for d in docs:
+        # you can add conditions here if you want (e.g. skip very big ones)
+        try:
+            process_single_document(d)
+        except requests.HTTPError as e:
+            print(f"  -> HTTP error on doc {d['id']}: {e}")
+        except Exception as e:
+            print(f"  -> general error on doc {d['id']}: {e}")
 
 
 if __name__ == "__main__":
