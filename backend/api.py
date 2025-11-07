@@ -57,7 +57,7 @@ class ChatRequest(BaseModel):
 class Retrieved_data(BaseModel):
     content: str
     doc_id: int
-    doc_name=str,
+    doc_name=str
     chunk_id: int | None
     chunk_page: int | None
     comment_id: int | None
