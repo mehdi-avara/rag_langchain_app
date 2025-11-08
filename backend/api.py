@@ -218,7 +218,7 @@ async def query_docs(
         "db": db,
         "doc_ids": request.doc_ids
     })
-
+    retrieved_data = []
     # Fetch all needed doc_ids first to avoid multiple queries
     doc_ids = {chunk.doc_id for chunk in result["chunks"]}
     doc_ids |= {comment.doc_id for comment in result.get("comments", [])}
@@ -227,25 +227,27 @@ async def query_docs(
     docs = db.query(Document.id, Document.filename).filter(Document.id.in_(doc_ids)).all()
     doc_map = {doc.id: doc.filename for doc in docs}
 
-    # Transform LangChain Document objects into dictionaries
-    retrieved_chunks = []
     for chunk in result["chunks"]:
-        retrieved_chunks.append({
-            "content": chunk.content,
-            "doc_id": chunk.doc_id,
-            "chunk_id": chunk.id,
-        })
-        
+        retrieved_data.append(Retrieved_data(
+            content=chunk.content,
+            doc_id=chunk.doc_id,
+            doc_name=doc_map.get(chunk.doc_id),
+            chunk_id=chunk.id,
+            chunk_page=chunk.page_num + 1,
+            comment_id=None
+        ))
+          
     for comments in result.get("comments", []):
-        retrieved_chunks.append({
-            "content": comments.content,
-            "doc_id": comments.doc_id,
-            "chunk_id": comments.chunk_id,
-            "comment_id": comments.id,
-        })
+        retrieved_data.append(Retrieved_data(
+            content=comments.content,
+            doc_id=comments.doc_id,
+            doc_name=doc_map.get(chunk.doc_id),
+            chunk_id=comments.chunk_id,
+            chunk_page=None,
+            comment_id=comments.id
+        ))
 
-
-    return {"retrieved_chunks": retrieved_chunks}
+    return {"retrieved_chunks": retrieved_data}
 
 # @app.post("/chunks/page_numbers")
 async def get_chunks_page_numbers(
