@@ -219,11 +219,11 @@ class PostgresVectorRetriever:
         )
         # Convert to the format expected by LangChain
         comments = []
-        for comments, similarity in results:
+        for comment, similarity in results:
             if similarity > 0.5:
                 #TODO: similarity check
                 pass
-            comments.append(comments)        
+            comments.append(comment)        
         return comments
 
     def invoke(self, query: str) -> List[Dict[str, Any]]:
