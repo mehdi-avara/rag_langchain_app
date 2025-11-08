@@ -30,8 +30,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://porsa.javidanparto.com", 
-        "http://porsa.javidanparto.com",   
-        "*"  # allow all origins for testing purposes
+        "https://porsa.javidanparto.com",   
+        "http://localhost:5000"  # allow all origins for testing purposes
     ],
     allow_credentials=True,
     allow_methods=["*"],
