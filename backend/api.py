@@ -24,9 +24,15 @@ aclient = AsyncOpenAI(api_key=settings.openai_api_key,base_url=settings.openai_b
 app = FastAPI(title="Porsa Search system")
 
 # CORS middleware
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://porsa.javidanparto.com", 
+        "http://porsa.javidanparto.com",   
+        "*"  # allow all origins for testing purposes
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
