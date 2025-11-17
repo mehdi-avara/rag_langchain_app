@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     openai_api_key: str
     openai_base_url: str = "http://10.0.0.10:11434/v1"
     
+    #embedding_base_url: str
+    embedding_base_url: str = "http://10.0.0.10:8088/v1"
+    embedding_api_key: str = "None"
+    
     # LLM Configuration
     llm_model: str = "gemma3:27b"  # Default model for answer generation
     llm_temperature: float = 0.1  # Default temperature for answer generation
