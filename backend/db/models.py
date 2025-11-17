@@ -15,6 +15,7 @@ class User(Base):
     pw_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    notification_token = Column(String, nullable=True)
 
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
 
