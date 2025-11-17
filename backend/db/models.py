@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import uuid
@@ -77,6 +77,17 @@ class ImageChunk(Base):
     position = Column(String, nullable=False)  # Position on page (e.g., "top-left", "center", etc.)
     
     chunk = relationship("Chunk", back_populates="image_data")
+
+class ChatAIModels(Base):
+    __tablename__ = "chat_ai_models"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    is_active = Column(Boolean, nullable=False, default=True)
+    url = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)
 
 
 class LoginRequest(BaseModel):
