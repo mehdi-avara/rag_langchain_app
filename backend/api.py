@@ -12,12 +12,14 @@ from core.simple_ingestion import  ingest_pdf_with_mineru
 from core.agents.langgraph import build_answer_graph , GraphState
 from core.chunking  import ChunkingMode
 from settings import get_settings
+from core.celery.tasks import mineru_process_pdf
 
 from routs.auth import router as auth_router
 from routs.documents import router as document_router
 from routs.comment import router as comment_router
 from routs.users import router as user_router
 from routs.chat_ai_models import router as chat_ai_models_router
+
 
 settings = get_settings()
 
@@ -95,40 +97,32 @@ app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 
 
-
 @app.post("/upload")
 def upload_pdf_mineru(
     file: UploadFile,
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Upload a PDF file and process it with MinerU."""
-    
-    # Read file content
-    file_bytes = file.read()
-    
-    # Validate PDF file
-    if not file_bytes.startswith(b'%PDF'):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-        
-    # Validate file extension
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="File must have .pdf extension")
-    
-    try:
-        # Use the new MinerU ingestion function
-        doc_id = ingest_pdf_with_mineru(
-            pdf_bytes=file_bytes,
-            filename=file.filename,
-            user_id=current_user.id,
-            db=db,
-            chunking_mode=chunking_mode
-        )
-        return {"doc_id": doc_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process PDF with MinerU: {str(e)}")
+    file_bytes = file.file.read()
 
+    if not file_bytes.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    doc = Document(
+        owner_id=current_user.id,
+        filename=file.filename,
+        n_pages=0,
+        n_chunks=0,
+        file_path=None,
+        status="queued",
+    )
+    db.add(doc)
+    db.flush()
+
+    mineru_process_pdf.delay(file_bytes, file.filename, doc.id, chunking_mode.value)
+
+    return {"doc_id": doc.id, "status": "queued"}
 
 # Chat route
 @app.post("/chat")

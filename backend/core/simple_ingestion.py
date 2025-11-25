@@ -189,34 +189,4 @@ def background_task_mineru(pdf_bytes: bytes, filename: str, doc_id: int, chunkin
             db.flush()
             db.commit()
 
-    return doc.id
-
-def ingest_pdf_with_mineru(pdf_bytes: bytes, filename: str, user_id: int, db: Session, chunking_mode: ChunkingMode) -> int:
-    """
-    Ingest PDF file using MinerU processing pipeline.
-    
-    Args:
-        pdf_bytes: PDF file content as bytes
-        filename: Original filename
-        user_id: User ID
-        db: Database session
-        chunking_mode: Chunking mode for text processing
-    
-    Returns:
-        Document ID
-    """
-    # Create document record first to get doc_id
-    doc = Document(
-        owner_id=user_id,
-        filename=filename,
-        n_pages=0,  # Will be updated after processing
-        n_chunks=0,  # Will be updated after processing
-        file_path=None  # Will be updated after processing
-    )
-    db.add(doc)
-    db.flush()  # Get the doc_id
-    
-    # Run background task to process PDF with MinerU here celery should be used to run this task in background and it shouldn't stop the main thread
-    background_task_mineru(pdf_bytes, filename, doc.id, settings.files_dir)
-
-    return doc.id
+    return True
