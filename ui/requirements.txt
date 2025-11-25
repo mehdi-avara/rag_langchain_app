@@ -1,5 +1,0 @@
-streamlit
-streamlit-authenticator
-requests
-pydantic_settings
-markdown
