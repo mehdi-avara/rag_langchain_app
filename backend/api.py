@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 from db.models import User, Document
 from db.init_db import get_db
 from deps import get_current_user
-from core.simple_ingestion import  ingest_file, ingest_pdf_with_mineru
+from core.simple_ingestion import  ingest_pdf_with_mineru
 from core.agents.langgraph import build_answer_graph , GraphState
 from core.chunking  import ChunkingMode
 from settings import get_settings
@@ -95,26 +95,9 @@ app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 
 
-@app.post("/upload-md-file")
-async def upload_md_file(
-    file: UploadFile = File(...),
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Upload a markdown file and process it."""
-    
-    if not file.filename.lower().endswith('.md'):
-        pass
-                
-    contents = await file.read()
-    doc_id = await ingest_file(contents, file.filename, current_user.id, db, chunking_mode)
-    return {"doc_id": doc_id}
-
-
 
 @app.post("/upload")
-async def upload_pdf_mineru(
+def upload_pdf_mineru(
     file: UploadFile,
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
     current_user: User = Depends(get_current_user),
@@ -123,7 +106,7 @@ async def upload_pdf_mineru(
     """Upload a PDF file and process it with MinerU."""
     
     # Read file content
-    file_bytes = await file.read()
+    file_bytes = file.read()
     
     # Validate PDF file
     if not file_bytes.startswith(b'%PDF'):
@@ -135,7 +118,7 @@ async def upload_pdf_mineru(
     
     try:
         # Use the new MinerU ingestion function
-        doc_id = await ingest_pdf_with_mineru(
+        doc_id = ingest_pdf_with_mineru(
             pdf_bytes=file_bytes,
             filename=file.filename,
             user_id=current_user.id,
