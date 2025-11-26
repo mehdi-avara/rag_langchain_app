@@ -4,15 +4,17 @@ from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
 from openai import AsyncOpenAI
+import os
 
 from db.models import User, Document
 from db.init_db import get_db
 from deps import get_current_user
-from core.simple_ingestion import  ingest_pdf_with_mineru
+from core.simple_ingestion import  background_mineru_task_runner
 from core.agents.langgraph import build_answer_graph , GraphState
 from core.chunking  import ChunkingMode
 from settings import get_settings
-from core.celery.tasks import mineru_process_pdf
+# from core.celery.tasks import mineru_process_pdf
+
 
 from routs.auth import router as auth_router
 from routs.documents import router as document_router
@@ -115,12 +117,22 @@ def upload_pdf_mineru(
         n_pages=0,
         n_chunks=0,
         file_path=None,
-        status="queued",
+        # status="queued",
     )
     db.add(doc)
-    db.flush()
+    db.commit()
+    
+    os.makedirs(settings.files_dir, exist_ok=True)
+    temp_path = os.path.join(settings.files_dir, f"{doc.id}_{file.filename}")
+    with open(temp_path, "wb") as f:
+        f.write(file_bytes)
 
-    mineru_process_pdf.delay(file_bytes, file.filename, doc.id, chunking_mode.value)
+    background_mineru_task_runner(
+        pdf_path=temp_path,
+        filename=file.filename,
+        doc_id=doc.id,
+        chunking=chunking_mode.value,
+    )
 
     return {"doc_id": doc.id, "status": "queued"}
 
