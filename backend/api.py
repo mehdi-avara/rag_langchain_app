@@ -9,7 +9,7 @@ import os
 from Models import User, Document
 from db.init_db import get_db
 from deps import get_current_user
-from core.simple_ingestion import  background_mineru_task_runner
+from core.simple_ingestion import  run_mineru_on_file
 from core.agents.langgraph import build_answer_graph , GraphState
 from core.chunking  import ChunkingMode
 from settings import get_settings
@@ -80,15 +80,6 @@ class ChatResponse(BaseModel):
     citations: List[int]
     retrieved_chunks: List[Retrieved_data]
 
-class UploadRequest(BaseModel):
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed
-
-class QueryRequest(BaseModel):
-    query: str
-    rewrite_query: bool = False
-    extract_keywords_with_llm: bool = False
-    doc_ids: List[int] | None = None
-    # chunking_mode: ChunkingMode = ChunkingMode.token_fixed
 
 class ChunkePageRequest(BaseModel):
     chunks: List[ChunkSource]
@@ -103,7 +94,6 @@ app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 @app.post("/upload")
 def upload_pdf_mineru(
     file: UploadFile,
-    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -128,12 +118,11 @@ def upload_pdf_mineru(
     with open(temp_path, "wb") as f:
         f.write(file_bytes)
 
-    background_mineru_task_runner(
+    run_mineru_on_file(
         pdf_path=temp_path,
         filename=file.filename,
-        doc_id=doc.id,
-        chunking=chunking_mode.value,
-    )
+        doc_id=doc.id    
+        )
 
     return {"doc_id": doc.id, "status": "queued"}
 
