@@ -3,7 +3,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 
 # 🔧 Import Base from your models
-from Models import Base
+from db.base import Base
 # 🔧 Import DB URL from your settings
 from settings import get_settings
 
