@@ -1,8 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
-from pydantic import BaseModel
 import os
 
 from Models import User, Document
@@ -10,6 +8,7 @@ from db.init_db import get_db
 from deps import get_current_user
 from core.simple_ingestion import  run_mineru_on_file
 from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
+from schemas.chat import ChatRequest,ChatResponse, Retrieved_data
 from settings import get_settings
 
 
@@ -40,26 +39,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-class ChatRequest(BaseModel):
-    query: str
-    doc_ids: List[int] | None = None
-    rewrite_query: bool = False
-    extract_keywords_with_llm: bool = False
-    preview: bool = False
-
-class Retrieved_data(BaseModel):
-    content: str
-    doc_id: int
-    doc_name: str
-    chunk_id: int | None
-    chunk_page: int | None
-    comment_id: int | None
-
-class ChatResponse(BaseModel):
-    answer: str
-    citations: List[int]
-    retrieved_chunks: List[Retrieved_data]
 
 
 app.include_router(auth_router,prefix="/auth",tags=["Auth"])
