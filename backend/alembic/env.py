@@ -4,6 +4,8 @@ from alembic import context
 
 # 🔧 Import Base from your models
 from db.base import Base
+import Models 
+
 # 🔧 Import DB URL from your settings
 from settings import get_settings
 
