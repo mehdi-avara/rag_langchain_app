@@ -16,7 +16,8 @@ class SystemTag(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="system_tags")
-
+    documents = relationship("Document", back_populates="system_tag")
+    
     parent = relationship(
         "SystemTag",
         remote_side=[id],
