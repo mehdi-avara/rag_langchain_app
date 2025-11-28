@@ -12,8 +12,6 @@ from core.simple_ingestion import  run_mineru_on_file
 from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
 from settings import get_settings
 
-# from core.celery.tasks import mineru_process_pdf
-
 
 from routs.auth import router as auth_router
 from routs.documents import router as document_router
@@ -43,21 +41,6 @@ app.add_middleware(
 )
 
 
-class ChunkSource(BaseModel):
-    doc_id: int
-    filename: str
-    page_num: int
-    chunk_type: str
-    position: str | None
-    start_pos: int | None
-    end_pos: int | None
-
-class AnswerResponse(BaseModel):
-    answer: str
-    sources: List[ChunkSource]
-    confidence: float
-
-
 class ChatRequest(BaseModel):
     query: str
     doc_ids: List[int] | None = None
@@ -78,9 +61,6 @@ class ChatResponse(BaseModel):
     citations: List[int]
     retrieved_chunks: List[Retrieved_data]
 
-
-class ChunkePageRequest(BaseModel):
-    chunks: List[ChunkSource]
 
 app.include_router(auth_router,prefix="/auth",tags=["Auth"])
 app.include_router(document_router,prefix="/documents",tags=["document"])
