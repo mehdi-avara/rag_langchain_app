@@ -17,7 +17,7 @@ from routs.documents import router as document_router
 from routs.comment import router as comment_router
 from routs.users import router as user_router
 from routs.chat_ai_models import router as chat_ai_models_router
-
+from routs.system_tag import router as system_tag_router
 
 settings = get_settings()
 
@@ -46,6 +46,8 @@ app.include_router(document_router,prefix="/documents",tags=["document"])
 app.include_router(comment_router, prefix="/comments", tags=["comments"])
 app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
+app.include_router(system_tag_router, prefix="/system_tags", tags=["systems' tags"])
+
 
 
 @app.post("/upload")
