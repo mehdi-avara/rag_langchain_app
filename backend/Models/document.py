@@ -10,7 +10,7 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    system_tag_id = Column(Integer,ForeignKey("system_tags.id"),nullable=True)
+    system_tag_id = Column(Integer,ForeignKey("system_tags.id"),nullable=False)
     filename = Column(String, nullable=False)
     n_pages = Column(Integer, nullable=False)
     n_chunks = Column(Integer, nullable=False)

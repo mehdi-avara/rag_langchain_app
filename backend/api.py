@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, UploadFile,Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
@@ -51,6 +51,7 @@ app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 @app.post("/upload")
 def upload_pdf_mineru(
     file: UploadFile,
+    system_tag_id: int = Form(1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -65,6 +66,7 @@ def upload_pdf_mineru(
         n_pages=0,
         n_chunks=0,
         file_path=None,
+        system_tag_id=system_tag_id
         # status="queued",
     )
     db.add(doc)
