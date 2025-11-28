@@ -1,18 +1,17 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
-from openai import AsyncOpenAI
 import os
 
 from Models import User, Document
 from db.init_db import get_db
 from deps import get_current_user
 from core.simple_ingestion import  run_mineru_on_file
-from core.agents.langgraph import build_answer_graph , GraphState
-from core.chunking  import ChunkingMode
+from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite,
 from settings import get_settings
+
 # from core.celery.tasks import mineru_process_pdf
 
 
@@ -25,7 +24,6 @@ from routs.chat_ai_models import router as chat_ai_models_router
 
 settings = get_settings()
 
-aclient = AsyncOpenAI(api_key=settings.openai_api_key,base_url=settings.openai_base_url)
 
 app = FastAPI(title="Porsa Search system")
 
@@ -185,67 +183,3 @@ async def chat(
 
     return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data}
 
-# @app.post("/chunks/page_numbers")
-async def get_chunks_page_numbers(
-    request: ChunkePageRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-    ) -> List[ChunkSource]:
-    """Retrieve page numbers for chunks based on their document IDs."""
-    chunks = request.chunks
-    chunks = find_chunk_page_numbers(chunks)
-    return chunks
-
-def find_chunk_page_numbers(chunks: List[ChunkSource]) -> List[ChunkSource]:
-    """Retrieve page numbers for chunks based on their document IDs."""
-    for chunk in chunks:
-        # Logic to determine page number based on chunk.doc_id and chunk.position
-        # This is a placeholder; actual implementation will depend on how documents and chunks are stored
-        chunk.page_num = 1  # Replace with actual page number retrieval logic
-    return chunks
-
-async def call_llm_to_rewrite(query: str) -> str:
-    """Use LLM to improve the query for better search performance."""
-    response = await aclient.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that improves search queries. Make the query more specific and effective for information retrieval while preserving the original intent."
-            },
-            {
-                "role": "user",
-                "content": f"Improve this search query: {query}"
-            }
-        ],
-        max_tokens=150
-    )
-    return response.choices[0].message.content
-
-async def call_llm_to_extract_keywords(query: str) -> List[str]:
-    """Use LLM to extract keywords from the query."""
-    response = await aclient.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that extracts key terms from queries. Return only the most important keywords or phrases, separated by commas."
-            },
-            {
-                "role": "user",
-                "content": f"Extract key terms from this query: {query}"
-            }
-        ],
-        max_tokens=100
-    )
-    keywords = response.choices[0].message.content.split(',')
-    return [k.strip() for k in keywords if k.strip()]
-
-
-def basic_keyword_extraction(query: str) -> List[str]:
-    """Basic keyword extraction using simple heuristics."""
-    # Remove common stop words and punctuation
-    stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'about', 'as'}
-    words = query.lower().split()
-    keywords = [w for w in words if w not in stop_words and len(w) > 2]
-    return keywords 
