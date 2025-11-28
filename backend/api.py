@@ -65,6 +65,7 @@ class ChatRequest(BaseModel):
     doc_ids: List[int] | None = None
     rewrite_query: bool = False
     extract_keywords_with_llm: bool = False
+    preview: bool = False
 
 class Retrieved_data(BaseModel):
     content: str
@@ -148,12 +149,14 @@ async def chat(
     # Query rewriting if requested
     if request.rewrite_query:
         query = await call_llm_to_rewrite(query)
-    
+    route = "full"
+    if request.preview == True:
+        route = "search"
     answer_graph = build_answer_graph()
     
     state_graph = GraphState(
         question=query,
-        route="full",  # Default to hybrid search
+        route=route,  
         db=db,  # Pass the database session
         mode="vector",
         doc_ids=request.doc_ids
@@ -192,61 +195,6 @@ async def chat(
         ))
 
     return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data}
-
-@app.post("/query/preview")
-async def query_docs(
-    request: QueryRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) :
-    query = request.query
-    
-    # Query rewriting if requested
-    if request.rewrite_query:
-        query = await call_llm_to_rewrite(query)
-    
-
-
-    # Build answer graph with specified chunking mode
-    answer_graph = build_answer_graph()
-    result = await answer_graph.ainvoke({
-        "question": query,
-        "route": "search",
-        # "chunking_mode": request.chunking_mode,
-        "mode": "vector",
-        "db": db,
-        "doc_ids": request.doc_ids
-    })
-    retrieved_data = []
-    # Fetch all needed doc_ids first to avoid multiple queries
-    doc_ids = {chunk.doc_id for chunk in result["chunks"]}
-    doc_ids |= {comment.doc_id for comment in result.get("comments", [])}
-
-    # Query all documents in one go (better performance)
-    docs = db.query(Document.id, Document.filename).filter(Document.id.in_(doc_ids)).all()
-    doc_map = {doc.id: doc.filename for doc in docs}
-
-    for chunk in result["chunks"]:
-        retrieved_data.append(Retrieved_data(
-            content=chunk.content,
-            doc_id=chunk.doc_id,
-            doc_name=doc_map.get(chunk.doc_id),
-            chunk_id=chunk.id,
-            chunk_page=chunk.page_num + 1,
-            comment_id=None
-        ))
-          
-    for comments in result.get("comments", []):
-        retrieved_data.append(Retrieved_data(
-            content=comments.content,
-            doc_id=comments.doc_id,
-            doc_name=doc_map.get(chunk.doc_id),
-            chunk_id=comments.chunk_id,
-            chunk_page=None,
-            comment_id=comments.id
-        ))
-
-    return {"retrieved_chunks": retrieved_data}
 
 # @app.post("/chunks/page_numbers")
 async def get_chunks_page_numbers(
