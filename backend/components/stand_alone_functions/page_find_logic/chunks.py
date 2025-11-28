@@ -4,7 +4,7 @@ import json
 
 from settings import get_settings
 from db.session import db_session
-from db.models import Chunk, Document
+from Models import Chunk, Document
 from components.folders import get_full_processed_file_path
 from components.page_find_logic.mineru_main_file_creator import union_make
 

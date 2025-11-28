@@ -2,7 +2,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from passlib.hash import bcrypt  
 
-from db.models import Base, User
+from db.base import Base
+from Models import User
 from settings import get_settings
 
 settings = get_settings()

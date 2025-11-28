@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from openai import AsyncOpenAI
 from langchain.prompts import ChatPromptTemplate
-from db.models import Document, Chunk
+from Models import Document, Chunk
 from settings import get_settings
 
 settings = get_settings()

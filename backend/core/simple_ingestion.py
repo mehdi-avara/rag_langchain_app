@@ -18,7 +18,7 @@ from bidi.algorithm import get_display
 
 from settings import get_settings
 from components.llm import llm_client
-from db.models import Document, Chunk
+from Models import Document, Chunk
 from db.session import db_session
 from core.chunking import ChunkingMode, chunk_text, token_len
 from components.folders import get_full_processed_file_path

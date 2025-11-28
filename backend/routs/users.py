@@ -2,7 +2,7 @@ from fastapi import Depends, APIRouter, status, HTTPException
 from sqlalchemy.orm import Session
 
 
-from db.models import User
+from Models import User
 from db.init_db import get_db
 from schemas.users import UserNotificationTokenOut,UserNotificationTokenIn
 from deps import get_current_user

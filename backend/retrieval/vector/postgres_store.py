@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional, Tuple, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from db.models import Chunk, Document, Comment
+from Models import Chunk, Document, Comment
 from components.embedding import JinaAPIEmbeddings
 from settings import get_settings
 from langchain_core.documents import Document as LangchainDocument

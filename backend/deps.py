@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from db.models import User
+from Models import User
 from db.init_db import get_db
 from settings import get_settings
 

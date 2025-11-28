@@ -1,0 +1,18 @@
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.orm import relationship
+
+from db.base import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, nullable=False)
+    pw_hash = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="user")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    notification_token = Column(String, nullable=True)
+
+    documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")

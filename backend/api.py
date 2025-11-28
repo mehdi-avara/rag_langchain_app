@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from openai import AsyncOpenAI
 import os
 
-from db.models import User, Document
+from Models import User, Document
 from db.init_db import get_db
 from deps import get_current_user
 from core.simple_ingestion import  background_mineru_task_runner

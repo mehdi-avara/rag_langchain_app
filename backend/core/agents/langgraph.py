@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from langchain.chat_models import ChatOpenAI
 
 
-from db.models import Chunk, Comment
+from Models import Chunk, Comment
 from retrieval.vector.postgres_store import PostgresVectorStore
 from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB

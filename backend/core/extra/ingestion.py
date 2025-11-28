@@ -9,7 +9,7 @@
 
 
 # from settings import get_settings
-# from db.models import Document, Chunk
+# from Models import Document, Chunk
 # from core.chunking import ChunkingMode, chunk_text
 # from retrieval.vector.chroma_store import ChromaStore
 

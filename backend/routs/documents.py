@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 
 
-from db.models import User,Document,Chunk
+from Models import User,Document,Chunk
 from db.init_db import get_db
 from core.summarise import summarise_document
 from schemas.document import DocumentOut,ChunkOut

@@ -1,11 +1,11 @@
-from db.models import LoginRequest
+from schemas.auth import LoginRequest
 from fastapi import APIRouter
 from passlib.hash import bcrypt  
 from sqlalchemy.orm import Session
 from deps import create_access_token
 from fastapi import Depends, HTTPException, status
 from db.init_db import get_db
-from db.models import User
+from Models import User
 
 router = APIRouter()
 

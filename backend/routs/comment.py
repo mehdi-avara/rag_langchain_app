@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
-from db.models import Comment, User 
+from Models import Comment, User 
 from deps import get_current_user
 
 from components import generate_embeddings_for_chunks

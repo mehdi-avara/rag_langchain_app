@@ -5,7 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.runnables import Runnable
 from sqlalchemy.sql import text
 
-from db.models import Chunk
+from Models import Chunk
 
 class FullTextRetrieverFromDB(Runnable):
     """

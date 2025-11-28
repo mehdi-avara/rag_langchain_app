@@ -3,7 +3,7 @@ from fastapi import Depends, APIRouter, status, HTTPException
 from sqlalchemy.orm import Session
 
 
-from db.models import ChatAIModels, User
+from Models import ChatAIModels, User
 from db.init_db import get_db
 from schemas.chat_ai_models import ChatAIModelOut,ChatAIModelIn,ChatAIModelUpdate
 from deps import get_current_user
