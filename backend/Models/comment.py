@@ -48,7 +48,6 @@ class Comment(Base):
     )
 
     content = Column(Text, nullable=False)
-    media_address = Column(String, nullable=True)
     embedding = Column(Vector(1024), nullable=True)
     type = Column(String, nullable=False, default="comment")
     
@@ -63,5 +62,11 @@ class Comment(Base):
     system_tag = relationship("SystemTag", back_populates="comments")
     document = relationship("Document", back_populates="comments")
     chunk = relationship("Chunk", back_populates="comments")
+    files = relationship(
+        "CommentFile",
+        back_populates="comment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     
     

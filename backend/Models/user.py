@@ -19,3 +19,4 @@ class User(Base):
     system_tags = relationship("SystemTag", back_populates="owner", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="user")
+    files = relationship("CommentFile", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)

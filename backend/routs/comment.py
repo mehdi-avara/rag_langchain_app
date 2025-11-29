@@ -2,11 +2,11 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
-from Models import Comment, User, CommentType
+from Models import Comment, User, CommentType, CommentFile
 from deps import get_current_user
 
 from components import generate_embeddings_for_chunks
@@ -22,6 +22,7 @@ class CommentBase(BaseModel):
     chunk_id: Optional[int] = None
     type: Optional[CommentType] = CommentType.COMMENT
     content: str
+    media_addresses: List[str] = Field(default_factory=list)
 
 
 class CommentCreate(CommentBase):
@@ -30,6 +31,14 @@ class CommentCreate(CommentBase):
 
 class CommentUpdate(BaseModel):
     content: str
+
+
+class CommentFileOut(BaseModel):
+    id: int
+    media_address: str
+
+    class Config:
+        from_attributes = True
 
 
 class CommentOut(BaseModel):
@@ -41,6 +50,7 @@ class CommentOut(BaseModel):
     type: CommentType
     content: str
     created_at: datetime
+    files: List[CommentFileOut] = Field(default_factory=list)
 
     class Config:
         from_attributes = True   
@@ -128,6 +138,10 @@ async def create_comment(
         type=payload.type,
         embedding=embedding_vec
     )
+    if payload.media_addresses:
+        new_comment.files = [
+            CommentFile(media_address=addr) for addr in payload.media_addresses
+        ]
 
     db.add(new_comment)
     db.commit()
