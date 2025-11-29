@@ -17,7 +17,6 @@ router = APIRouter(tags=["comments"])
 # ---------- SCHEMAS ----------
 
 class CommentBase(BaseModel):
-    user_id: Optional[int] = 1
     system_tag_id: Optional[int] = 1
     doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
@@ -34,6 +33,7 @@ class CommentUpdate(BaseModel):
 
 
 class CommentOut(BaseModel):
+    id: int
     user_id: int
     system_tag_id: int
     doc_id: Optional[int] = None
@@ -116,13 +116,16 @@ async def create_comment(
     """
     # generate embedding for this comment's text
     # your helper returns List[List[float]], so take the first
-    embeddings = await generate_embeddings_for_chunks([payload.content])
+    embeddings = generate_embeddings_for_chunks([payload.content])
     embedding_vec = embeddings[0] if embeddings else None
 
     new_comment = Comment(
+        user_id=current_user.id,
+        system_tag_id=payload.system_tag_id,
         doc_id=payload.doc_id,
         chunk_id=payload.chunk_id,
         content=payload.content,
+        type=payload.type,
         embedding=embedding_vec
     )
 
@@ -148,7 +151,7 @@ async def update_comment_text(
         raise HTTPException(status_code=404, detail="Comment not found")
 
     # regenerate embedding for new text
-    embeddings = await generate_embeddings_for_chunks([payload.content])
+    embeddings = generate_embeddings_for_chunks([payload.content])
     embedding_vec = embeddings[0] if embeddings else None
 
     comment.content = payload.content
