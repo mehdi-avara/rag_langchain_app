@@ -17,7 +17,9 @@ router = APIRouter(tags=["comments"])
 # ---------- SCHEMAS ----------
 
 class CommentBase(BaseModel):
-    doc_id: int
+    user_id: Optional[int] = 1
+    system_tag_id: Optional[int] = 1
+    doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
     content: str
 
@@ -31,8 +33,9 @@ class CommentUpdate(BaseModel):
 
 
 class CommentOut(BaseModel):
-    id: int
-    doc_id: int
+    user_id: int
+    system_tag_id: int
+    doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
     content: str
     created_at: datetime
