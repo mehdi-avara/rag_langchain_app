@@ -25,3 +25,4 @@ class Chunk(Base):
 
     document = relationship("Document", back_populates="chunks")
     image_data = relationship("ImageChunk", back_populates="chunk", cascade="all, delete-orphan")
+    comments = relationship("Comment", back_populates="chunk", passive_deletes=True)

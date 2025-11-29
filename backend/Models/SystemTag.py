@@ -16,7 +16,7 @@ class SystemTag(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="system_tags")
-    documents = relationship("Document", back_populates="system_tag")
+
     
     parent = relationship(
         "SystemTag",
@@ -28,5 +28,17 @@ class SystemTag(Base):
         "SystemTag",
         back_populates="parent",
         cascade="all, delete-orphan",
-        single_parent=True,  # required when using delete-orphan on self-referential rel
+        single_parent=True, 
+    )
+    
+    documents = relationship(
+    "Document",
+    back_populates="system_tag",
+    passive_deletes=True,
+    )
+    
+    comments = relationship(
+        "Comment",
+        back_populates="system_tag",
+        cascade="all, delete-orphan",
     )

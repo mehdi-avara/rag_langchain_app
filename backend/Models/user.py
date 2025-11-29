@@ -15,5 +15,7 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     notification_token = Column(String, nullable=True)
 
+    
     system_tags = relationship("SystemTag", back_populates="owner", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
+    comments = relationship("Comment", back_populates="user")
