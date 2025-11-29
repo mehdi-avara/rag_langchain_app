@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
-from Models import Comment, User 
+from Models import Comment, User, CommentType
 from deps import get_current_user
 
 from components import generate_embeddings_for_chunks
@@ -21,6 +21,7 @@ class CommentBase(BaseModel):
     system_tag_id: Optional[int] = 1
     doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
+    type: Optional[CommentType] = CommentType.COMMENT
     content: str
 
 
@@ -37,6 +38,7 @@ class CommentOut(BaseModel):
     system_tag_id: int
     doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
+    type: CommentType
     content: str
     created_at: datetime
 

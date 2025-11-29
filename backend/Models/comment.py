@@ -2,8 +2,17 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
+import enum
 
 from db.base import Base
+
+
+class CommentType(str, enum.Enum):
+    COMMENT = "comment"
+    FAILURE = "failure"
+    REPAIRE = "repaire"
+    REPORT = "report"
+    
 
 
 class Comment(Base):
@@ -41,7 +50,8 @@ class Comment(Base):
     content = Column(Text, nullable=False)
     media_address = Column(String, nullable=True)
     embedding = Column(Vector(1024), nullable=True)
-
+    type = Column(String, nullable=False, default="comment")
+    
     created_at = Column(
         DateTime,
         nullable=False,

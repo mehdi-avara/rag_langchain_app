@@ -1,7 +1,7 @@
 from .user import User
 from .document import Document
 from .chunk import Chunk
-from .comment import Comment
+from .comment import Comment, CommentType
 from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
 from .SystemTag import SystemTag
@@ -12,5 +12,6 @@ __all__ = [
     "Comment",
     "ImageChunk",
     "ChatAIModels",
-    "SystemTag"
+    "SystemTag",
+    "CommentType",
 ]
