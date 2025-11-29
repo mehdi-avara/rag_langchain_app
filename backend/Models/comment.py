@@ -29,7 +29,7 @@ class Comment(Base):
     system_tag_id = Column(
         Integer,
         ForeignKey("system_tags.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
 
