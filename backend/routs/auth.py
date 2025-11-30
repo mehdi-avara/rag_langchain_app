@@ -1,16 +1,19 @@
-from schemas.auth import LoginRequest
+from schemas.auth import LoginRequest, LoginResponse, RefreshRequest, RefreshResponse
 from fastapi import APIRouter
 from passlib.hash import bcrypt  
 from sqlalchemy.orm import Session
-from deps import create_access_token
+from deps import create_access_token, create_refresh_token
 from fastapi import Depends, HTTPException, status
 from db.init_db import get_db
 from Models import User
+from jose import JWTError, jwt
+from settings import get_settings
 
 router = APIRouter()
+settings = get_settings()
 
 # Auth routes
-@router.post("/login")
+@router.post("/login", response_model=LoginResponse)
 async def login(payload: LoginRequest, db: Session = Depends(get_db)):
     username = payload.username
     password = payload.password
@@ -25,5 +28,41 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
-    return {"access_token": create_access_token(user.id)}
+    return {
+        "access_token": create_access_token(user.id),
+        "refresh_token": create_refresh_token(user.id),
+    }
 
+
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db)):
+    try:
+        token_data = jwt.decode(payload.refresh_token, settings.jwt_secret, algorithms=["HS256"])
+        if token_data.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token type",
+            )
+        user_id: str = token_data.get("sub")
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+            )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        )
+
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+
+    return {
+        "access_token": create_access_token(user.id),
+        "refresh_token": create_refresh_token(user.id),
+    }
