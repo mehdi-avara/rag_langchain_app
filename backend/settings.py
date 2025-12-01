@@ -40,7 +40,8 @@ class Settings(BaseSettings):
 
     mineru_running_address: str = "./mineru"
 
-
+    redis_url: str = "redis://localhost:6379/0"
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

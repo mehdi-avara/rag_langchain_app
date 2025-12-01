@@ -1,16 +1,21 @@
 # core/celery_app.py
 from celery import Celery
+from settings import get_settings
+
+settings = get_settings()
+redis_url = settings.redis_url
 
 celery_app = Celery(
     "porsa",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/0",
+    broker=redis_url,
 )
 
 celery_app.conf.update(
-    task_serializer="pickle",     # so we can pass bytes easily
-    accept_content=["pickle"],    # match serializer
-    result_serializer="pickle",
-    timezone="Asia/Tehran",       # or your timezone
+    task_ignore_result=True,
+    task_serializer="json",
+    accept_content=["json"],
+    timezone="Asia/Tehran",
     enable_utc=True,
+    task_time_limit=600,      # kill task after 10 minutes
+    task_soft_time_limit=540  # warn 1 minute earlier
 )
