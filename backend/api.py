@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 
-from Models import User, Document
+from Models import User, Document, DocumentStatusType
+
 from db.init_db import get_db
 from deps import get_current_user
 from core.simple_ingestion import  run_mineru_on_file
@@ -70,8 +71,8 @@ def upload_pdf_mineru(
         n_pages=0,
         n_chunks=0,
         file_path=None,
-        system_tag_id=system_tag_id
-        # status="queued",
+        system_tag_id=system_tag_id,
+        status=DocumentStatusType.QUEUED
     )
     db.add(doc)
     db.commit()
@@ -88,7 +89,7 @@ def upload_pdf_mineru(
         doc_id=doc.id    
         )
 
-    return {"doc_id": doc.id, "status": "queued"}
+    return {"doc_id": doc.id, "status": DocumentStatusType.QUEUED.value}
 
 # Chat route
 @app.post("/chat")

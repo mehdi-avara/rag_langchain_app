@@ -165,6 +165,7 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
             Document.n_pages: n_pages,
             Document.n_chunks: len(chunks) + len(images_info),
             Document.file_path: str(doc_id)  # Store relative path
+            
         })
         db.bulk_save_objects(chunk_records)
         db.commit()

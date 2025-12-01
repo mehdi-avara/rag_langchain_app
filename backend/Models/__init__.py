@@ -1,5 +1,5 @@
 from .user import User
-from .document import Document
+from .document import Document, DocumentStatusType
 from .chunk import Chunk
 from .comment import Comment, CommentType
 from .comment_file import CommentFile
@@ -16,4 +16,5 @@ __all__ = [
     "ChatAIModels",
     "SystemTag",
     "CommentType",
+    "DocumentStatusType"
 ]
