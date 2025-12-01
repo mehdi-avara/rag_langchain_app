@@ -10,10 +10,13 @@ class User(Base):
 
     id = Column(Integer, primary_key=True)
     username = Column(String, unique=True, nullable=False)
+    First_name = Column(String, nullable=False)
+    Last_name = Column(String, nullable=True)
     pw_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     notification_token = Column(String, nullable=True)
+    image_path = Column(String, nullable=True)
 
     
     system_tags = relationship("SystemTag", back_populates="owner", cascade="all, delete-orphan")
