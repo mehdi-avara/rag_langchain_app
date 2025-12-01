@@ -22,3 +22,5 @@ for dir in "${folders[@]}"; do
     mineru -p "$file" -o "$out_dir" 
   done
 done
+
+# mineru-gradio --server-name 0.0.0.0 --server-port 7860 --enable-vllm-engine true
