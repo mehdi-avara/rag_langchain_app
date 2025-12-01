@@ -83,7 +83,6 @@ def upload_pdf_mineru(
     
     with open(orginal_pdf, "wb") as f:
         f.write(file_bytes)
-    print(orginal_pdf)
     run_mineru_on_file(
         pdf_path=orginal_pdf,
         doc_id=doc.id    

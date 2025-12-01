@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict
 
 from settings import get_settings
-from Models import Document, Chunk
+from Models import Document, Chunk, DocumentStatusType
 from db.session import db_session
 from core.chunking import ChunkingMode, chunk_text, token_len
 from components.folders import get_full_processed_file_path
@@ -105,6 +105,13 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
     """
     Background task to process PDF with MinerU.
     """
+    with db_session() as db:
+        # Update document record
+        db.query(Document).filter(Document.id == doc_id).update({
+            Document.status: DocumentStatusType.INPROGGRESS.value
+        })
+        db.bulk_save_objects(chunk_records)
+        db.commit()
     # Process PDF with MinerU
     base_dir = settings.files_dir
     md_file_path = process_pdf_with_mineru(pdf_path, doc_id, base_dir)
@@ -164,8 +171,8 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
         db.query(Document).filter(Document.id == doc_id).update({
             Document.n_pages: n_pages,
             Document.n_chunks: len(chunks) + len(images_info),
-            Document.file_path: str(doc_id)  # Store relative path
-            
+            Document.file_path: str(doc_id) , # Store relative path
+            Document.status: DocumentStatusType.DONE.value
         })
         db.bulk_save_objects(chunk_records)
         db.commit()
