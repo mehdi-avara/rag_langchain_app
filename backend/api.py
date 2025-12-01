@@ -48,7 +48,7 @@ app.include_router(document_router,prefix="/documents",tags=["document"])
 app.include_router(comment_router, prefix="/comments", tags=["comments"])
 app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
-app.include_router(system_tag_router, prefix="/system_tags", tags=["systems' tags"])
+app.include_router(system_tag_router, prefix="/system_tags", tags=["system_tags"])
 
 
 
