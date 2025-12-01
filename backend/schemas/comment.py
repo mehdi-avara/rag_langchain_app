@@ -39,6 +39,14 @@ class CommentFileUpload(BaseModel):
         arbitrary_types_allowed = True
 
 
+class CommentFileName(BaseModel):
+    id: int
+    file_name: str
+
+    class Config:
+        from_attributes = True
+
+
 class CommentOut(BaseModel):
     id: int
     user_id: int

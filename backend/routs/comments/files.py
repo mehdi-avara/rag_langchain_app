@@ -1,29 +1,74 @@
 import os
+from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
 from Models import Comment, User, CommentFile
 from deps import get_current_user
-from schemas.comment import (
-    CommentFileOut,
-    CommentFileUpload,
-)
-
+from schemas.comment import CommentFileName, CommentFileOut, CommentFileUpload
 
 from settings import get_settings
-
 
 settings = get_settings()
 
 router = APIRouter(tags=["comments files"])
 
 
-
-
 def _parse_file_upload(file: UploadFile = File(...)) -> CommentFileUpload:
     return CommentFileUpload(file=file)
+
+
+@router.get("/{comment_id}", response_model=List[CommentFileName])
+def list_comment_files(
+    comment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return all files attached to a comment.
+    """
+    comment = db.query(Comment).filter(Comment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    files = (
+        db.query(CommentFile)
+        .filter(CommentFile.comment_id == comment_id)
+        .order_by(CommentFile.id.desc())
+        .all()
+    )
+    return files
+
+
+@router.get("/{comment_id}/{file_id}/download")
+def download_comment_file(
+    comment_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Download a single file attached to a comment.
+    """
+    file_rec = (
+        db.query(CommentFile)
+        .filter(CommentFile.id == file_id, CommentFile.comment_id == comment_id)
+        .first()
+    )
+    if not file_rec:
+        raise HTTPException(status_code=404, detail="File not found for this comment")
+
+    if not os.path.isfile(file_rec.media_address):
+        raise HTTPException(status_code=404, detail="Stored file is missing")
+
+    return FileResponse(
+        path=file_rec.media_address,
+        filename=file_rec.file_name,
+        media_type="application/octet-stream",
+    )
 
 
 @router.post(
@@ -63,3 +108,33 @@ async def add_file_to_comment(
     db.refresh(new_file)
 
     return new_file
+
+
+@router.delete(
+    "/{comment_id}/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_comment_file(
+    comment_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a file record and remove it from disk if present.
+    """
+    file_rec = (
+        db.query(CommentFile)
+        .filter(CommentFile.id == file_id, CommentFile.comment_id == comment_id)
+        .first()
+    )
+    if not file_rec:
+        raise HTTPException(status_code=404, detail="File not found for this comment")
+
+
+    if os.path.isfile(file_rec.media_address):
+        os.remove(file_rec.media_address)
+    db.delete(file_rec)
+    db.commit()
+
+    return None
