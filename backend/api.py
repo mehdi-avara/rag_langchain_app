@@ -76,14 +76,15 @@ def upload_pdf_mineru(
     db.add(doc)
     db.commit()
     
-    os.makedirs(settings.files_dir, exist_ok=True)
-    temp_path = os.path.join(settings.files_dir, f"{doc.id}_{file.filename}")
-    with open(temp_path, "wb") as f:
+    temp_path = os.path.join(settings.files_dir, f"{doc.id}")
+    os.makedirs(temp_path, exist_ok=True)
+    orginal_pdf = os.path.join(temp_path, f"original.pdf")
+    
+    with open(orginal_pdf, "wb") as f:
         f.write(file_bytes)
-
+    print(orginal_pdf)
     run_mineru_on_file(
-        pdf_path=temp_path,
-        filename=file.filename,
+        pdf_path=orginal_pdf,
         doc_id=doc.id    
         )
 

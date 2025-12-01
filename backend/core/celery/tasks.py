@@ -3,5 +3,5 @@ from core.simple_ingestion import run_mineru_on_file
 
 
 @celery_app.task(name="mineru.process_pdf")
-def mineru_process_pdf(pdf_path: str, filename: str, doc_id: int, chunking: str):
-    run_mineru_on_file(pdf_path,filename,doc_id,chunking)
+def mineru_process_pdf(pdf_path: str, doc_id: int, chunking: str):
+    run_mineru_on_file(pdf_path,doc_id,chunking)
