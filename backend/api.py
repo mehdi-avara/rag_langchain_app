@@ -12,12 +12,14 @@ from schemas.chat import ChatRequest,ChatResponse, Retrieved_data
 from settings import get_settings
 
 
-from routs.auth import router as auth_router
-from routs.documents import router as document_router
-from routs.comment import router as comment_router
-from routs.users import router as user_router
-from routs.chat_ai_models import router as chat_ai_models_router
-from routs.system_tag import router as system_tag_router
+from routs import (
+    auth_router,
+    document_router,
+    comment_router,
+    user_router,
+    chat_ai_models_router,
+    system_tag_router
+)
 
 settings = get_settings()
 
