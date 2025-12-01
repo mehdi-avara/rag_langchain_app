@@ -1,17 +1,13 @@
 alembic==1.17.2
 bcrypt==4.0.1
 celery==5.5.3
-cffi==2.0.0
-elastic-transport==8.17.1
 fastapi==0.100.0
-joblib==1.5.2
 langchain-classic==1.0.0
 langchain-community==0.3.25
 langgraph==0.4.8
 openai==1.97.1
 passlib==1.7.4
 pgvector==0.2.4
-pillow==12.0.0
 psycopg2-binary==2.9.11
 python-jose==3.3.0
 python-multipart==0.0.6
