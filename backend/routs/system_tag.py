@@ -304,47 +304,47 @@ async def list_tag_documents(
 
 # ---------- Optional: Full Tree for Frontend ----------
 
-@router.get(
-    "/tree",
-    response_model=List[SystemTagTreeOut],
-    status_code=status.HTTP_200_OK,
-)
-async def get_system_tag_tree(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Returns all system tags for the current user as a tree:
-    - top level: tags with no parent (father_tag_id is null)
-    - each node has `children: List[SystemTagTreeOut]`
-    Frontend can use this directly to show a nested tree.
-    """
-    tags = (
-        db.query(SystemTag)
-        .filter(SystemTag.owner_id == current_user.id)
-        .all()
-    )
+# @router.get(
+#     "/tree",
+#     response_model=List[SystemTagTreeOut],
+#     status_code=status.HTTP_200_OK,
+# )
+# async def get_system_tag_tree(
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+# ):
+#     """
+#     Returns all system tags for the current user as a tree:
+#     - top level: tags with no parent (father_tag_id is null)
+#     - each node has `children: List[SystemTagTreeOut]`
+#     Frontend can use this directly to show a nested tree.
+#     """
+#     tags = (
+#         db.query(SystemTag)
+#         .filter(SystemTag.owner_id == current_user.id)
+#         .all()
+#     )
 
-    # Build nodes
-    nodes = {
-        t.id: SystemTagTreeOut(
-            id=t.id,
-            tag_name=t.tag_name,
-            description=t.description,
-            father_tag_id=t.father_tag_id,
-            children=[],
-        )
-        for t in tags
-    }
+#     # Build nodes
+#     nodes = {
+#         t.id: SystemTagTreeOut(
+#             id=t.id,
+#             tag_name=t.tag_name,
+#             description=t.description,
+#             father_tag_id=t.father_tag_id,
+#             children=[],
+#         )
+#         for t in tags
+#     }
 
-    roots: List[SystemTagTreeOut] = []
+#     roots: List[SystemTagTreeOut] = []
 
-    for t in tags:
-        node = nodes[t.id]
-        if t.father_tag_id is None or t.father_tag_id not in nodes:
-            roots.append(node)
-        else:
-            parent_node = nodes[t.father_tag_id]
-            parent_node.children.append(node)
+#     for t in tags:
+#         node = nodes[t.id]
+#         if t.father_tag_id is None or t.father_tag_id not in nodes:
+#             roots.append(node)
+#         else:
+#             parent_node = nodes[t.father_tag_id]
+#             parent_node.children.append(node)
 
-    return roots
+#     return roots

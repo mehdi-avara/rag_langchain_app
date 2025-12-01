@@ -28,17 +28,13 @@ class Settings(BaseSettings):
     llm_rewrite_temperature: float = 0.3  # Temperature for query rewriting
     llm_max_tokens: int = 150  # Max tokens for query rewriting
 
-    # Vector DB
-    # elastic_host: str
-    chroma_persist_dir: str
 
     # JWT
     jwt_secret: str
-    jwt_exp_hours: int = 744
+    jwt_exp_hours: int = 24
 
     jina_api_key: str
     
-    bm25_index_path: str = "data/bm25.pkl"
     
     files_dir: str = "uploaded_files"
 
