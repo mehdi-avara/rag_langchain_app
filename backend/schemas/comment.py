@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Optional
+from fastapi import UploadFile
 from pydantic import BaseModel, Field
 
 from Models import CommentType
@@ -24,10 +25,18 @@ class CommentUpdate(BaseModel):
 
 class CommentFileOut(BaseModel):
     id: int
+    file_name: str
     media_address: str
 
     class Config:
         from_attributes = True
+
+
+class CommentFileUpload(BaseModel):
+    file: UploadFile
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class CommentOut(BaseModel):
@@ -43,4 +52,3 @@ class CommentOut(BaseModel):
 
     class Config:
         from_attributes = True   
-
