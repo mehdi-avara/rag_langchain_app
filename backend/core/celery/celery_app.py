@@ -8,6 +8,7 @@ redis_url = settings.redis_url
 celery_app = Celery(
     "porsa",
     broker=redis_url,
+    include=["core.celery.tasks"],
 )
 
 celery_app.conf.update(

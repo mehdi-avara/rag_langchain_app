@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+mineru==2.6.4
+dill==0.4.0
+doclayout_yolo==0.0.4
+ftfy==6.3.1
+omegaconf==2.3.0
+pyclipper==1.4.0
+shapely==2.1.2
+transformers==4.57.3
+ultralytics==8.3.234

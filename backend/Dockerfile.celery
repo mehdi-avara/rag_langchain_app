@@ -1,0 +1,25 @@
+# Use Python 3.11 as the base image
+FROM rag_langchain_app-backend
+
+# Set working directory
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+
+# RUN pip install mineru==2.6.4 torch==2.5.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121
+
+# Copy requirements file
+COPY requirements_celery.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements_celery.txt --extra-index-url https://download.pytorch.org/whl/cu121
+
+# Copy the backend code
+COPY . .
+
+# Command to run the application
+CMD ["celery", "-A", "core.celery.celery_app.celery_app", "worker", "-l", "info"]

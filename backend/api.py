@@ -7,7 +7,7 @@ from Models import User, Document, DocumentStatusType
 
 from db.init_db import get_db
 from deps import get_current_user
-from core.simple_ingestion import  run_mineru_on_file
+from core.celery.tasks import mineru_process_pdf
 from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
 from schemas.chat import ChatRequest,ChatResponse, Retrieved_data
 from settings import get_settings
@@ -83,7 +83,7 @@ def upload_pdf_mineru(
     
     with open(orginal_pdf, "wb") as f:
         f.write(file_bytes)
-    run_mineru_on_file(
+    mineru_process_pdf.delay(
         pdf_path=orginal_pdf,
         doc_id=doc.id    
         )

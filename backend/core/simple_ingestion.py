@@ -58,22 +58,17 @@ def run_mineru_sync(original_pdf_path: str, doc_dir: str):
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ""
 
-    try:
-        result = subprocess.run(
-            cmd,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=doc_dir
-        )
-        return result.stdout
 
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"MinerU failed: {e.stderr}") from e
+    result = subprocess.run(
+        cmd,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=doc_dir
+    )
+    return result.stdout
 
-    except Exception as e:
-        raise Exception(f"Failed to run MinerU: {e}") from e
 
 def process_pdf_with_mineru(pdf_path: str, doc_id: int, base_dir: str) -> str:
     """
@@ -90,7 +85,6 @@ def process_pdf_with_mineru(pdf_path: str, doc_id: int, base_dir: str) -> str:
     # Create directory structure
     doc_dir = Path(base_dir) / str(doc_id)
     doc_dir.mkdir(parents=True, exist_ok=True)
-    
     run_mineru_sync(pdf_path, doc_dir)
     # Find the generated markdown file
     
@@ -105,13 +99,6 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
     """
     Background task to process PDF with MinerU.
     """
-    with db_session() as db:
-        # Update document record
-        db.query(Document).filter(Document.id == doc_id).update({
-            Document.status: DocumentStatusType.INPROGGRESS.value
-        })
-        db.bulk_save_objects(chunk_records)
-        db.commit()
     # Process PDF with MinerU
     base_dir = settings.files_dir
     md_file_path = process_pdf_with_mineru(pdf_path, doc_id, base_dir)
@@ -172,7 +159,6 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
             Document.n_pages: n_pages,
             Document.n_chunks: len(chunks) + len(images_info),
             Document.file_path: str(doc_id) , # Store relative path
-            Document.status: DocumentStatusType.DONE.value
         })
         db.bulk_save_objects(chunk_records)
         db.commit()

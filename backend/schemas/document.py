@@ -9,8 +9,10 @@ class DocumentOut(BaseModel):
     n_pages: int
     n_chunks: int
     created_at: datetime
+    status: str
     abstract: str | None
     file_path: str | None
+    
 
     class Config:
         orm_mode = True

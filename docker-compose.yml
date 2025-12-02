@@ -1,16 +1,6 @@
 version: '3.8'
 
 services:
-  # postgres:
-  #   image: ankane/pgvector
-  #   environment:
-  #     POSTGRES_USER: rag
-  #     POSTGRES_PASSWORD: rag
-  #     POSTGRES_DB: rag
-  #   volumes:
-  #     - pg_data:/var/lib/postgresql/data
-  #   ports:
-  #     - "127.0.0.1:5432:5432"
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -21,10 +11,12 @@ services:
       - redis_data:/data
 
   backend:
+    image: rag_langchain_app-backend
     build: ./backend
     env_file: .env
     environment:
       files_dir: /app/uploaded_files
+      redis_url: redis://redis:6379/0
     # depends_on:
       # - postgres
       # - elastic
@@ -35,7 +27,20 @@ services:
       - ./backend/uploaded_files:/app/uploaded_files
       # - chroma_data:/data/chroma
 
-# volumes:
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.celery
+    env_file: .env
+    environment:
+      files_dir: /app/uploaded_files
+      redis_url: redis://redis:6379/0
+      mineru_running_address: mineru
+    depends_on:
+      - redis
+    volumes:
+      - ./backend/uploaded_files:/app/uploaded_files
+volumes:
   # pg_data:
-  # es_data:
+  redis_data:
   # chroma_data: 
