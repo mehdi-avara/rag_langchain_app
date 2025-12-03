@@ -104,7 +104,7 @@ def _check_no_cycle(
 # ---------- CRUD Endpoints ----------
 
 @router.get(
-    "/",
+    "",
     response_model=List[SystemTagOut],
     status_code=status.HTTP_200_OK,
 )
@@ -142,7 +142,7 @@ async def get_system_tag(
 
 
 @router.post(
-    "/",
+    "",
     response_model=SystemTagOut,
     status_code=status.HTTP_201_CREATED,
 )

@@ -15,11 +15,17 @@ from schemas.comment import (
 
 
 from components import generate_embeddings_for_chunks
+from .files import router as files_router
 
 router = APIRouter(tags=["comments"])
 
+router.include_router(
+    files_router,
+    prefix="/files"
+)
 
-@router.get("/", response_model=List[CommentOut])
+
+@router.get("", response_model=List[CommentOut])
 def list_comments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -74,7 +80,7 @@ def get_comments_by_chunk(
     return comments
 
 
-@router.post("/", response_model=CommentOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=CommentOut, status_code=status.HTTP_201_CREATED)
 async def create_comment(
     payload: CommentCreate,
     db: Session = Depends(get_db),

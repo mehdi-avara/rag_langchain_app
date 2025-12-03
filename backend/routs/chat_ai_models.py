@@ -10,14 +10,14 @@ from deps import get_current_user
 from datetime import datetime
 
 router = APIRouter()
-@router.get("/", response_model=List[ChatAIModelOut])
+@router.get("", response_model=List[ChatAIModelOut])
 def list_chat_ai_models(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return db.query(ChatAIModels).all()
 
-@router.post("/", response_model=ChatAIModelOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ChatAIModelOut, status_code=status.HTTP_201_CREATED)
 def create_chat_ai_model(
     payload: ChatAIModelIn,
     current_user: User = Depends(get_current_user),

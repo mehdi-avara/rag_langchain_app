@@ -25,7 +25,7 @@ router = APIRouter()
 settings = get_settings()
 
 
-@router.get("/", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
+@router.get("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
 def get_me(current_user: User = Depends(get_current_user)) -> CurrentUserOut:
     """Return basic details for the authenticated user."""
     return CurrentUserOut(
@@ -38,7 +38,7 @@ def get_me(current_user: User = Depends(get_current_user)) -> CurrentUserOut:
     )
 
 
-@router.put("/", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
+@router.put("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
 def update_user(
     payload: UserUpdateIn,
     current_user: User = Depends(get_current_user),

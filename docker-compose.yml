@@ -22,7 +22,7 @@ services:
       # - elastic
       # - chroma
     ports:
-      - "8003:8000"
+      - "8001:8000"
     volumes:
       - ./backend/uploaded_files:/app/uploaded_files
       # - chroma_data:/data/chroma
