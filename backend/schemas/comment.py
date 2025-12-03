@@ -34,7 +34,7 @@ class CommentFileOut(BaseModel):
 
 class CommentFileUpload(BaseModel):
     file: UploadFile
-
+    index: bool = False
     class Config:
         arbitrary_types_allowed = True
 

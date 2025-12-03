@@ -17,8 +17,8 @@ settings = get_settings()
 router = APIRouter(tags=["comments files"])
 
 
-def _parse_file_upload(file: UploadFile = File(...)) -> CommentFileUpload:
-    return CommentFileUpload(file=file)
+def _parse_file_upload(file: UploadFile = File(...),index: bool = False) -> CommentFileUpload:
+    return CommentFileUpload(file=file,index=index)
 
 
 @router.get("/{comment_id}", response_model=List[CommentFileName])
