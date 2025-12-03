@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 
-from Models import User, Document, DocumentStatusType
+from Models import User, Document, DocumentStatusType, SystemTag
 
 from db.init_db import get_db
 from deps import get_current_user
@@ -121,19 +121,22 @@ async def chat(
     # Fetch all needed doc_ids first to avoid multiple queries
     doc_ids = {chunk.doc_id for chunk in result["chunks"]}
     doc_ids |= {comment.doc_id for comment in result.get("comments", [])}
-
     # Query all documents in one go (better performance)
-    docs = db.query(Document.id, Document.filename).filter(Document.id.in_(doc_ids)).all()
+    docs = db.query(Document.id, Document.filename,Document.system_tag_id).filter(Document.id.in_(doc_ids)).all()
     doc_map = {doc.id: doc.filename for doc in docs}
-
+    tag_ids = {doc.system_tag_id for doc in docs}
+    tag_ids |= {comment.system_tag_id for comment in result.get("comments", [])}
+    tags = db.query(SystemTag.id, SystemTag.tag_name, SystemTag.description).filter(SystemTag.id.in_(tag_ids)).all()
+    tag_map = {tag.id: tag for tag in tags}
     for chunk in result["chunks"]:
         retrieved_data.append(Retrieved_data(
             content=chunk.content,
             doc_id=chunk.doc_id,
             doc_name=doc_map.get(chunk.doc_id),
             chunk_id=chunk.id,
-            chunk_page=chunk.page_num + 1,
-            comment_id=None
+            chunk_page=chunk.page_num + 1,     
+            comment_id=None,
+            comment_type=None     
         ))
         citations.append(chunk.id)
           
@@ -144,7 +147,8 @@ async def chat(
             doc_name=doc_map.get(chunk.doc_id),
             chunk_id=comments.chunk_id,
             chunk_page=None,
-            comment_id=comments.id
+            comment_id=comments.id,
+            comment_type=comments.type
         ))
 
     return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data}

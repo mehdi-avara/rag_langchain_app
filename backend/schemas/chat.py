@@ -15,6 +15,7 @@ class Retrieved_data(BaseModel):
     chunk_id: int | None
     chunk_page: int | None
     comment_id: int | None
+    comment_type: str | None
 
 class ChatResponse(BaseModel):
     answer: str
