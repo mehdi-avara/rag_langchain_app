@@ -46,7 +46,8 @@ class Comment(Base):
         nullable=True,
         index=True,
     )
-
+    
+    title = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     embedding = Column(Vector(1024), nullable=True)
     type = Column(String, nullable=False, default="comment")

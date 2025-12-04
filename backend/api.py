@@ -132,6 +132,7 @@ async def chat(
         retrieved_data.append(Retrieved_data(
             content=chunk.content,
             doc_id=chunk.doc_id,
+            title=doc_map.get(chunk.doc_id),
             doc_name=doc_map.get(chunk.doc_id),
             chunk_id=chunk.id,
             chunk_page=chunk.page_num + 1,     
@@ -145,6 +146,7 @@ async def chat(
             content=comments.content,
             doc_id=comments.doc_id,
             doc_name=doc_map.get(chunk.doc_id),
+            title=comments.title,
             chunk_id=comments.chunk_id,
             chunk_page=None,
             comment_id=comments.id,

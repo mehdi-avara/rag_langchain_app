@@ -63,6 +63,21 @@ def get_comments_by_doc(
     )
     return comments
 
+@router.get("/by-tag/{tag_id}", response_model=List[CommentOut])
+def get_comments_by_tag(
+    tag_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return all comments for a specific document."""
+    comments = (
+        db.query(Comment)
+        .filter(Comment.system_tag_id == tag_id)
+        .order_by(Comment.created_at.desc())
+        .all()
+    )
+    return comments
+
 
 @router.get("/by-chunk/{chunk_id}", response_model=List[CommentOut])
 def get_comments_by_chunk(

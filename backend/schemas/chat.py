@@ -10,8 +10,9 @@ class ChatRequest(BaseModel):
 
 class Retrieved_data(BaseModel):
     content: str
-    doc_id: int
+    doc_id: int | None
     doc_name: str
+    title: str
     chunk_id: int | None
     chunk_page: int | None
     comment_id: int | None

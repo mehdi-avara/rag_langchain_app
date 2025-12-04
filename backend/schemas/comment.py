@@ -12,6 +12,7 @@ class CommentBase(BaseModel):
     chunk_id: Optional[int] = None
     type: Optional[CommentType] = CommentType.COMMENT
     content: str
+    title: str = "unknown"
     media_addresses: List[str] = Field(default_factory=list)
 
 
@@ -51,6 +52,7 @@ class CommentOut(BaseModel):
     id: int
     user_id: int
     system_tag_id: int
+    title: str
     doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
     type: CommentType
