@@ -115,6 +115,7 @@ async def create_comment(
         user_id=current_user.id,
         system_tag_id=payload.system_tag_id,
         doc_id=payload.doc_id,
+        title=payload.title,
         chunk_id=payload.chunk_id,
         content=payload.content,
         type=payload.type,
