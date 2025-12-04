@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # Default user
     default_username: str
     default_password: str
+    default_firstname: str
 
     # API Keys
     openai_api_key: str
