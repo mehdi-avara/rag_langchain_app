@@ -23,11 +23,12 @@ def init_db():
     # Add default user if not exists
     default_username = settings.default_username
     default_password = settings.default_password
+    default_firstname = settings.default_firstname
 
     user = db.query(User).filter_by(username=default_username).first()
     if not user:
         hashed_pw = bcrypt.hash(default_password)
-        user = User(username=default_username, pw_hash=hashed_pw, role="admin")
+        user = User(username=default_username, First_name=default_firstname, pw_hash=hashed_pw, role="admin")
         db.add(user)
         db.commit()
 
