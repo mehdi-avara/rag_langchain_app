@@ -56,7 +56,7 @@ app.include_router(system_tag_router, prefix="/system_tags", tags=["system_tags"
 @app.post("/upload")
 def upload_pdf_mineru(
     file: UploadFile,
-    system_tag_id: int = Form(1),
+    system_tag_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

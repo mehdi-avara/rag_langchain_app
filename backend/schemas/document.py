@@ -6,6 +6,7 @@ from datetime import datetime
 class DocumentOut(BaseModel):
     id: int
     filename: str
+    system_tag_id: int
     n_pages: int
     n_chunks: int
     created_at: datetime
