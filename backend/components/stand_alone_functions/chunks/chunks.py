@@ -1,12 +1,12 @@
 from pathlib import Path
-from mineru.utils.enum_class import MakeMode
+# from mineru.utils.enum_class import MakeMode
 import json
 
 from settings import get_settings
 from db.session import db_session
 from Models import Chunk, Document
 from components.folders import get_full_processed_file_path
-from components.page_find_logic.mineru_main_file_creator import union_make
+from components.stand_alone_functions.page_find_logic import union_make
 
 
 def find_chunk_pos_in_text(chunk_text: str, md_text: str):
@@ -53,7 +53,8 @@ def numbering_pages():
             raise SystemExit("Input JSON must contain a list under key 'pdf_info' (or be a list itself).")
 
         # Convert to Markdown using your function
-        md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
+        # md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
+        md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode="wrong",img_buket_path="images")
         with db_session() as db:
             chunks = (db.query(Chunk)
                         .filter(Chunk.doc_id == doc_id)
