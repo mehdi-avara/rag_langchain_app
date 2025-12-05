@@ -1,6 +1,6 @@
-from typing import List
-from fastapi import Depends, APIRouter, status, Response , HTTPException, Query
-from fastapi.responses import FileResponse
+from typing import List, Optional
+from fastapi import Depends, APIRouter, status, Response , HTTPException, Query, Request, Header
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
 
@@ -233,4 +233,79 @@ async def get_document_image(
     return FileResponse(
         path=full_image_path,
         media_type=media_type
+    )
+
+
+# @router.options("/stream/{doc_id}")
+# async def options_stream_pdf(doc_id: int):
+#     return Response(
+#         status_code=200,
+#         headers={
+#             "Access-Control-Allow-Origin": "*",
+#             "Access-Control-Allow-Headers": "Authorization, Range, Content-Type",
+#             "Access-Control-Allow-Methods": "GET, OPTIONS",
+#             "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges",
+#         },
+#     )
+
+@router.get("/stream/{doc_id}")
+async def stream_pdf(
+    request: Request,
+    doc_id: int,
+    Range: Optional[str] = Header(None, description="Byte range, e.g. 'bytes=0-65535'"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    file_path = Path(settings.files_dir) / doc.file_path / "original.pdf"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    def iter_file(start: int, end: int):
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            remaining = end - start + 1
+            chunk = 1024 * 1024  # 1MB chunks
+            while remaining > 0:
+                data = f.read(min(chunk, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    if range_header:  # Client requests a byte range
+        _, range_val = range_header.split("=")
+        start_str, end_str = range_val.split("-")
+
+        start = int(start_str)
+        end = int(end_str) if end_str else file_size - 1
+
+        return StreamingResponse(
+            iter_file(start, end),
+            status_code=206,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(end - start + 1),
+                "Content-Type": "application/pdf",
+            },
+        )
+
+    # If no Range header → return full file
+    return StreamingResponse(
+        iter_file(0, file_size - 1),
+        media_type="application/pdf",
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+        },
     )
