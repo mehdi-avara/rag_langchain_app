@@ -21,7 +21,12 @@ async def list_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return db.query(Document).filter(Document.owner_id == current_user.id).all()
+    return (
+    db.query(Document)
+      .filter(Document.owner_id == current_user.id)
+      .order_by(Document.created_at.desc())
+      .all()
+)
 
 
 
@@ -79,12 +84,10 @@ async def get_summary(
     
     return {"abstract": doc.abstract}
 
-
 @router.get("/{doc_id}/chunks/", response_model=List[ChunkOut])
 async def browse_chunks(
     doc_id: int,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    page: int = Query(1, ge=1),   # interpret this as PDF page number
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -96,19 +99,22 @@ async def browse_chunks(
     # Check ownership
     if doc.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this document")
+
+    db_page_num = page - 1 
+
+    # Get all chunks for that PDF page, sorted by position in page
+    chunks = (
+        db.query(Chunk)
+          .filter(
+              Chunk.doc_id == doc_id,
+              Chunk.page_num == db_page_num
+          )
+          .order_by(Chunk.id.asc())
+          .all()
+    )
     
-    # Calculate offset
-    offset = (page - 1) * page_size
-    
-    # Get chunks with pagination
-    chunks = db.query(Chunk)\
-        .filter(Chunk.doc_id == doc_id)\
-        .order_by(Chunk.page_num, Chunk.start_pos)\
-        .offset(offset)\
-        .limit(page_size)\
-        .all()
-    
-    return chunks 
+    return chunks
+
 
 @router.get("/download/{doc_id}")
 async def download_pdf(
