@@ -11,6 +11,8 @@ class ChatRequest(BaseModel):
 class Retrieved_data(BaseModel):
     content: str
     doc_id: int | None
+    tag_id : int
+    tag_name : str
     doc_name: str
     title: str
     chunk_id: int | None

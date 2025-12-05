@@ -1,3 +1,4 @@
+from typing import List
 from fastapi import FastAPI, Depends, HTTPException, UploadFile,Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -117,42 +118,110 @@ async def chat(
     )
     result = await answer_graph.ainvoke(state_graph)
     answer = result["answer"]
-    retrieved_data = []
-    citations = []
-    # Fetch all needed doc_ids first to avoid multiple queries
-    doc_ids = {chunk.doc_id for chunk in result["chunks"]}
-    doc_ids |= {comment.doc_id for comment in result.get("comments", [])}
-    # Query all documents in one go (better performance)
-    docs = db.query(Document.id, Document.filename,Document.system_tag_id).filter(Document.id.in_(doc_ids)).all()
-    doc_map = {doc.id: doc.filename for doc in docs}
-    tag_ids = {doc.system_tag_id for doc in docs}
-    tag_ids |= {comment.system_tag_id for comment in result.get("comments", [])}
-    tags = db.query(SystemTag.id, SystemTag.tag_name, SystemTag.description).filter(SystemTag.id.in_(tag_ids)).all()
-    tag_map = {tag.id: tag for tag in tags}
-    for chunk in result["chunks"]:
-        retrieved_data.append(Retrieved_data(
-            content=chunk.content,
-            doc_id=chunk.doc_id,
-            title=doc_map.get(chunk.doc_id),
-            doc_name=doc_map.get(chunk.doc_id),
-            chunk_id=chunk.id,
-            chunk_page=chunk.page_num + 1,     
-            comment_id=None,
-            comment_type=None     
-        ))
+    
+    
+    retrieved_data: list[Retrieved_data] = []
+    citations: list[int] = []
+
+    chunks = result.get("chunks", []) or []
+    comments = result.get("comments", []) or []
+
+    # 1) Collect all doc_ids from chunks and comments where doc_id is not None
+    doc_ids: set[int] = {chunk.doc_id for chunk in chunks}
+    doc_ids |= {comment.doc_id for comment in comments if comment.doc_id is not None}
+
+    # 2) Load all documents (id, filename, system_tag_id)
+    if doc_ids:
+        docs = (
+            db.query(
+                Document.id,
+                Document.filename,
+                Document.system_tag_id,
+            )
+            .filter(Document.id.in_(doc_ids))
+            .all()
+        )
+    else:
+        docs = []
+
+    # Maps: doc_id -> filename / tag_id
+    doc_name_map: dict[int, str] = {doc.id: doc.filename for doc in docs}
+    doc_tag_map: dict[int, int] = {doc.id: doc.system_tag_id for doc in docs}
+
+    # 3) Collect all tag_ids from docs and comments
+    tag_ids: set[int] = {doc.system_tag_id for doc in docs}
+    tag_ids |= {comment.system_tag_id for comment in comments}
+
+    # 4) Load all tags
+    if tag_ids:
+        tags = (
+            db.query(
+                SystemTag.id,
+                SystemTag.tag_name,
+                SystemTag.description,
+            )
+            .filter(SystemTag.id.in_(tag_ids))
+            .all()
+        )
+    else:
+        tags = []
+
+    # tag_id -> tag_name
+    tag_name_map: dict[int, str] = {tag.id: tag.tag_name for tag in tags}
+
+    # ------------------------
+    # CHUNKS
+    # ------------------------
+    for chunk in chunks:
+        # doc_id is NOT nullable on chunk, so this is safe:
+        tag_id = doc_tag_map[chunk.doc_id]
+        tag_name = tag_name_map[tag_id]
+
+        retrieved_data.append(
+            Retrieved_data(
+                content=chunk.content,
+                doc_id=chunk.doc_id,
+                tag_id=tag_id,
+                tag_name=tag_name,
+                doc_name=doc_name_map[chunk.doc_id],
+                title=doc_name_map[chunk.doc_id],  # using filename as title
+                chunk_id=chunk.id,
+                chunk_page=chunk.page_num + 1,     # 1-based index
+                comment_id=None,
+                comment_type=None,
+            )
+        )
+
         citations.append(chunk.id)
-          
-    for comments in result.get("comments", []):
-        retrieved_data.append(Retrieved_data(
-            content=comments.content,
-            doc_id=comments.doc_id,
-            doc_name=doc_map.get(chunk.doc_id),
-            title=comments.title,
-            chunk_id=comments.chunk_id,
-            chunk_page=None,
-            comment_id=comments.id,
-            comment_type=comments.type
-        ))
+
+    # ------------------------
+    # COMMENTS
+    # ------------------------
+    for comment in comments:
+        # tag comes directly from comment
+        tag_id = comment.system_tag_id
+        tag_name = tag_name_map[tag_id]
+
+        # doc_id can be None on comment → avoid KeyError
+        if comment.doc_id is not None:
+            doc_name = doc_name_map.get(comment.doc_id, "")
+        else:
+            doc_name = ""  # no associated doc; model requires non-null str
+
+        retrieved_data.append(
+            Retrieved_data(
+                content=comment.content,
+                doc_id=comment.doc_id,  # can be None
+                tag_id=tag_id,
+                tag_name=tag_name,
+                doc_name=doc_name,
+                title=comment.title,
+                chunk_id=comment.chunk_id,
+                chunk_page=None,
+                comment_id=comment.id,
+                comment_type=comment.type,
+            )
+        )
 
     return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data}
 
