@@ -91,7 +91,7 @@ Answer:"""
     # Initialize LLM
     llm = ChatOpenAI(
         base_url=settings.openai_base_url,
-        model="gemma3:27b",
+        model=settings.openai_model,
         temperature=0.1,
         openai_api_key=settings.openai_api_key
     )    
