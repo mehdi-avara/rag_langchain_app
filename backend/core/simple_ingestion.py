@@ -67,6 +67,7 @@ def run_mineru_sync(original_pdf_path: str, doc_dir: str):
         text=True,
         cwd=doc_dir
     )
+    print(result.stdout)
     return result.stdout
 
 
