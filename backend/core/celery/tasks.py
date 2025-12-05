@@ -14,11 +14,17 @@ def mineru_process_pdf(pdf_path: str, doc_id: int):
             Document.status: DocumentStatusType.INPROGGRESS.value
         })
         db.commit()
-
+    try:
         run_mineru_on_file(pdf_path, doc_id)
-    with db_session() as db:
-        # Update document record
-        db.query(Document).filter(Document.id == doc_id).update({
-            Document.status: DocumentStatusType.DONE.value
-        })
-        db.commit()
+        with db_session() as db:
+            db.query(Document).filter(Document.id == doc_id).update({
+                Document.status: DocumentStatusType.DONE.value
+            })
+            db.commit()
+    except:
+        with db_session() as db:
+            db.query(Document).filter(Document.id == doc_id).update({
+                Document.status: DocumentStatusType.FAIELED.value
+            })
+            db.commit()
+        
