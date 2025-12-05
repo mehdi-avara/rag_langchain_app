@@ -30,7 +30,7 @@ def find_page_for_pos(pos: int, pages_list: list):
 
 
 
-if __name__ == "__main__":
+def numbering_pages():
     settings = get_settings()
     # 1) get only the IDs
     with db_session() as db:

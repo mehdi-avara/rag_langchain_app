@@ -194,7 +194,7 @@ async def get_document_image(
         raise HTTPException(status_code=404, detail="No file path found for this document")
     
     # Construct full path: FILES_DIR/{doc_id}/original/auto/{image_path}
-    full_image_path = Path(settings.files_dir) / doc.file_path / "original" / "auto" / image_path
+    full_image_path = Path(settings.files_dir) / doc.file_path / "original" / "auto"/ "images" / image_path
     
     # Security check: ensure the resolved path is within the expected directory
     try:
