@@ -31,11 +31,17 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.celery
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
     env_file: .env
     environment:
       files_dir: /app/uploaded_files
       redis_url: redis://redis:6379/0
       mineru_running_address: mineru
+      NVIDIA_VISIBLE_DEVICES: all
     depends_on:
       - redis
     volumes:

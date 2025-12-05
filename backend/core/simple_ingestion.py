@@ -58,8 +58,7 @@ def run_mineru_sync(original_pdf_path: str, doc_dir: str):
     ]
 
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = ""
-
+    
     try:
         result = subprocess.run(
             cmd,
@@ -98,7 +97,7 @@ def process_pdf_with_mineru(pdf_path: str, doc_id: int, base_dir: str) -> str:
     # Create directory structure
     doc_dir = Path(base_dir) / str(doc_id)
     doc_dir.mkdir(parents=True, exist_ok=True)
-    run_mineru_sync(pdf_path, doc_dir)
+    run_mineru_sync(Path(base_dir) / pdf_path, doc_dir)
     # Find the generated markdown file
     
     # Fallback: look for any .md file in the doc directory
@@ -112,6 +111,7 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
     """
     Background task to process PDF with MinerU.
     """
+    
     # Process PDF with MinerU
     base_dir = settings.files_dir
     md_file_path = process_pdf_with_mineru(pdf_path, doc_id, base_dir)

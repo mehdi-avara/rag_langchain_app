@@ -77,14 +77,14 @@ def upload_pdf_mineru(
     db.add(doc)
     db.commit()
     
-    temp_path = os.path.join(settings.files_dir, f"{doc.id}")
+    temp_path = f"{doc.id}"
     os.makedirs(temp_path, exist_ok=True)
     orginal_pdf = os.path.join(temp_path, f"original.pdf")
     
     with open(orginal_pdf, "wb") as f:
         f.write(file_bytes)
     mineru_process_pdf.delay(
-        pdf_path=orginal_pdf,
+        pdf_path="original.pdf",
         doc_id=doc.id    
         )
 
