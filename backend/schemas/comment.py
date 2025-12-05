@@ -7,10 +7,10 @@ from Models import CommentType
 
 
 class CommentBase(BaseModel):
-    system_tag_id: Optional[int] = 1
+    system_tag_id: int
     doc_id: Optional[int] = None
     chunk_id: Optional[int] = None
-    type: Optional[CommentType] = CommentType.COMMENT
+    type: CommentType = CommentType.COMMENT
     content: str
     title: str = "unknown"
     media_addresses: List[str] = Field(default_factory=list)
