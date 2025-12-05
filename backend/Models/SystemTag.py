@@ -11,7 +11,7 @@ class SystemTag(Base):
     id = Column(Integer, primary_key=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     father_tag_id = Column(Integer, ForeignKey("system_tags.id"), nullable=True)
-    tag_name = Column(String, nullable=False)
+    tag_name = Column(String,unique=True, nullable=False)
     description = Column(Text)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
