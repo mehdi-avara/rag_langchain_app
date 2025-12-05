@@ -43,6 +43,8 @@ def extract_text_from_md(file_bytes: bytes) -> Tuple[str, int, List[Dict]]:
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     return text, 1, []
 
+
+
 def run_mineru_sync(original_pdf_path: str, doc_dir: str):
     """
     Run MinerU process synchronously (blocking mode).
@@ -58,17 +60,27 @@ def run_mineru_sync(original_pdf_path: str, doc_dir: str):
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ""
 
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=doc_dir
+        )
+        print("MinerU STDOUT:\n", result.stdout)
+        print("MinerU STDERR:\n", result.stderr)
+        return result.stdout
 
-    result = subprocess.run(
-        cmd,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=doc_dir
-    )
-    print(result.stdout)
-    return result.stdout
+    except subprocess.CalledProcessError as e:
+        # Print everything on failure
+        print("MinerU FAILED")
+        print("Return code:", e.returncode)
+        print("STDOUT:\n", e.stdout)
+        print("STDERR:\n", e.stderr)
+
+        raise e
 
 
 def process_pdf_with_mineru(pdf_path: str, doc_id: int, base_dir: str) -> str:
