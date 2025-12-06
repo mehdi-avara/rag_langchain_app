@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # API Keys
     openai_api_key: str
     openai_base_url: str = "http://10.0.0.10:11434/v1"
-    openai_model: str =  "openai.gpt-oss-20b-1:0"
-    # openai_model: str =  "gpt-oss-120b"
+    # openai_model: str =  "openai.gpt-oss-20b-1:0"
+    openai_model: str =  "gpt-oss-120b"
     
     #embedding_base_url: str
     embedding_base_url: str = "http://10.0.0.10:8088/v1"

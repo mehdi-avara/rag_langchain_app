@@ -1,12 +1,12 @@
 from pathlib import Path
-# from mineru.utils.enum_class import MakeMode
+from mineru.utils.enum_class import MakeMode
 import json
 
 from settings import get_settings
 from db.session import db_session
 from Models import Chunk, Document
 from components.folders import get_full_processed_file_path
-from components.stand_alone_functions.page_find_logic import union_make
+from components.stand_alone_functions.page_find_logic.mineru_main_file_creator import union_make
 
 
 def find_chunk_pos_in_text(chunk_text: str, md_text: str):
@@ -31,11 +31,14 @@ def find_page_for_pos(pos: int, pages_list: list):
 
 
 def numbering_pages():
+    from datetime import datetime, timedelta
+
+    six_days_ago = datetime.utcnow() - timedelta(days=6)
     settings = get_settings()
     # 1) get only the IDs
     with db_session() as db:
-        doc_ids = [d.id for d in db.query(Document).order_by(Document.id).all()]
-
+        doc_ids = [d.id for d in db.query(Document).filter(Document.created_at >= six_days_ago).order_by(Document.id).all()]
+    input(f"{len(doc_ids)}")
     # 2) now loop over ids freely
     for doc_id in doc_ids:
         
@@ -54,7 +57,8 @@ def numbering_pages():
 
         # Convert to Markdown using your function
         # md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
-        md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode="wrong",img_buket_path="images")
+        md_text,pages_list = union_make(pdf_info_dict=pdf_info, make_mode=MakeMode.MM_MD,img_buket_path="images")
+        print(pages_list)
         with db_session() as db:
             chunks = (db.query(Chunk)
                         .filter(Chunk.doc_id == doc_id)
