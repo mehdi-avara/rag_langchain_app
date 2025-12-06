@@ -84,7 +84,7 @@ async def get_summary(
     
     return {"abstract": doc.abstract}
 
-@router.get("/{doc_id}/chunks/", response_model=List[ChunkOut])
+@router.get("/{doc_id}/chunks", response_model=List[ChunkOut])
 async def browse_chunks(
     doc_id: int,
     page: int = Query(1, ge=1),   # interpret this as PDF page number
