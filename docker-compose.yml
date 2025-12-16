@@ -4,7 +4,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "127.0.0.1:6380:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -21,7 +21,7 @@ services:
       # - elastic
       # - chroma
     ports:
-      - "8001:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - $files_dir:/app/uploaded_files
       # - chroma_data:/data/chroma
