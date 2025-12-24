@@ -21,10 +21,11 @@ def mineru_process_pdf(pdf_path: str, doc_id: int):
                 Document.status: DocumentStatusType.DONE.value
             })
             db.commit()
-    except:
+    except Exception as e:
         with db_session() as db:
             db.query(Document).filter(Document.id == doc_id).update({
                 Document.status: DocumentStatusType.FAIELED.value
             })
             db.commit()
+        raise e
         

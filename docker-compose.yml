@@ -3,9 +3,8 @@ version: '3.8'
 services:
   redis:
     image: redis:7-alpine
-    container_name: redis
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -22,9 +21,9 @@ services:
       # - elastic
       # - chroma
     ports:
-      - "8001:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./backend/uploaded_files:/app/uploaded_files
+      - $files_dir:/app/uploaded_files
       # - chroma_data:/data/chroma
 
   celery:
