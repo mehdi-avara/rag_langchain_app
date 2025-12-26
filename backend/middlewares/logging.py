@@ -24,6 +24,16 @@ IGNORED_PATHS = {
     "/redoc",
 }
 
+SENSITIVE_PATHS = {
+    "/auth/login",
+    "/auth/refresh",
+}
+
+SENSITIVE_HEADERS = [
+    "X-Sensitive",
+    "X-Secret",
+]
+
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("api_logger")
@@ -58,17 +68,33 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         
         start_time = time.time()
 
+        is_sensitive_path = request.url.path in SENSITIVE_PATHS
+        is_sensitive_header = any(
+            request.headers.get(header, "").lower() == "true"
+            for header in SENSITIVE_HEADERS
+        )
+        is_sensitive = is_sensitive_path or is_sensitive_header
+        
         content_type = request.headers.get("content-type", "").lower()
 
         should_ignore_body = any(
             ignored in content_type for ignored in IGNORED_CONTENT_TYPES
         )
         
+        body_bytes = b""
+        body_text = ""
+        
+        try:
+            body_bytes = await request.body()
+        except Exception:
+            body_bytes = b""
+        
         if should_ignore_body:
             body_text = "<body skipped>"
+        elif is_sensitive:
+            body_text = "<sensitive body redacted>"
         else:
             try:
-                body_bytes = await request.body()
                 body_text = body_bytes.decode("utf-8", errors="ignore")
             except Exception:
                 body_text = "<unreadable>"
@@ -89,7 +115,11 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             response_body += chunk
 
         response_text = response_body.decode("utf-8", errors="ignore")
-        response_text = response_text[:MAX_LOG_CHARS]
+        
+        if is_sensitive:
+            response_text = "<sensitive response redacted>"
+        else:
+            response_text = response_text[:MAX_LOG_CHARS]
 
         process_time = round(time.time() - start_time, 3)
 
