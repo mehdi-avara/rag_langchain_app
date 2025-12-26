@@ -16,6 +16,7 @@ BACKUP_COUNT = settings.request_log_backup_count
 IGNORED_CONTENT_TYPES = [
     "multipart/form-data",
     "application/octet-stream",
+    "application/pdf",
 ]
 
 IGNORED_PATHS = {
@@ -115,8 +116,16 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             response_body += chunk
 
         response_text = response_body.decode("utf-8", errors="ignore")
+       
+        content_type = response.headers.get("content-type", "").lower()
         
-        if is_sensitive:
+        should_ignore_body = any(
+            ignored in content_type for ignored in IGNORED_CONTENT_TYPES
+        )
+        
+        if should_ignore_body:
+            response_text = "<body skipped>"
+        elif is_sensitive:
             response_text = "<sensitive response redacted>"
         else:
             response_text = response_text[:MAX_LOG_CHARS]
