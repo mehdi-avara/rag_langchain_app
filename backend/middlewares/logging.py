@@ -18,6 +18,12 @@ IGNORED_CONTENT_TYPES = [
     "application/octet-stream",
 ]
 
+IGNORED_PATHS = {
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
+
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("api_logger")
@@ -47,6 +53,9 @@ logger = setup_logger()
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in IGNORED_PATHS:
+            return await call_next(request)
+        
         start_time = time.time()
 
         content_type = request.headers.get("content-type", "").lower()
