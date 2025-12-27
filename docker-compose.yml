@@ -10,7 +10,7 @@ services:
       - redis_data:/data
 
   backend:
-    image: rag_langchain_app-backend
+    # image: rag_langchain_app-backend
     build: ./backend
     env_file: .env
     environment:
