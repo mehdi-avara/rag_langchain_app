@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 
-from Models import User, Document, DocumentStatusType, SystemTag
+from Models import User, Document, DocumentStatusType, SystemTag, Chat, ChatMessage, ChatRole
 
 from db.init_db import get_db
 from deps import get_current_user
@@ -96,7 +96,38 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> ChatResponse:
+    chat_id = request.chat_id
+    
+    if chat_id:
+        chat = (
+            db.query(Chat)
+            .filter(
+                Chat.id == chat_id,
+                Chat.user_id == current_user.id
+            )
+            .first()
+        )
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+    else:
+        chat = Chat(
+            name="New Chat",
+            user_id=current_user.id,
+        )
+        db.add(chat)
+        db.commit()
+        db.refresh(chat)
+    
     query = request.query
+    
+    user_message = ChatMessage(
+        chat_id=chat.id,
+        role=ChatRole.user,
+        content=query,
+    )
+
+    db.add(user_message)
+    db.commit()
     
     # Query rewriting if requested
     if request.rewrite_query:
@@ -220,5 +251,16 @@ async def chat(
             )
         )
 
-    return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data}
+    assistant_message = ChatMessage(
+        chat_id=chat.id,
+        role=ChatRole.assistant,
+        content=answer,
+        citations=citations,
+        retrieved_chunks=[c.model_dump() for c in retrieved_data],
+    )
+    
+    db.add(assistant_message)
+    db.commit()
+    
+    return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data, "chat_id": chat.id}
 
