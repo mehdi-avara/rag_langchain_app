@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 
-from Models import User, Document, DocumentStatusType, SystemTag, Chat, ChatMessage, ChatRole
+from Models import User, Document, DocumentStatusType, SystemTag, Chat, ChatMessage
+from Models.chat import ChatRole
 
 from db.init_db import get_db
 from deps import get_current_user
