@@ -185,3 +185,21 @@ async def chat(
     
     return {"answer": answer, "citations": citations, "retrieved_chunks": retrieved_data, "chat_id": chat.id}
 
+
+
+@router.patch("/{chat_id}/name")
+async def update_chat_name(
+    chat_id: int,
+    request: ChatUpdateNameRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    chat.name = request.name
+    db.commit()
+    db.refresh(chat)
+
+    return {"chat_id": chat.id, "name": chat.name}

@@ -26,3 +26,6 @@ class ChatResponse(BaseModel):
     citations: List[int]
     retrieved_chunks: List[Retrieved_data]
     chat_id: int
+    
+class ChatUpdateNameRequest(BaseModel):
+    name: str
