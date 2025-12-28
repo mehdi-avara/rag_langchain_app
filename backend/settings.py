@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, List
 from functools import lru_cache
 
 
@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     default_password: str
     default_firstname: str
 
+    cors_allow_origins: List[str] = []
+    
     # API Keys
     openai_api_key: str
     openai_base_url: str = "http://10.0.0.10:11434/v1"

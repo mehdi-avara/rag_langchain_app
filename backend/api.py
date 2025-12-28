@@ -35,11 +35,7 @@ app.add_middleware(LoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://porsa.javidanparto.com", 
-        "https://porsa.javidanparto.com",   
-        "http://localhost:5000"  # allow all origins for testing purposes
-    ],
+    allow_origins=settings.cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

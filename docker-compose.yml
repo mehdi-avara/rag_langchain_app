@@ -46,7 +46,7 @@ services:
     depends_on:
       - redis
     volumes:
-      - ./backend/uploaded_files:/app/uploaded_files
+      - $files_dir:/app/uploaded_files
 volumes:
   # pg_data:
   redis_data:
