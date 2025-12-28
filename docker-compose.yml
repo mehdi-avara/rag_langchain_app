@@ -11,7 +11,9 @@ services:
 
   backend:
     # image: rag_langchain_app-backend
-    build: ./backend
+    build:
+      context: ./backend
+      target: backend
     env_file: .env
     environment:
       files_dir: /app/uploaded_files
@@ -29,7 +31,7 @@ services:
   celery:
     build:
       context: ./backend
-      dockerfile: Dockerfile.celery
+      target: celery
     deploy:
       resources:
         reservations:
