@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data
@@ -204,3 +204,24 @@ async def update_chat_name(
     db.refresh(chat)
 
     return {"chat_id": chat.id, "name": chat.name}
+
+
+@router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    chat = (
+        db.query(Chat)
+        .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
+        .first()
+    )
+
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    # delete messages first
+    db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).delete()
+    db.delete(chat)
+    db.commit()
