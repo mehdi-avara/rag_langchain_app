@@ -1,5 +1,6 @@
 import logging
 import time
+import json
 from logging.handlers import RotatingFileHandler
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -35,6 +36,14 @@ SENSITIVE_HEADERS = [
     "X-Secret",
 ]
 
+SENSITIVE_FIELDS = {
+    "password",
+    "pass",
+    "pwd",
+    "token",
+    "refresh_token",
+    "access_token",
+}
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("api_logger")
@@ -61,6 +70,35 @@ def setup_logger() -> logging.Logger:
 
 logger = setup_logger()
 
+
+def sanitize_body(body_bytes: b"", content_type: str) -> str:
+    try:
+        # JSON body
+        if "application/json" in content_type:
+            data = json.loads(body_bytes.decode("utf-8"))
+            if isinstance(data, dict):
+                for field in SENSITIVE_FIELDS:
+                    if field in data:
+                        data[field] = "***REDACTED***"
+            return json.dumps(data)
+
+        # Form-urlencoded body
+        if "application/x-www-form-urlencoded" in content_type:
+            body_str = body_bytes.decode("utf-8")
+            parts = body_str.split("&")
+            sanitized = []
+            for part in parts:
+                key, _, value = part.partition("=")
+                if key.lower() in SENSITIVE_FIELDS:
+                    sanitized.append(f"{key}=***REDACTED***")
+                else:
+                    sanitized.append(part)
+            return "&".join(sanitized)
+
+    except Exception:
+        pass
+
+    return "<unreadable or unsupported body>"
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -93,7 +131,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         if should_ignore_body:
             body_text = "<body skipped>"
         elif is_sensitive:
-            body_text = "<sensitive body redacted>"
+            body_text = sanitize_body(body_bytes, content_type)
         else:
             try:
                 body_text = body_bytes.decode("utf-8", errors="ignore")
@@ -126,7 +164,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         if should_ignore_body:
             response_text = "<body skipped>"
         elif is_sensitive:
-            response_text = "<sensitive response redacted>"
+            response_text = sanitize_body(response_body, content_type)
         else:
             response_text = response_text[:MAX_LOG_CHARS]
 
