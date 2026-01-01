@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from core.exceptions import chat_not_found_exception
 from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data
 from db.init_db import get_db
 from deps import get_current_user
@@ -25,7 +26,7 @@ def get_or_create_chat(
             .first()
         )
         if not chat:
-            raise HTTPException(status_code=404, detail="Chat not found")
+            raise chat_not_found_exception()
         return chat
 
     chat = Chat(name="New Chat", user_id=user.id)
@@ -198,7 +199,7 @@ async def update_chat_name(
 ):
     chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise chat_not_found_exception()
 
     chat.name = request.name
     db.commit()
@@ -220,7 +221,7 @@ async def delete_chat(
     )
 
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise chat_not_found_exception()
 
     # delete messages first
     db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).delete()
