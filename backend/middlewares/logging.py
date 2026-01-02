@@ -43,6 +43,7 @@ SENSITIVE_FIELDS = {
     "token",
     "refresh_token",
     "access_token",
+    "notification_token",
 }
 
 def setup_logger() -> logging.Logger:
