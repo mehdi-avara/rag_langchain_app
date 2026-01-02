@@ -13,7 +13,6 @@ from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
 from schemas.chat import ChatRequest,ChatResponse, Retrieved_data
 from settings import get_settings
 
-
 from routs import (
     auth_router,
     document_router,
@@ -31,6 +30,9 @@ app = FastAPI(title="Porsa Search system")
 
 # CORS middleware
 from fastapi.middleware.cors import CORSMiddleware
+from middlewares.logging import LoggingMiddleware
+
+app.add_middleware(LoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     
     base_url : str = "https://porsaapi.javidanparto.com"
     
+    # Logging
+    request_log_file: str = "logs/api.log"
+    request_log_max_chars: int = 1024
+    request_log_max_file_size: int = 10 * 1024 * 1024  # 10 MB
+    request_log_backup_count: int = 5
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
