@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     default_password: str
     default_firstname: str
 
-    cors_allow_origins: List[str] = []
+    cors_allow_origins: List[str] = ["https://porsa.javidanparto.com","http://localhost:5001"]
     
     # API Keys
     openai_api_key: str
