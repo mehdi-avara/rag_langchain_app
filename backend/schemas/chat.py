@@ -1,8 +1,9 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
     query: str
+    chat_id: Optional[int] = None
     doc_ids: List[int] | None = None
     rewrite_query: bool = False
     extract_keywords_with_llm: bool = False
@@ -24,3 +25,7 @@ class ChatResponse(BaseModel):
     answer: str
     citations: List[int]
     retrieved_chunks: List[Retrieved_data]
+    chat_id: int
+    
+class ChatUpdateNameRequest(BaseModel):
+    name: str
