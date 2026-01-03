@@ -29,3 +29,10 @@ class ChatResponse(BaseModel):
     
 class ChatUpdateNameRequest(BaseModel):
     name: str
+
+class ChatListItem(BaseModel):
+    chat_id: int
+    name: str
+
+class ChatListResponse(BaseModel):
+    chats: List[ChatListItem]

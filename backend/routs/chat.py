@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 
 from core.exceptions import chat_not_found_exception
-from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data
+from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem
 from db.init_db import get_db
 from deps import get_current_user
 from Models import Chat, ChatMessage, User, Document, DocumentStatusType, SystemTag
@@ -227,3 +228,26 @@ async def delete_chat(
     db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).delete()
     db.delete(chat)
     db.commit()
+    
+
+@router.get("/list", response_model=ChatListResponse)
+async def list_user_chats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    chats = (
+        db.query(Chat.id, Chat.name)
+        .filter(Chat.user_id == current_user.id)
+        .order_by(desc(Chat.id))  # newest first
+        .all()
+    )
+
+    return ChatListResponse(
+        chats=[
+            ChatListItem(
+                chat_id=chat.id,
+                name=chat.name
+                )
+            for chat in chats
+        ]
+    )
