@@ -16,15 +16,7 @@ class Settings(BaseSettings):
 
     cors_allow_origins: List[str] = ["https://porsa.javidanparto.com","http://localhost:5000"]
     
-    # API Keys
-    openai_api_key: str
-    openai_base_url: str = "http://10.0.0.10:11434/v1"
-    # openai_model: str =  "openai.gpt-oss-20b-1:0"
-    openai_model: str =  "gpt-oss-120b"
-    
-    #embedding_base_url: str
-    embedding_base_url: str = "http://10.0.0.10:8088/v1"
-    embedding_api_key: str = "None"
+
     
     # LLM Configuration
     llm_model: str = "gemma3:27b"  # Default model for answer generation
@@ -38,7 +30,6 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_exp_hours: int = 24
 
-    jina_api_key: str
     
     
     files_dir: str = "uploaded_files"
@@ -54,6 +45,21 @@ class Settings(BaseSettings):
     request_log_max_chars: int = 1024
     request_log_max_file_size: int = 10 * 1024 * 1024  # 10 MB
     request_log_backup_count: int = 5
+    
+    #services stt
+    STT_URL: str = "http://localhost:8010"
+    
+    # services Chat_model 
+    openai_api_key: str
+    openai_base_url: str = "http://10.0.0.10:11434/v1"
+    # openai_model: str =  "openai.gpt-oss-20b-1:0"
+    openai_model: str =  "gpt-oss-120b"
+    
+    #services embedding_model
+    embedding_base_url: str = "http://10.0.0.10:8088/v1"
+    embedding_api_key: str = "None"
+    jina_api_key: str
+    
     
     class Config:
         env_file = ".env"

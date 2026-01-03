@@ -21,6 +21,7 @@ from routs import (
     chat_ai_models_router,
     system_tag_router,
     chat_router,
+    stt_router
 )
 
 settings = get_settings()
@@ -52,6 +53,7 @@ app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 app.include_router(system_tag_router, prefix="/system_tags", tags=["system_tags"])
 app.include_router(chat_router, prefix="/chat", tags=["chat"])
+app.include_router(stt_router, prefix="/audio", tags=["Audio"])
 
 
 

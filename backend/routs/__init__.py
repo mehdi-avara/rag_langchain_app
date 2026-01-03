@@ -5,6 +5,7 @@ from .users import router as user_router
 from .chat_ai_models import router as chat_ai_models_router
 from .system_tag import router as system_tag_router
 from .chat import router as chat_router
+from .stt import router as stt_router
 
 __all__ = [
     "auth_router",
@@ -14,4 +15,5 @@ __all__ = [
     "chat_ai_models_router",
     "system_tag_router",
     "chat_router",
+    "stt_router"
 ]
