@@ -49,7 +49,28 @@ services:
       - redis
     volumes:
       - $files_dir:/app/uploaded_files
+
+  stt:
+    build:
+      context: ./services/stt
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    env_file: .env
+    environment:
+      WHISPER_MODEL: medium
+      WHISPER_LANGUAGE: fa
+      WHISPER_DEVICE: cuda
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - whisper_cache:/root/.cache/whisper
+    ports:
+      - "127.0.0.1:8010:8010"
+    
 volumes:
   # pg_data:
   redis_data:
+  whisper_cache:
   # chroma_data: 
