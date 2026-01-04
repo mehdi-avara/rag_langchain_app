@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from typing import List
 
 from core.exceptions import chat_not_found_exception
-from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem
+from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem, ChatHistoryResponse, ChatMessageItem
 from db.init_db import get_db
 from deps import get_current_user
 from Models import Chat, ChatMessage, User, Document, DocumentStatusType, SystemTag
@@ -250,4 +251,55 @@ async def list_user_chats(
                 )
             for chat in chats
         ]
+    )
+    
+    
+@router.get("/{chat_id}/history", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Ensure the chat belongs to the current user
+    chat = (
+        db.query(Chat)
+        .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
+        .first()
+    )
+    if not chat:
+        raise chat_not_found_exception()
+
+    # Load messages (oldest -> newest)
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.chat_id == chat.id)
+        .order_by(desc(ChatMessage.id))
+        .all()
+    )
+
+    def parse_retrieved_chunks(raw) -> List[Retrieved_data]:
+        """
+        raw is what you stored in DB:
+        - None
+        - list[dict] (from c.model_dump())
+        """
+        if not raw:
+            return []
+        # validate/convert dicts -> Retrieved_data
+        return [Retrieved_data.model_validate(item) for item in raw]
+
+    return ChatHistoryResponse(
+        chat_id=chat.id,
+        name=chat.name,
+        messages=[
+            ChatMessageItem(
+                id=m.id,
+                role=m.role.value if hasattr(m.role, "value") else str(m.role),
+                content=m.content,
+                citations=m.citations or [],
+                retrieved_chunks=parse_retrieved_chunks(m.retrieved_chunks),
+                created_at=m.created_at,
+            )
+            for m in messages
+        ],
     )

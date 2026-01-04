@@ -1,5 +1,7 @@
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
+
 
 class ChatRequest(BaseModel):
     query: str
@@ -36,3 +38,16 @@ class ChatListItem(BaseModel):
 
 class ChatListResponse(BaseModel):
     chats: List[ChatListItem]
+    
+class ChatMessageItem(BaseModel):
+    id: int
+    role: str  
+    content: str
+    citations: List[int] = []
+    retrieved_chunks: List[Retrieved_data] = []
+    created_at: datetime
+
+class ChatHistoryResponse(BaseModel):
+    chat_id: int
+    name: str
+    messages: List[ChatMessageItem]
