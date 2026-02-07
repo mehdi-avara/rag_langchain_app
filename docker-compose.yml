@@ -20,8 +20,9 @@ services:
       redis_url: redis://redis:6379/0
       request_log_file: /app/logs/api.log
       STT_URL: http://stt:8010
-    # depends_on:
-      # - postgres
+      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      - postgres
       # - elastic
       # - chroma
     ports:
@@ -69,9 +70,29 @@ services:
       - whisper_cache:/root/.cache/whisper
     ports:
       - "127.0.0.1:8010:8010"
-    
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres_pgvector
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Optional: change where PG stores data inside the container
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      # If you want it only locally accessible, keep 127.0.0.1
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+
+
+
 volumes:
   # pg_data:
   redis_data:
   whisper_cache:
+  pgvector_data:
   # chroma_data: 
