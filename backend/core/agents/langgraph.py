@@ -29,6 +29,8 @@ class GraphState(TypedDict):
     mode: str  # Can be "preview" or "full"
     db: Session  # SQLAlchemy session for database access
     doc_ids: List[int] | None
+    comment_ids: List[int] | None
+    scope: str | None
     
 
 async def retrieve_docs(state: GraphState) -> GraphState:
@@ -57,6 +59,17 @@ async def retrieve_docs(state: GraphState) -> GraphState:
         comments = retrieved_content["comments"]
         holder = await keyword_retriever.ainvoke(question)
         chunks += holder
+
+    comment_ids = state.get("comment_ids")
+    if comment_ids is not None:
+        allowed = set(comment_ids)
+        comments = [comment for comment in comments if comment.id in allowed]
+
+    scope = state.get("scope", "both")
+    if scope == "comments":
+        chunks = []
+    elif scope == "docs":
+        comments = []
         
     return {**state, "chunks": chunks , "comments": comments}
 
