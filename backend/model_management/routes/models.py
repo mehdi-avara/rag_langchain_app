@@ -17,7 +17,7 @@ from ..services import get_model_or_404, get_doc_ids, get_comment_ids, is_admin
 router = APIRouter()
 
 
-@router.post("", response_model=ModelOut, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=ModelOut, status_code=status.HTTP_201_CREATED)
 def create_model(
     payload: ModelCreate,
     db: Session = Depends(get_db),
@@ -59,7 +59,7 @@ def create_model(
     )
 
 
-@router.get("", response_model=List[ModelListOut])
+@router.get("/", response_model=List[ModelListOut])
 def list_models(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
