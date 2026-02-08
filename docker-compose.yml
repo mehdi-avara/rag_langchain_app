@@ -47,8 +47,11 @@ services:
       redis_url: redis://redis:6379/0
       mineru_running_address: mineru
       NVIDIA_VISIBLE_DEVICES: all
+      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
     depends_on:
       - redis
+      - postgres
     volumes:
       - $files_dir:/app/uploaded_files
 
