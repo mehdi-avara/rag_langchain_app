@@ -8,6 +8,7 @@ from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
 from .SystemTag import SystemTag
 from model_management.models import ManagedModel, ModelDocumentLink, ModelCommentLink
+from tag_management.models import TagModelLink
 __all__ = [
     "User",
     "Document",
@@ -23,5 +24,6 @@ __all__ = [
     "ChatMessage",
     "ManagedModel",
     "ModelDocumentLink",
-    "ModelCommentLink"
+    "ModelCommentLink",
+    "TagModelLink"
 ]
