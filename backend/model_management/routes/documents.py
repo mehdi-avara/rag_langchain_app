@@ -1,0 +1,133 @@
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from db.init_db import get_db
+from deps import get_current_user
+from Models import User, Document
+
+from ..models import ModelDocumentLink
+from ..schemas import ModelDocLinkCreate, ModelDocLinkOut, ModelDocumentOut
+from ..services import get_model_or_404, is_admin
+
+
+router = APIRouter()
+
+
+@router.post("/{model_id}/documents", response_model=ModelDocLinkOut)
+def link_document(
+    model_id: int,
+    payload: ModelDocLinkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    model = get_model_or_404(db, model_id, current_user)
+
+    doc = db.query(Document).filter(Document.id == payload.document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not is_admin(current_user) and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to link this document")
+
+    link = (
+        db.query(ModelDocumentLink)
+        .filter(
+            ModelDocumentLink.model_id == model.id,
+            ModelDocumentLink.document_id == doc.id,
+        )
+        .first()
+    )
+    if link:
+        return link
+
+    link = ModelDocumentLink(
+        model_id=model.id,
+        document_id=doc.id,
+        linked_by_user_id=current_user.id,
+        note=payload.note,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
+@router.delete("/{model_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unlink_document(
+    model_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = get_model_or_404(db, model_id, current_user)
+
+    link = (
+        db.query(ModelDocumentLink)
+        .filter(
+            ModelDocumentLink.model_id == model_id,
+            ModelDocumentLink.document_id == document_id,
+        )
+        .first()
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    db.delete(link)
+    db.commit()
+    return None
+
+
+@router.get("/{model_id}/documents", response_model=List[ModelDocumentOut])
+def list_linked_documents(
+    model_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    search: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    # system_tag_id: Optional[int] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    _ = get_model_or_404(db, model_id, current_user)
+
+    query = (
+        db.query(Document, ModelDocumentLink)
+        .join(ModelDocumentLink, ModelDocumentLink.document_id == Document.id)
+        .filter(ModelDocumentLink.model_id == model_id)
+    )
+
+    if search:
+        query = query.filter(Document.filename.ilike(f"%{search}%"))
+    if status_filter:
+        query = query.filter(Document.status == status_filter)
+    # if system_tag_id:
+    #     query = query.filter(Document.system_tag_id == system_tag_id)
+
+    rows = (
+        query
+        .order_by(ModelDocumentLink.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    results: List[ModelDocumentOut] = []
+    for doc, link in rows:
+        results.append(
+            ModelDocumentOut(
+                id=doc.id,
+                filename=doc.filename,
+                # system_tag_id=doc.system_tag_id,
+                n_pages=doc.n_pages,
+                n_chunks=doc.n_chunks,
+                created_at=doc.created_at,
+                status=doc.status,
+                abstract=doc.abstract,
+                file_path=doc.file_path,
+                note=link.note,
+                linked_at=link.created_at,
+            )
+        )
+
+    return results

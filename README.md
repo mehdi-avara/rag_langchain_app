@@ -57,6 +57,15 @@ pytest tests/
 
 The application is containerized using Docker. Use the provided `docker-compose.yml` to deploy the services.
 
+## API Conventions (Model Management)
+
+Model management routes are grouped by purpose under `backend/model_management/routes/` and share a single naming convention:
+
+- Base resource uses plural nouns: `/models`
+- Nested resources use plural nouns: `/models/{model_id}/documents`, `/models/{model_id}/comments`
+- Actions use verbs only when they represent non-CRUD behavior: `/models/{model_id}/ask`
+- HTTP verbs map to standard CRUD semantics (`POST` create/link, `GET` list/read, `PATCH` update, `DELETE` unlink/delete)
+
 
 A problem here is one thing that when I add a text it is ok but htere is a problem in adding to the chunks for semantic search
 I should search and get this problem
