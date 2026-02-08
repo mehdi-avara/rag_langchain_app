@@ -27,7 +27,7 @@ from .schemas import (
 )
 
 
-router = APIRouter(prefix="/models", tags=["models"])
+router = APIRouter( tags=["models"])
 
 
 def _is_admin(user: User) -> bool:
@@ -301,7 +301,7 @@ def list_linked_documents(
     current_user: User = Depends(get_current_user),
     search: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
-    system_tag_id: Optional[int] = Query(None),
+    # system_tag_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -317,8 +317,8 @@ def list_linked_documents(
         query = query.filter(Document.filename.ilike(f"%{search}%"))
     if status_filter:
         query = query.filter(Document.status == status_filter)
-    if system_tag_id:
-        query = query.filter(Document.system_tag_id == system_tag_id)
+    # if system_tag_id:
+    #     query = query.filter(Document.system_tag_id == system_tag_id)
 
     rows = (
         query
@@ -334,7 +334,7 @@ def list_linked_documents(
             ModelDocumentOut(
                 id=doc.id,
                 filename=doc.filename,
-                system_tag_id=doc.system_tag_id,
+                # system_tag_id=doc.system_tag_id,
                 n_pages=doc.n_pages,
                 n_chunks=doc.n_chunks,
                 created_at=doc.created_at,
@@ -419,7 +419,7 @@ def list_linked_comments(
     current_user: User = Depends(get_current_user),
     search: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
-    system_tag_id: Optional[int] = Query(None),
+    # system_tag_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -440,8 +440,8 @@ def list_linked_comments(
         )
     if type:
         query = query.filter(Comment.type == type)
-    if system_tag_id:
-        query = query.filter(Comment.system_tag_id == system_tag_id)
+    # if system_tag_id:
+    #     query = query.filter(Comment.system_tag_id == system_tag_id)
 
     rows = (
         query
@@ -457,7 +457,7 @@ def list_linked_comments(
             ModelCommentOut(
                 id=comment.id,
                 user_id=comment.user_id,
-                system_tag_id=comment.system_tag_id,
+                # system_tag_id=comment.system_tag_id,
                 title=comment.title,
                 doc_id=comment.doc_id,
                 chunk_id=comment.chunk_id,
