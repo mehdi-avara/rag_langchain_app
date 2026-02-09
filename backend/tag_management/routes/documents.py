@@ -14,7 +14,7 @@ from ..services import get_tag_or_404
 router = APIRouter()
 
 
-@router.get("/system_tags/{tag_id}/documents", response_model=List[TagDocumentOut], status_code=status.HTTP_200_OK)
+@router.get("/{tag_id}/documents", response_model=List[TagDocumentOut], status_code=status.HTTP_200_OK)
 async def list_tag_documents(
     tag_id: int,
     current_user: User = Depends(get_current_user),

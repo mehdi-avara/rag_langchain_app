@@ -18,7 +18,7 @@ from ..services import get_tag_or_404, is_admin
 router = APIRouter()
 
 
-@router.post("/system_tags/{tag_id}/models", response_model=TagModelLinkOut)
+@router.post("/{tag_id}/models", response_model=TagModelLinkOut)
 def link_model(
     tag_id: int,
     payload: TagModelLinkCreate,
@@ -56,7 +56,7 @@ def link_model(
     return link
 
 
-@router.delete("/system_tags/{tag_id}/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{tag_id}/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
 def unlink_model(
     tag_id: int,
     model_id: int,
@@ -81,7 +81,7 @@ def unlink_model(
     return None
 
 
-@router.get("/system_tags/{tag_id}/models", response_model=List[TagModelOut])
+@router.get("/{tag_id}/models", response_model=List[TagModelOut])
 def list_tag_models(
     tag_id: int,
     db: Session = Depends(get_db),
