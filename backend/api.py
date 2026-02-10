@@ -62,7 +62,6 @@ app.include_router(tag_router, tags=["system_tags"])
 @app.post("/upload")
 def upload_pdf_mineru(
     file: UploadFile,
-    system_tag_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -77,7 +76,6 @@ def upload_pdf_mineru(
         n_pages=0,
         n_chunks=0,
         file_path=None,
-        system_tag_id=system_tag_id,
         status=DocumentStatusType.QUEUED
     )
     db.add(doc)

@@ -63,24 +63,24 @@ async def delete_document(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/summary/{doc_id}")
-async def get_summary(
-    doc_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    doc = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.owner_id == current_user.id
-    ).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+# @router.get("/summary/{doc_id}")
+# async def get_summary(
+#     doc_id: int,
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db)
+# ):
+#     doc = db.query(Document).filter(
+#         Document.id == doc_id,
+#         Document.owner_id == current_user.id
+#     ).first()
+#     if not doc:
+#         raise HTTPException(status_code=404, detail="Document not found")
     
-    if not doc.abstract:
-        doc.abstract = await summarise_document(doc_id, db)
-        db.commit()
+#     if not doc.abstract:
+#         doc.abstract = await summarise_document(doc_id, db)
+#         db.commit()
     
-    return {"abstract": doc.abstract}
+#     return {"abstract": doc.abstract}
 
 @router.get("/{doc_id}/chunks", response_model=List[ChunkOut])
 async def browse_chunks(
