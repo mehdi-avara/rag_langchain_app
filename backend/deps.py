@@ -2,8 +2,6 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from jose.exceptions import ExpiredSignatureError
-from datetime import datetime, timedelta
-from typing import Optional
 from sqlalchemy.orm import Session
 
 from Models import User
@@ -13,15 +11,6 @@ from settings import get_settings
 settings = get_settings()
 security = HTTPBearer()
 
-def create_access_token(user_id: int) -> str:
-    expire = datetime.utcnow() + timedelta(hours=settings.jwt_exp_hours)
-    to_encode = {"sub": str(user_id), "exp": expire, "type": "access"}
-    return jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
-
-def create_refresh_token(user_id: int) -> str:
-    expire = datetime.utcnow() + timedelta(days=1)
-    to_encode = {"sub": str(user_id), "exp": expire, "type": "refresh"}
-    return jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),

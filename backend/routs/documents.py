@@ -1,21 +1,60 @@
 from typing import List, Optional
-from fastapi import Depends, APIRouter, status, Response , HTTPException, Query, Request, Header
+from fastapi import Depends, APIRouter, UploadFile, status, Response , HTTPException, Query, Request, Header
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
+import os
 
-
-from Models import User,Document,Chunk
-from db.init_db import get_db
-from core.summarise import summarise_document
-from schemas.document import DocumentOut,ChunkOut
 from deps import get_current_user
+from Models import User,Document,Chunk,DocumentStatusType
+from db.init_db import get_db
+from schemas.document import DocumentOut,ChunkOut
 from settings import get_settings
+
+from core.celery.tasks import mineru_process_pdf
 
 settings = get_settings()
 
 
 router = APIRouter()
+
+
+@router.post("/upload")
+def upload_pdf_mineru(
+    file: UploadFile,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    file_bytes = file.file.read()
+
+    if not file_bytes.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    doc = Document(
+        owner_id=current_user.id,
+        filename=file.filename,
+        n_pages=0,
+        n_chunks=0,
+        file_path=None,
+        status=DocumentStatusType.QUEUED
+    )
+    db.add(doc)
+    db.commit()
+    
+    temp_path = os.path.join(settings.files_dir, f"{doc.id}")
+    os.makedirs(temp_path, exist_ok=True)
+    orginal_pdf = os.path.join(temp_path, f"original.pdf")
+    
+    with open(orginal_pdf, "wb") as f:
+        f.write(file_bytes)
+    
+    mineru_process_pdf.delay(
+        pdf_path=os.path.join(f"{doc.id}","original.pdf"),
+        doc_id=doc.id    
+        )
+
+    return {"doc_id": doc.id, "status": DocumentStatusType.QUEUED.value}
+
 @router.get("", response_model=List[DocumentOut])
 async def list_documents(
     current_user: User = Depends(get_current_user),

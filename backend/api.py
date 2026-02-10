@@ -1,29 +1,17 @@
-from typing import List
-from fastapi import FastAPI, Depends, HTTPException, UploadFile,Form
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-import os
 
-from Models import User, Document, DocumentStatusType, SystemTag
-
-from db.init_db import get_db
-from deps import get_current_user
-from core.celery.tasks import mineru_process_pdf
-from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
-from schemas.chat import ChatRequest,ChatResponse, Retrieved_data
 from settings import get_settings
 
-from routs import (
-    auth_router,
-    document_router,
-    comment_router,
-    user_router,
-    chat_ai_models_router,
-    chat_router,
-    stt_router,
-    model_router,
-    tag_router
-)
+from routs.auth import router as auth_router
+from routs.documents import router as document_router
+from routs.comments import comment_router
+from routs.users import router as user_router
+from routs.chat_ai_models import router as chat_ai_models_router
+from routs.chat import router as chat_router
+from routs.stt import router as stt_router
+from model_management.routes import model_router
+from tag_management.routes import tag_router
 
 settings = get_settings()
 
@@ -58,39 +46,3 @@ app.include_router(model_router, tags=["models"])
 app.include_router(tag_router, tags=["system_tags"])
 
 
-
-@app.post("/upload")
-def upload_pdf_mineru(
-    file: UploadFile,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    file_bytes = file.file.read()
-
-    if not file_bytes.startswith(b"%PDF"):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    doc = Document(
-        owner_id=current_user.id,
-        filename=file.filename,
-        n_pages=0,
-        n_chunks=0,
-        file_path=None,
-        status=DocumentStatusType.QUEUED
-    )
-    db.add(doc)
-    db.commit()
-    
-    temp_path = os.path.join(settings.files_dir, f"{doc.id}")
-    os.makedirs(temp_path, exist_ok=True)
-    orginal_pdf = os.path.join(temp_path, f"original.pdf")
-    
-    with open(orginal_pdf, "wb") as f:
-        f.write(file_bytes)
-    
-    mineru_process_pdf.delay(
-        pdf_path=os.path.join(f"{doc.id}","original.pdf"),
-        doc_id=doc.id    
-        )
-
-    return {"doc_id": doc.id, "status": DocumentStatusType.QUEUED.value}

@@ -2,12 +2,24 @@ from schemas.auth import LoginRequest, LoginResponse, RefreshRequest, RefreshRes
 from fastapi import APIRouter
 from passlib.hash import bcrypt  
 from sqlalchemy.orm import Session
-from deps import create_access_token, create_refresh_token
 from fastapi import Depends, HTTPException, status
+from datetime import datetime, timedelta
+
 from db.init_db import get_db
 from Models import User
 from jose import JWTError, jwt
 from settings import get_settings
+
+def create_access_token(user_id: int) -> str:
+    expire = datetime.utcnow() + timedelta(hours=settings.jwt_exp_hours)
+    to_encode = {"sub": str(user_id), "exp": expire, "type": "access"}
+    return jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
+
+def create_refresh_token(user_id: int) -> str:
+    expire = datetime.utcnow() + timedelta(days=1)
+    to_encode = {"sub": str(user_id), "exp": expire, "type": "refresh"}
+    return jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
+
 
 router = APIRouter()
 settings = get_settings()
