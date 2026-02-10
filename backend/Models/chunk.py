@@ -23,6 +23,4 @@ class Chunk(Base):
     embedding = Column(Vector(1024), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    document = relationship("Document", back_populates="chunks")
     image_data = relationship("ImageChunk", back_populates="chunk", cascade="all, delete-orphan")
-    comments = relationship("Comment", back_populates="chunk", passive_deletes=True)

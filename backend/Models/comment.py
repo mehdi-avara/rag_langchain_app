@@ -26,26 +26,6 @@ class Comment(Base):
         index=True,
     )
 
-    system_tag_id = Column(
-        Integer,
-        ForeignKey("system_tags.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-    doc_id = Column(
-        Integer,
-        ForeignKey("documents.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
-    chunk_id = Column(
-        Integer,
-        ForeignKey("chunks.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     
     title = Column(String, nullable=False)
     content = Column(Text, nullable=False)
@@ -60,9 +40,6 @@ class Comment(Base):
 
     # ------------ RELATIONSHIPS ------------
     user = relationship("User", back_populates="comments")
-    system_tag = relationship("SystemTag", back_populates="comments")
-    document = relationship("Document", back_populates="comments")
-    chunk = relationship("Chunk", back_populates="comments")
     files = relationship(
         "CommentFile",
         back_populates="comment",

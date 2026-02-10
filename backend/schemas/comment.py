@@ -7,9 +7,6 @@ from Models import CommentType
 
 
 class CommentBase(BaseModel):
-    system_tag_id: int
-    doc_id: Optional[int] = None
-    chunk_id: Optional[int] = None
     type: CommentType = CommentType.COMMENT
     content: str
     title: str = "unknown"
@@ -51,7 +48,6 @@ class CommentFileName(BaseModel):
 class CommentOut(BaseModel):
     id: int
     user_id: int
-    system_tag_id: int
     title: str
     doc_id: Optional[int] = None
     chunk_id: Optional[int] = None

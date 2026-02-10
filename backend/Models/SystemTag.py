@@ -30,15 +30,3 @@ class SystemTag(Base):
         cascade="all, delete-orphan",
         single_parent=True, 
     )
-    
-    documents = relationship(
-    "Document",
-    back_populates="system_tag",
-    passive_deletes=True,
-    )
-    
-    comments = relationship(
-        "Comment",
-        back_populates="system_tag",
-        cascade="all, delete-orphan",
-    )

@@ -1,14 +1,23 @@
 from pydantic_settings import BaseSettings
 from typing import Optional, List
 from functools import lru_cache
-
+from pydantic import computed_field
 
 class Settings(BaseSettings):
 
 
     # Database URLs
-    postgres_url: str
-
+    
+    POSTGRES_DB: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_IP: str
+    
+    @computed_field
+    @property
+    def postgres_url(self) -> str:
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_IP}:5432/{self.POSTGRES_DB}"
+    
     # Default user
     default_username: str
     default_password: str

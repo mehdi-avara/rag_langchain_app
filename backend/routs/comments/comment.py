@@ -48,51 +48,6 @@ def get_comment_by_id(
     return comment
 
 
-@router.get("/by-doc/{doc_id}", response_model=List[CommentOut])
-def get_comments_by_doc(
-    doc_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return all comments for a specific document."""
-    comments = (
-        db.query(Comment)
-        .filter(Comment.doc_id == doc_id)
-        .order_by(Comment.created_at.desc())
-        .all()
-    )
-    return comments
-
-@router.get("/by-tag/{tag_id}", response_model=List[CommentOut])
-def get_comments_by_tag(
-    tag_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return all comments for a specific document."""
-    comments = (
-        db.query(Comment)
-        .filter(Comment.system_tag_id == tag_id)
-        .order_by(Comment.created_at.desc())
-        .all()
-    )
-    return comments
-
-
-@router.get("/by-chunk/{chunk_id}", response_model=List[CommentOut])
-def get_comments_by_chunk(
-    chunk_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return all comments for a specific chunk."""
-    comments = (
-        db.query(Comment)
-        .filter(Comment.chunk_id == chunk_id)
-        .order_by(Comment.created_at.desc())
-        .all()
-    )
-    return comments
 
 
 @router.post("", response_model=CommentOut, status_code=status.HTTP_201_CREATED)
@@ -113,10 +68,7 @@ async def create_comment(
 
     new_comment = Comment(
         user_id=current_user.id,
-        system_tag_id=payload.system_tag_id,
-        doc_id=payload.doc_id,
         title=payload.title,
-        chunk_id=payload.chunk_id,
         content=payload.content,
         type=payload.type,
         embedding=embedding_vec
