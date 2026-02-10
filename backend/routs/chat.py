@@ -71,38 +71,21 @@ def build_retrieved_data(
     citations: list[int] = []
 
     doc_ids = {c.doc_id for c in chunks}
-    doc_ids |= {c.doc_id for c in comments if c.doc_id is not None}
 
     docs = (
-        db.query(Document.id, Document.filename, Document.system_tag_id)
+        db.query(Document.id, Document.filename)
         .filter(Document.id.in_(doc_ids))
         .all()
         if doc_ids else []
     )
 
     doc_name_map = {d.id: d.filename for d in docs}
-    doc_tag_map = {d.id: d.system_tag_id for d in docs}
-
-    tag_ids = {d.system_tag_id for d in docs}
-    tag_ids |= {c.system_tag_id for c in comments}
-
-    tags = (
-        db.query(SystemTag.id, SystemTag.tag_name)
-        .filter(SystemTag.id.in_(tag_ids))
-        .all()
-        if tag_ids else []
-    )
-
-    tag_name_map = {t.id: t.tag_name for t in tags}
 
     for chunk in chunks:
-        tag_id = doc_tag_map[chunk.doc_id]
         retrieved_data.append(
             Retrieved_data(
                 content=chunk.content,
                 doc_id=chunk.doc_id,
-                tag_id=tag_id,
-                tag_name=tag_name_map[tag_id],
                 doc_name=doc_name_map[chunk.doc_id],
                 title=doc_name_map[chunk.doc_id],
                 chunk_id=chunk.id,
@@ -117,12 +100,10 @@ def build_retrieved_data(
         retrieved_data.append(
             Retrieved_data(
                 content=comment.content,
-                doc_id=comment.doc_id,
-                tag_id=comment.system_tag_id,
-                tag_name=tag_name_map[comment.system_tag_id],
-                doc_name=doc_name_map.get(comment.doc_id, ""),
+                doc_id=None,
+                doc_name= "",
                 title=comment.title,
-                chunk_id=comment.chunk_id,
+                chunk_id=None,
                 chunk_page=None,
                 comment_id=comment.id,
                 comment_type=comment.type,
