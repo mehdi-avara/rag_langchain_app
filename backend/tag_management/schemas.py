@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 from Models import CommentType
 
 
@@ -95,13 +95,15 @@ class TagDocLinkCreate(BaseModel):
     end_page: Optional[int] = Field(None, ge=1)
     note: Optional[str] = None
 
-    @root_validator
-    def validate_page_range(cls, values):
-        start_page = values.get("start_page")
-        end_page = values.get("end_page")
-        if start_page is not None and end_page is not None and start_page > end_page:
+    @model_validator(mode="after")
+    def validate_page_range(self):
+        if (
+            self.start_page is not None
+            and self.end_page is not None
+            and self.start_page > self.end_page
+        ):
             raise ValueError("start_page must be less than or equal to end_page")
-        return values
+        return self
 
 
 class TagDocLinkOut(BaseModel):
