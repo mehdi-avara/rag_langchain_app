@@ -140,8 +140,6 @@ class TagCommentOut(BaseModel):
     user_id: int
     system_tag_id: int
     title: str
-    doc_id: Optional[int] = None
-    chunk_id: Optional[int] = None
     type: CommentType
     content: str
     created_at: datetime
