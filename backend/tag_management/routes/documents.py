@@ -122,7 +122,7 @@ def list_tag_documents(
             TagDocumentOut(
                 id=doc.id,
                 filename=doc.filename,
-                system_tag_id=tag_id,
+                system_tag_id=doc.system_tag_id,
                 n_pages=doc.n_pages,
                 n_chunks=doc.n_chunks,
                 created_at=doc.created_at,

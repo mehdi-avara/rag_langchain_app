@@ -127,7 +127,7 @@ def list_tag_comments(
             TagCommentOut(
                 id=comment.id,
                 user_id=comment.user_id,
-                system_tag_id=tag_id,
+                system_tag_id=comment.system_tag_id,
                 title=comment.title,
                 type=comment.type,
                 content=comment.content,

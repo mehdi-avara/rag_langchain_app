@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 
 from db.init_db import get_db
 from deps import get_current_user
-from Models import User, SystemTag, Document
+from Models import User, Document
+
+from ..system_tag import SystemTag
 
 from ..schemas import TagOut, TagCreate, TagUpdate
 from ..services import get_tag_or_404, validate_parent_tag, check_no_cycle

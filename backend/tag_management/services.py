@@ -1,7 +1,9 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from Models import User, SystemTag
+from Models import User
+
+from .system_tag import SystemTag
 
 
 def is_admin(user: User) -> bool:
