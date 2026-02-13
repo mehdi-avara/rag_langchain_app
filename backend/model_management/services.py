@@ -38,3 +38,27 @@ def get_comment_ids(db: Session, model_id: int) -> List[int]:
         .all()
     )
     return [row[0] for row in rows]
+
+
+def get_doc_ids_for_models(db: Session, model_ids: List[int]) -> List[int]:
+    if not model_ids:
+        return []
+
+    rows = (
+        db.query(ModelDocumentLink.document_id)
+        .filter(ModelDocumentLink.model_id.in_(model_ids))
+        .all()
+    )
+    return list({row[0] for row in rows})
+
+
+def get_comment_ids_for_models(db: Session, model_ids: List[int]) -> List[int]:
+    if not model_ids:
+        return []
+
+    rows = (
+        db.query(ModelCommentLink.comment_id)
+        .filter(ModelCommentLink.model_id.in_(model_ids))
+        .all()
+    )
+    return list({row[0] for row in rows})

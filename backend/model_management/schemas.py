@@ -113,6 +113,10 @@ class ModelAskRequest(BaseModel):
     scope: Literal["docs", "comments", "both"] = "both"
 
 
+class ModelAskMultiRequest(ModelAskRequest):
+    model_ids: List[int] = Field(min_length=1)
+
+
 class ModelAskResponse(BaseModel):
     answer: str
     citations: List[int] = Field(default_factory=list)

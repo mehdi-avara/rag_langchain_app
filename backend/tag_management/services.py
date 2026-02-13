@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from Models import User
 
 from .system_tag import SystemTag
+from .models import TagDocumentLink, TagCommentLink
 
 
 def is_admin(user: User) -> bool:
@@ -60,3 +61,45 @@ def check_no_cycle(db: Session, tag: SystemTag, new_parent_id: int | None, user_
             .filter(SystemTag.id == current.father_tag_id, SystemTag.owner_id == user_id)
             .first()
         )
+
+
+def get_doc_ids(db: Session, tag_id: int) -> list[int]:
+    rows = (
+        db.query(TagDocumentLink.document_id)
+        .filter(TagDocumentLink.tag_id == tag_id)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+def get_comment_ids(db: Session, tag_id: int) -> list[int]:
+    rows = (
+        db.query(TagCommentLink.comment_id)
+        .filter(TagCommentLink.tag_id == tag_id)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+def get_doc_ids_for_tags(db: Session, tag_ids: list[int]) -> list[int]:
+    if not tag_ids:
+        return []
+
+    rows = (
+        db.query(TagDocumentLink.document_id)
+        .filter(TagDocumentLink.tag_id.in_(tag_ids))
+        .all()
+    )
+    return list({row[0] for row in rows})
+
+
+def get_comment_ids_for_tags(db: Session, tag_ids: list[int]) -> list[int]:
+    if not tag_ids:
+        return []
+
+    rows = (
+        db.query(TagCommentLink.comment_id)
+        .filter(TagCommentLink.tag_id.in_(tag_ids))
+        .all()
+    )
+    return list({row[0] for row in rows})

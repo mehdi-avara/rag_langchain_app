@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field, model_validator
 from Models import CommentType
@@ -148,3 +148,21 @@ class TagCommentOut(BaseModel):
 
 
 TagTreeOut.update_forward_refs()
+
+
+class TagAskRequest(BaseModel):
+    question: str
+    mode: Literal["keyword", "vector", "hybrid"]
+    route: str = "full"
+    scope: Literal["docs", "comments", "both"] = "both"
+
+
+class TagAskMultiRequest(TagAskRequest):
+    tag_ids: List[int] = Field(min_length=1)
+
+
+class TagAskResponse(BaseModel):
+    answer: str
+    citations: List[int] = Field(default_factory=list)
+    used_chunk_ids: List[int] = Field(default_factory=list)
+    used_comment_ids: List[int] = Field(default_factory=list)
