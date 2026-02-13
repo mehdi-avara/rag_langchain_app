@@ -7,7 +7,7 @@ from core.exceptions import chat_not_found_exception
 from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem, ChatHistoryResponse, ChatMessageItem
 from db.init_db import get_db
 from deps import get_current_user
-from Models import Chat, ChatMessage, User, Document, DocumentStatusType, SystemTag
+from Models import Chat, ChatMessage, User, Document, DocumentStatusType
 from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
 from Models.chat import ChatRole
 from settings import get_settings

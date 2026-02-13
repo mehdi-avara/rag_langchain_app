@@ -6,7 +6,6 @@ from .comment_file import CommentFile
 from .chat import Chat, ChatMessage
 from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
-from .SystemTag import SystemTag
 from model_management.models import ManagedModel, ModelDocumentLink, ModelCommentLink
 from tag_management.models import TagModelLink, TagDocumentLink, TagCommentLink
 
@@ -18,7 +17,6 @@ __all__ = [
     "CommentFile",
     "ImageChunk",
     "ChatAIModels",
-    "SystemTag",
     "CommentType",
     "DocumentStatusType",
     "Chat",
