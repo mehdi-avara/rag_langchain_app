@@ -30,15 +30,16 @@ async def ask_model(
     elif payload.scope == "comments":
         doc_ids = None
 
-    state: GraphState = {
-        "question": payload.question,
-        "route": payload.route,
-        "db": db,
-        "mode": payload.mode,
-        "doc_ids": doc_ids,
-        "comment_ids": comment_ids,
-        "scope": payload.scope,
-    }
+    state = GraphState(
+        question=payload.question,
+        route=payload.route,
+        db=db,
+        mode=payload.mode,
+        doc_ids=doc_ids,
+        comment_ids=comment_ids,
+        scope=payload.scope
+    )
+
 
     graph = build_answer_graph()
     result = await graph.ainvoke(state)
