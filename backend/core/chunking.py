@@ -1,10 +1,11 @@
 from enum import Enum
-from typing import List
+from typing import List, Dict
 import re
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from typing import List
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tiktoken
+from components.stand_alone_functions.page_find_logic.mineru_main_file_creator import (
+    build_dual_mode_chunks_from_pdf_info,
+)
 
 
 
@@ -52,13 +53,29 @@ def chunk_by_tokens(text: str, max_tokens: int = 800, overlap: int = 100, ) -> L
     )
     return splitter.split_text(text)
 
-def chunk_text(text: str, mode: ChunkingMode) -> List[str]:
-    """Main chunking function that routes to appropriate strategy."""
-    if mode == ChunkingMode.sentence_3:
-        return chunk_by_sentences(text, group_size=4)
-    elif mode == ChunkingMode.paragraph:
-        return chunk_by_paragraph(text)
-    elif mode == ChunkingMode.token_fixed:
-        return chunk_by_tokens(text, max_tokens=800)
-    else:
-        raise ValueError(f"Unknown chunking mode: {mode}") 
+def chunk_text(
+    pdf_info: list,
+    doc_id: int,
+    base_url: str,
+    max_tokens: int = 800,
+    overlap_tokens: int = 150,
+    min_chunk_tokens: int = 20,
+    mode: ChunkingMode = ChunkingMode.token_fixed
+) -> List[Dict]:
+    """
+    Build chunks from MinerU middle json (`pdf_info`) and return dicts with:
+      chunk_text, chunk_embedding_text, start_page, end_page, token_count
+    """
+    # We keep this API mode-aware for compatibility, but use one robust strategy.
+    if mode not in {ChunkingMode.sentence_3, ChunkingMode.paragraph, ChunkingMode.token_fixed}:
+        raise ValueError(f"Unknown chunking mode: {mode}")
+
+    chunks, _ = build_dual_mode_chunks_from_pdf_info(
+        pdf_info_dict=pdf_info,
+        doc_id=doc_id,
+        base_url=base_url,
+        max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
+        min_chunk_tokens=min_chunk_tokens,
+    )
+    return chunks
