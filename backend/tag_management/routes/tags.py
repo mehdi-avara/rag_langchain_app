@@ -4,13 +4,26 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
+from db.search_connector import (
+    search_documents_text,
+    search_documents_semantic,
+    search_comments_text,
+    search_comments_semantic,
+)
 from deps import get_current_user
 from Models import User, Document
+from schemas.search import TextSearchRequest, SemanticSearchRequest
 
 from ..system_tag import SystemTag
 
 from ..schemas import TagOut, TagCreate, TagUpdate
-from ..services import get_tag_or_404, validate_parent_tag, check_no_cycle
+from ..services import (
+    get_tag_or_404,
+    validate_parent_tag,
+    check_no_cycle,
+    get_doc_ids,
+    get_comment_ids,
+)
 
 
 router = APIRouter()
@@ -37,6 +50,64 @@ async def get_tag(
 ):
     tag = get_tag_or_404(db, tag_id, current_user.id)
     return tag
+
+
+@router.post("/{tag_id}/filter", status_code=status.HTTP_200_OK)
+async def filter_tag_content(
+    tag_id: int,
+    payload: TextSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ = get_tag_or_404(db, tag_id, current_user.id)
+    doc_ids = get_doc_ids(db, tag_id)
+    comment_ids = get_comment_ids(db, tag_id)
+
+    return {
+        "documents": search_documents_text(
+            db=db,
+            query_text=payload.query,
+            owner_id=current_user.id,
+            doc_ids=doc_ids,
+            limit=payload.limit,
+        ),
+        "comments": search_comments_text(
+            db=db,
+            query_text=payload.query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            limit=payload.limit,
+        ),
+    }
+
+
+@router.post("/{tag_id}/semantic-search", status_code=status.HTTP_200_OK)
+async def semantic_search_tag_content(
+    tag_id: int,
+    payload: SemanticSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ = get_tag_or_404(db, tag_id, current_user.id)
+    doc_ids = get_doc_ids(db, tag_id)
+    comment_ids = get_comment_ids(db, tag_id)
+
+    return {
+        "documents": search_documents_semantic(
+            db=db,
+            query_text=payload.query,
+            owner_id=current_user.id,
+            doc_ids=doc_ids,
+            limit=payload.limit,
+        ),
+        "comments": search_comments_semantic(
+            db=db,
+            query_text=payload.query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            limit=payload.limit,
+        ),
+    }
 
 
 @router.post("/", response_model=TagOut, status_code=status.HTTP_201_CREATED)

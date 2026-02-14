@@ -8,7 +8,9 @@ import os
 from deps import get_current_user
 from Models import User,Document,Chunk,DocumentStatusType
 from db.init_db import get_db
+from db.search_connector import search_documents_text, search_documents_semantic
 from schemas.document import DocumentOut,ChunkOut
+from schemas.search import TextSearchRequest, SemanticSearchRequest
 from settings import get_settings
 
 from core.celery.tasks import mineru_process_pdf
@@ -68,6 +70,35 @@ async def list_documents(
 )
 
 
+@router.post("/filter", response_model=List[DocumentOut], status_code=status.HTTP_200_OK)
+async def filter_documents(
+    payload: TextSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return search_documents_text(
+        db=db,
+        query_text=payload.query,
+        owner_id=current_user.id,
+        doc_ids=payload.ids or None,
+        limit=payload.limit,
+    )
+
+
+@router.post("/semantic-search", response_model=List[DocumentOut], status_code=status.HTTP_200_OK)
+async def semantic_search_documents(
+    payload: SemanticSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return search_documents_semantic(
+        db=db,
+        query_text=payload.query,
+        owner_id=current_user.id,
+        doc_ids=payload.ids or None,
+        limit=payload.limit,
+    )
+
 
 @router.get("/{doc_id}", status_code=status.HTTP_200_OK, response_model=DocumentOut)
 async def get_document(
@@ -124,7 +155,8 @@ async def delete_document(
 @router.get("/{doc_id}/chunks", response_model=List[ChunkOut])
 async def browse_chunks(
     doc_id: int,
-    page: int = Query(1, ge=1),   # interpret this as PDF page number
+    start_page: int = Query(1, ge=1),
+    end_page: Optional[int] = Query(None, ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -137,16 +169,23 @@ async def browse_chunks(
     if doc.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this document")
 
-    db_page_num = page - 1 
+    if end_page is None:
+        end_page = start_page
+    if end_page < start_page:
+        raise HTTPException(status_code=400, detail="end_page must be greater than or equal to start_page")
 
-    # Get all chunks for that PDF page, sorted by position in page
+    db_start_page = start_page - 1
+    db_end_page = end_page - 1
+
+    # Get all chunks in the page range, sorted by page then chunk order.
     chunks = (
         db.query(Chunk)
           .filter(
               Chunk.doc_id == doc_id,
-              Chunk.page_num == db_page_num
+              Chunk.page_num >= db_start_page,
+              Chunk.page_num <= db_end_page
           )
-          .order_by(Chunk.id.asc())
+          .order_by(Chunk.page_num.asc(), Chunk.id.asc())
           .all()
     )
     

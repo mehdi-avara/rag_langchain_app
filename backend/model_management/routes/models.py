@@ -6,12 +6,19 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
 from db.init_db import get_db
+from db.search_connector import (
+    search_documents_text,
+    search_documents_semantic,
+    search_comments_text,
+    search_comments_semantic,
+)
 from deps import get_current_user
 from Models import User
 
 from ..models import ManagedModel
 from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut
 from ..services import get_model_or_404, get_doc_ids, get_comment_ids, is_admin
+from schemas.search import TextSearchRequest, SemanticSearchRequest
 
 
 router = APIRouter()
@@ -116,6 +123,70 @@ def get_model(
         doc_ids=doc_ids,
         comment_ids=comment_ids,
     )
+
+
+@router.post(
+    "/{model_id}/filter",
+    status_code=status.HTTP_200_OK,
+)
+def filter_model_content(
+    model_id: int,
+    payload: TextSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    model = get_model_or_404(db, model_id, current_user)
+    doc_ids = get_doc_ids(db, model.id)
+    comment_ids = get_comment_ids(db, model.id)
+
+    return {
+        "documents": search_documents_text(
+            db=db,
+            query_text=payload.query,
+            owner_id=current_user.id,
+            doc_ids=doc_ids,
+            limit=payload.limit,
+        ),
+        "comments": search_comments_text(
+            db=db,
+            query_text=payload.query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            limit=payload.limit,
+        ),
+    }
+
+
+@router.post(
+    "/{model_id}/semantic-search",
+    status_code=status.HTTP_200_OK,
+)
+def semantic_search_model_content(
+    model_id: int,
+    payload: SemanticSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    model = get_model_or_404(db, model_id, current_user)
+    doc_ids = get_doc_ids(db, model.id)
+    comment_ids = get_comment_ids(db, model.id)
+
+    return {
+        "documents": search_documents_semantic(
+            db=db,
+            query_text=payload.query,
+            owner_id=current_user.id,
+            doc_ids=doc_ids,
+            limit=payload.limit,
+        ),
+        "comments": search_comments_semantic(
+            db=db,
+            query_text=payload.query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            limit=payload.limit,
+        ),
+    }
 
 
 @router.patch("/{model_id}", response_model=ModelOut)

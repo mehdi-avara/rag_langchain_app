@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
+from db.search_connector import search_comments_text, search_comments_semantic
 from Models import Comment, User, CommentFile
 from deps import get_current_user
 from schemas.comment import (
@@ -12,6 +13,7 @@ from schemas.comment import (
     CommentOut,
     CommentUpdate,
 )
+from schemas.search import TextSearchRequest, SemanticSearchRequest
 
 
 from components import generate_embeddings_for_chunks
@@ -33,6 +35,36 @@ def list_comments(
     """Return all comments."""
     comments = db.query(Comment).order_by(Comment.created_at.desc()).all()
     return comments
+
+
+@router.post("/filter", response_model=List[CommentOut], status_code=status.HTTP_200_OK)
+def filter_comments(
+    payload: TextSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return search_comments_text(
+        db=db,
+        query_text=payload.query,
+        user_id=current_user.id,
+        comment_ids=payload.ids or None,
+        limit=payload.limit,
+    )
+
+
+@router.post("/semantic-search", response_model=List[CommentOut], status_code=status.HTTP_200_OK)
+def semantic_search_comments(
+    payload: SemanticSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return search_comments_semantic(
+        db=db,
+        query_text=payload.query,
+        user_id=current_user.id,
+        comment_ids=payload.ids or None,
+        limit=payload.limit,
+    )
 
 
 @router.get("/{comment_id}", response_model=CommentOut)
@@ -132,4 +164,3 @@ def delete_comment(
     db.delete(comment)
     db.commit()
     return None
-
