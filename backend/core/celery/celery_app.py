@@ -17,6 +17,6 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="Asia/Tehran",
     enable_utc=True,
-    task_time_limit=600,      # kill task after 10 minutes
-    task_soft_time_limit=540  # warn 1 minute earlier
+    task_time_limit=10000,      # kill task after 10 minutes
+    task_soft_time_limit=9000  # warn 1 minute earlier
 )

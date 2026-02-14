@@ -51,6 +51,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: 67e8fce7b09fb9251889df2061
       POSTGRES_IP: postgres
+      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
 
     depends_on:
       - redis

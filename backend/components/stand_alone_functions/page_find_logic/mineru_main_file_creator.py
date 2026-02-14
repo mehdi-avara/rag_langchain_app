@@ -1,5 +1,5 @@
 import re
-from loguru import logger
+# from loguru import logger
 from typing import Dict, List, Tuple
 
 from mineru.utils.config_reader import get_latex_delimiter_config
