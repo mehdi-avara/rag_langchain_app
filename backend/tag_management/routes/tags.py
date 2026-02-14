@@ -12,7 +12,7 @@ from db.search_connector import (
 )
 from deps import get_current_user
 from Models import User, Document
-from schemas.search import TextSearchRequest, SemanticSearchRequest
+from schemas.search import TextSearchRequest, SemanticSearchRequest, ContentSearchResponse
 
 from ..system_tag import SystemTag
 
@@ -52,7 +52,7 @@ async def get_tag(
     return tag
 
 
-@router.post("/{tag_id}/filter", status_code=status.HTTP_200_OK)
+@router.post("/{tag_id}/filter", response_model=ContentSearchResponse, status_code=status.HTTP_200_OK)
 async def filter_tag_content(
     tag_id: int,
     payload: TextSearchRequest,
@@ -81,7 +81,7 @@ async def filter_tag_content(
     }
 
 
-@router.post("/{tag_id}/semantic-search", status_code=status.HTTP_200_OK)
+@router.post("/{tag_id}/semantic-search", response_model=ContentSearchResponse, status_code=status.HTTP_200_OK)
 async def semantic_search_tag_content(
     tag_id: int,
     payload: SemanticSearchRequest,

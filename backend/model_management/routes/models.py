@@ -18,7 +18,7 @@ from Models import User
 from ..models import ManagedModel
 from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut
 from ..services import get_model_or_404, get_doc_ids, get_comment_ids, is_admin
-from schemas.search import TextSearchRequest, SemanticSearchRequest
+from schemas.search import TextSearchRequest, SemanticSearchRequest, ContentSearchResponse
 
 
 router = APIRouter()
@@ -127,6 +127,7 @@ def get_model(
 
 @router.post(
     "/{model_id}/filter",
+    response_model=ContentSearchResponse,
     status_code=status.HTTP_200_OK,
 )
 def filter_model_content(
@@ -159,6 +160,7 @@ def filter_model_content(
 
 @router.post(
     "/{model_id}/semantic-search",
+    response_model=ContentSearchResponse,
     status_code=status.HTTP_200_OK,
 )
 def semantic_search_model_content(
