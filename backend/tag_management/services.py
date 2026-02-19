@@ -63,6 +63,27 @@ def check_no_cycle(db: Session, tag: SystemTag, new_parent_id: int | None, user_
         )
 
 
+
+def get_descendant_tag_ids(db: Session, root_tag_id: int, user_id: int) -> list[int]:
+    tags = db.query(SystemTag).filter(SystemTag.owner_id == user_id).all()
+    children_map: dict[int | None, list[int]] = {}
+    for tag in tags:
+        children_map.setdefault(tag.father_tag_id, []).append(tag.id)
+
+    discovered: list[int] = []
+    stack = [root_tag_id]
+    seen = set()
+
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        discovered.append(current)
+        stack.extend(children_map.get(current, []))
+
+    return discovered
+
 def get_doc_ids(db: Session, tag_id: int) -> list[int]:
     rows = (
         db.query(TagDocumentLink.document_id)

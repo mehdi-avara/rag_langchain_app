@@ -15,6 +15,7 @@ class TextSearchRequest(BaseModel):
 class SemanticSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     ids: List[int] = Field(default_factory=list)
+    type: str | None = None
     limit: int = Field(default=50, ge=1, le=200)
 
 

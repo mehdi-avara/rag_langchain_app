@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 
@@ -12,7 +12,11 @@ class DocumentOut(BaseModel):
     status: str
     abstract: str | None
     file_path: str | None
-    
+    part_id: int | None = None
+    part_text: str | None = None
+    similarity: float | None = None
+    tag_ids: list[int] = Field(default_factory=list)
+
 
     class Config:
         orm_mode = True

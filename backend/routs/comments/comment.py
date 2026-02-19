@@ -64,6 +64,7 @@ def semantic_search_comments(
         user_id=current_user.id,
         comment_ids=payload.ids or None,
         limit=payload.limit,
+        comment_type=payload.type,
     )
 
 

@@ -53,6 +53,10 @@ class CommentOut(BaseModel):
     chunk_id: Optional[int] = None
     type: CommentType
     content: str
+    part_id: int | None = None
+    part_text: str | None = None
+    similarity: float | None = None
+    tag_ids: List[int] = Field(default_factory=list)
     created_at: datetime
     files: List[CommentFileOut] = Field(default_factory=list)
 
