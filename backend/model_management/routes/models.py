@@ -154,6 +154,7 @@ def filter_model_content(
             user_id=current_user.id,
             comment_ids=comment_ids,
             limit=payload.limit,
+            comment_type=payload.type,
         ),
     }
 
@@ -187,6 +188,7 @@ def semantic_search_model_content(
             user_id=current_user.id,
             comment_ids=comment_ids,
             limit=payload.limit,
+            comment_type=payload.type,
         ),
     }
 

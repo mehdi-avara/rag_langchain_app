@@ -21,8 +21,9 @@ from ..services import (
     get_tag_or_404,
     validate_parent_tag,
     check_no_cycle,
-    get_doc_ids,
-    get_comment_ids,
+    get_doc_ids_for_tags,
+    get_comment_ids_for_tags,
+    get_descendant_tag_ids,
 )
 
 
@@ -60,8 +61,9 @@ async def filter_tag_content(
     db: Session = Depends(get_db),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
-    doc_ids = get_doc_ids(db, tag_id)
-    comment_ids = get_comment_ids(db, tag_id)
+    tag_ids = get_descendant_tag_ids(db, tag_id, current_user.id)
+    doc_ids = get_doc_ids_for_tags(db, tag_ids)
+    comment_ids = get_comment_ids_for_tags(db, tag_ids)
 
     return {
         "documents": search_documents_text(
@@ -70,6 +72,7 @@ async def filter_tag_content(
             owner_id=current_user.id,
             doc_ids=doc_ids,
             limit=payload.limit,
+            tag_scope_ids=tag_ids,
         ),
         "comments": search_comments_text(
             db=db,
@@ -77,6 +80,7 @@ async def filter_tag_content(
             user_id=current_user.id,
             comment_ids=comment_ids,
             limit=payload.limit,
+            tag_scope_ids=tag_ids,
         ),
     }
 
@@ -89,8 +93,9 @@ async def semantic_search_tag_content(
     db: Session = Depends(get_db),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
-    doc_ids = get_doc_ids(db, tag_id)
-    comment_ids = get_comment_ids(db, tag_id)
+    tag_ids = get_descendant_tag_ids(db, tag_id, current_user.id)
+    doc_ids = get_doc_ids_for_tags(db, tag_ids)
+    comment_ids = get_comment_ids_for_tags(db, tag_ids)
 
     return {
         "documents": search_documents_semantic(
@@ -99,6 +104,7 @@ async def semantic_search_tag_content(
             owner_id=current_user.id,
             doc_ids=doc_ids,
             limit=payload.limit,
+            tag_scope_ids=tag_ids,
         ),
         "comments": search_comments_semantic(
             db=db,
@@ -106,6 +112,8 @@ async def semantic_search_tag_content(
             user_id=current_user.id,
             comment_ids=comment_ids,
             limit=payload.limit,
+            comment_type=payload.type,
+            tag_scope_ids=tag_ids,
         ),
     }
 

@@ -9,10 +9,9 @@ from core.agents import build_answer_graph, GraphState
 from ..schemas import TagAskRequest, TagAskMultiRequest, TagAskResponse
 from ..services import (
     get_tag_or_404,
-    get_doc_ids,
-    get_comment_ids,
     get_doc_ids_for_tags,
     get_comment_ids_for_tags,
+    get_descendant_tag_ids,
 )
 
 
@@ -28,8 +27,9 @@ async def ask_tag(
 ):
     tag = get_tag_or_404(db, tag_id, current_user.id)
 
-    doc_ids = get_doc_ids(db, tag.id)
-    comment_ids = get_comment_ids(db, tag.id)
+    tag_ids = get_descendant_tag_ids(db, tag.id, current_user.id)
+    doc_ids = get_doc_ids_for_tags(db, tag_ids)
+    comment_ids = get_comment_ids_for_tags(db, tag_ids)
 
     if payload.scope == "docs":
         comment_ids = []
