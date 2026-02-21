@@ -24,7 +24,7 @@ class CurrentUserOut(BaseModel):
 
 
 class UserUpdateIn(BaseModel):
-    # username: Optional[str] = None
+    username: Optional[str] = None
     First_name: Optional[str] = None
     Last_name: Optional[str] = None
 
