@@ -245,7 +245,7 @@ class TagAskRequest(BaseModel):
 
 
 class TagAskMultiRequest(TagAskRequest):
-    tag_ids: List[int] = Field(min_length=1)
+    tag_ids: List[int] = Field(default_factory=list)
 
 
 class TagAskResponse(BaseModel):

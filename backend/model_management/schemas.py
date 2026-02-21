@@ -116,7 +116,7 @@ class ModelAskRequest(BaseModel):
 
 
 class ModelAskMultiRequest(ModelAskRequest):
-    model_ids: List[int] = Field(min_length=1)
+    model_ids: List[int] = Field(default_factory=list)
 
 
 class ModelAskResponse(BaseModel):

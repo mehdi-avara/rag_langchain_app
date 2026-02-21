@@ -426,3 +426,53 @@ def test_comment_ask_returns_comment_semantic_references_and_types(monkeypatch):
     assert body["citations"] == [123, 30]
     assert captured["limit"] == 10
     assert captured["types"] == [CommentType.FAILURE, CommentType.REPORT]
+
+
+def test_tag_ask_multi_without_ids_uses_all_available_tags(monkeypatch):
+    captured = {}
+    references = {"tags": [], "documents": [], "comments": []}
+
+    monkeypatch.setattr(tag_ask_module, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+
+    def fake_scope(**kwargs):
+        captured.update(kwargs)
+        return references
+
+    async def fake_answer(*_args, **_kwargs):
+        return "Answer [chunk:123]"
+
+    monkeypatch.setattr(tag_ask_module, "_semantic_search_tag_scope", fake_scope)
+    monkeypatch.setattr(tag_ask_module, "generate_answer_from_references", fake_answer)
+
+    client = build_client(DummyDB(tag_ids=[1, 2, 3]))
+    resp = client.post("/system_tags/ask", json={"question": "q", "scope": "both"})
+    assert resp.status_code == 200
+    assert resp.json()["references"] == references
+    assert captured["tag_ids"] == [1, 2, 3]
+    assert captured["doc_top_k"] == 6
+    assert captured["comment_top_k"] == 10
+
+
+def test_model_ask_multi_without_ids_uses_all_available_models(monkeypatch):
+    captured = {}
+    references = {"documents": [], "comments": []}
+
+    monkeypatch.setattr(model_ask_module, "get_model_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+
+    def fake_scope(**kwargs):
+        captured.update(kwargs)
+        return references
+
+    async def fake_answer(*_args, **_kwargs):
+        return "Answer [comment:456]"
+
+    monkeypatch.setattr(model_ask_module, "_semantic_search_model_scope", fake_scope)
+    monkeypatch.setattr(model_ask_module, "generate_answer_from_references", fake_answer)
+
+    client = build_client(DummyDB(model_ids=[8, 9]))
+    resp = client.post("/models/ask", json={"question": "q", "scope": "both"})
+    assert resp.status_code == 200
+    assert resp.json()["references"] == references
+    assert captured["model_ids"] == [8, 9]
+    assert captured["doc_top_k"] == 6
+    assert captured["comment_top_k"] == 10

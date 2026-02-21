@@ -7,6 +7,7 @@ from deps import get_current_user
 from Models import User
 
 from ..schemas import TagAskRequest, TagAskMultiRequest, TagAskResponse
+from ..system_tag import SystemTag
 from ..services import (
     get_tag_or_404,
     get_descendant_tag_ids,
@@ -67,9 +68,11 @@ async def ask_tags(
     current_user: User = Depends(get_current_user),
 ):
     tag_ids = list(dict.fromkeys(payload.tag_ids))
+    if not tag_ids:
+        tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
 
-    for tag_id in tag_ids:
-        get_tag_or_404(db, tag_id, current_user.id)
+    for provided_tag_id in tag_ids:
+        get_tag_or_404(db, provided_tag_id, current_user.id)
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
 
     references = _semantic_search_tag_scope(

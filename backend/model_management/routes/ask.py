@@ -6,9 +6,11 @@ from db.init_db import get_db
 from deps import get_current_user
 from Models import User
 
+from ..models import ManagedModel
 from ..schemas import ModelAskRequest, ModelAskMultiRequest, ModelAskResponse
 from ..services import (
     get_model_or_404,
+    is_admin,
 )
 from .models import _semantic_search_model_scope
 
@@ -65,9 +67,14 @@ async def ask_models(
     current_user: User = Depends(get_current_user),
 ):
     model_ids = list(dict.fromkeys(payload.model_ids))
+    if not model_ids:
+        query = db.query(ManagedModel.id)
+        if not is_admin(current_user):
+            query = query.filter(ManagedModel.owner_id == current_user.id)
+        model_ids = [row[0] for row in query.all()]
 
-    for model_id in model_ids:
-        get_model_or_404(db, model_id, current_user)
+    for provided_model_id in model_ids:
+        get_model_or_404(db, provided_model_id, current_user)
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
 
     references = _semantic_search_model_scope(
