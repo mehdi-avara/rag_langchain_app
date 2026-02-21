@@ -111,6 +111,9 @@ def search_document_part_hits_semantic(
             d.filename AS document_title,
             c.id AS part_id,
             c.content AS part_text,
+            d.created_at AS document_created_at,
+            d.status AS document_status,
+            d.owner_id AS document_owner_id,
             (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
         FROM documents d
         JOIN chunks c ON c.doc_id = d.id
@@ -127,6 +130,9 @@ def search_document_part_hits_semantic(
             "document_title": row.document_title,
             "part_id": row.part_id,
             "part_text": row.part_text,
+            "createdAt": row.document_created_at,
+            "status": row.document_status,
+            "owner_id": row.document_owner_id,
         }
         for row in rows
     ]
@@ -171,6 +177,9 @@ def search_comment_hits_semantic(
             c.id AS comment_id,
             c.title AS comment_title,
             c.content AS comment_content,
+            c.type AS comment_type,
+            c.created_at AS comment_created_at,
+            c.user_id AS comment_user_id,
             (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
         FROM comments c
         WHERE {where_clause}
@@ -185,6 +194,9 @@ def search_comment_hits_semantic(
             "comment_id": row.comment_id,
             "comment_title": row.comment_title,
             "comment_content": row.comment_content,
+            "type": row.comment_type,
+            "createdAt": row.comment_created_at,
+            "userId": row.comment_user_id,
         }
         for row in rows
     ]

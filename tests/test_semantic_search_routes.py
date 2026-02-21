@@ -14,6 +14,7 @@ os.environ.setdefault("jina_api_key", "test")
 import sys
 import types
 import importlib
+from pathlib import Path
 
 mineru_mod = types.ModuleType("mineru")
 mineru_utils = types.ModuleType("mineru.utils")
@@ -37,6 +38,7 @@ from routs.documents import router as document_router
 from tag_management.routes import tag_router
 
 model_routes_module = importlib.import_module("model_management.routes.models")
+tag_routes_module = importlib.import_module("tag_management.routes.tags")
 
 
 class DummyQuery:
@@ -84,6 +86,9 @@ def test_document_semantic_search_contract_and_top_k(monkeypatch):
                 "document_title": "Doc A",
                 "part_id": 91,
                 "part_text": "matched part",
+                "createdAt": "2026-02-20T10:00:00",
+                "status": "done",
+                "owner_id": 7,
             }
         ]
 
@@ -92,7 +97,15 @@ def test_document_semantic_search_contract_and_top_k(monkeypatch):
     client = build_client(DummyDB())
     resp = client.post("/documents/semantic-search?top_k=1", json={"query": "q", "ids": [10], "limit": 99})
     assert resp.status_code == 200
-    assert resp.json() == [{"document_id": 10, "document_title": "Doc A", "part_id": 91, "part_text": "matched part"}]
+    assert resp.json() == [{
+        "document_id": 10,
+        "document_title": "Doc A",
+        "part_id": 91,
+        "part_text": "matched part",
+        "createdAt": "2026-02-20T10:00:00",
+        "status": "done",
+        "owner_id": 7,
+    }]
     assert captured["limit"] == 1
 
 
@@ -106,6 +119,9 @@ def test_comment_semantic_search_types_and_top_k(monkeypatch):
                 "comment_id": 30,
                 "comment_title": "Failure note",
                 "comment_content": "motor failure",
+                "type": "failure",
+                "createdAt": "2026-02-20T11:00:00",
+                "userId": 7,
             }
         ]
 
@@ -118,6 +134,9 @@ def test_comment_semantic_search_types_and_top_k(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()[0]["comment_id"] == 30
+    assert resp.json()[0]["type"] == "failure"
+    assert resp.json()[0]["createdAt"] == "2026-02-20T11:00:00"
+    assert resp.json()[0]["userId"] == 7
     assert captured["limit"] == 2
     assert captured["types"] == [CommentType.FAILURE, CommentType.REPORT]
 
@@ -139,13 +158,36 @@ def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
     monkeypatch.setattr(
         "tag_management.routes.tags.search_document_part_hits_semantic",
         lambda **_kwargs: [
-            {"document_id": 100, "document_title": "Tag Doc", "part_id": 1, "part_text": "tag chunk"},
-            {"document_id": 101, "document_title": "Model Doc", "part_id": 2, "part_text": "model chunk"},
+            {
+                "document_id": 100,
+                "document_title": "Tag Doc",
+                "part_id": 1,
+                "part_text": "tag chunk",
+                "createdAt": "2026-02-19T10:00:00",
+                "status": "done",
+                "owner_id": 7,
+            },
+            {
+                "document_id": 101,
+                "document_title": "Model Doc",
+                "part_id": 2,
+                "part_text": "model chunk",
+                "createdAt": "2026-02-19T12:00:00",
+                "status": "queued",
+                "owner_id": 7,
+            },
         ],
     )
     monkeypatch.setattr(
         "tag_management.routes.tags.search_comment_hits_semantic",
-        lambda **_kwargs: [{"comment_id": 200, "comment_title": "C", "comment_content": "text"}],
+        lambda **_kwargs: [{
+            "comment_id": 200,
+            "comment_title": "C",
+            "comment_content": "text",
+            "type": "comment",
+            "createdAt": "2026-02-19T13:00:00",
+            "userId": 7,
+        }],
     )
 
     client = build_client(DummyDB(tag_ids=[1, 2]))
@@ -158,7 +200,12 @@ def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
     assert len(body["documents"]) == 2
     assert body["documents"][1]["model_id"] == 500
     assert body["documents"][1]["part_id"] == 2
+    assert body["documents"][1]["status"] == "queued"
+    assert body["documents"][1]["owner_id"] == 7
     assert body["comments"][0]["tag_id"] == 1
+    assert body["comments"][0]["type"] == "comment"
+    assert body["comments"][0]["createdAt"] == "2026-02-19T13:00:00"
+    assert body["comments"][0]["userId"] == 7
 
 
 def test_model_semantic_search_contract_top_k_and_types(monkeypatch):
@@ -170,11 +217,26 @@ def test_model_semantic_search_contract_top_k_and_types(monkeypatch):
     monkeypatch.setattr(model_routes_module, "get_comment_to_model_map", lambda *_args, **_kwargs: {70: 8})
     monkeypatch.setattr(
         model_routes_module, "search_document_part_hits_semantic",
-        lambda **_kwargs: [{"document_id": 60, "document_title": "Doc", "part_id": 9, "part_text": "chunk"}],
+        lambda **_kwargs: [{
+            "document_id": 60,
+            "document_title": "Doc",
+            "part_id": 9,
+            "part_text": "chunk",
+            "createdAt": "2026-02-18T09:00:00",
+            "status": "done",
+            "owner_id": 7,
+        }],
     )
     monkeypatch.setattr(
         model_routes_module, "search_comment_hits_semantic",
-        lambda **_kwargs: [{"comment_id": 70, "comment_title": "R", "comment_content": "report text"}],
+        lambda **_kwargs: [{
+            "comment_id": 70,
+            "comment_title": "R",
+            "comment_content": "report text",
+            "type": "report",
+            "createdAt": "2026-02-18T10:00:00",
+            "userId": 7,
+        }],
     )
 
     client = build_client(DummyDB(model_ids=[8]))
@@ -188,5 +250,19 @@ def test_model_semantic_search_contract_top_k_and_types(monkeypatch):
         "document_title": "Doc",
         "part_id": 9,
         "part_text": "chunk",
+        "createdAt": "2026-02-18T09:00:00",
+        "status": "done",
+        "owner_id": 7,
     }
     assert body["comments"][0]["comment_content"] == "report text"
+    assert body["comments"][0]["type"] == "report"
+    assert body["comments"][0]["createdAt"] == "2026-02-18T10:00:00"
+    assert body["comments"][0]["userId"] == 7
+
+
+def test_tag_route_uses_tag_owned_semantic_schema():
+    payload_model = tag_routes_module.semantic_search_all_tags_content.__annotations__["payload"]
+    assert payload_model.__name__ == "TagSemanticSearchRequestWithIds"
+    source = Path(tag_routes_module.__file__).read_text()
+    assert "from schemas.search import" not in source
+    assert "SemanticCommentSearchRequestWithId" not in source

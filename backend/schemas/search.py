@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -24,12 +25,18 @@ class DocumentSemanticHit(BaseModel):
     document_title: str
     part_id: int
     part_text: str
+    createdAt: datetime
+    status: str
+    owner_id: int
 
 
 class CommentSemanticHit(BaseModel):
     comment_id: int
     comment_title: str
     comment_content: str
+    type: CommentType
+    createdAt: datetime
+    userId: int
 
 
 class TagDocumentSemanticHit(DocumentSemanticHit):
@@ -58,10 +65,11 @@ class ModelCommentSemanticHit(CommentSemanticHit):
 
 class SemanticCommentSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
     types: List[CommentType] = Field(default_factory=list)
 
 class SemanticCommentSearchRequestWithId(SemanticCommentSearchRequest):
-    ids: List[int] = Field(default_factory=list)
+    pass
 
 class TagSemanticSearchResponse(BaseModel):
     documents: List[TagDocumentSemanticHit] = Field(default_factory=list)

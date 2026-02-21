@@ -12,17 +12,19 @@ from db.search_connector import (
 )
 from deps import get_current_user
 from Models import User, Document, CommentType
-from schemas.search import (
-    TextSearchRequest,
-    ContentSearchResponse,
-    TagSemanticSearchResponse,
-    SemanticCommentSearchRequest,
-    SemanticCommentSearchRequestWithId
-)
 
 from ..system_tag import SystemTag
 
-from ..schemas import TagOut, TagCreate, TagUpdate
+from ..schemas import (
+    TagOut,
+    TagCreate,
+    TagUpdate,
+    TagTextSearchRequest,
+    TagContentSearchResponse,
+    TagSemanticSearchResponse,
+    TagSemanticSearchRequest,
+    TagSemanticSearchRequestWithIds,
+)
 from ..services import (
     get_tag_or_404,
     validate_parent_tag,
@@ -158,10 +160,10 @@ async def get_tag(
     return tag
 
 
-@router.post("/{tag_id}/filter", response_model=ContentSearchResponse, status_code=status.HTTP_200_OK)
+@router.post("/{tag_id}/filter", response_model=TagContentSearchResponse, status_code=status.HTTP_200_OK)
 async def filter_tag_content(
     tag_id: int,
-    payload: TextSearchRequest,
+    payload: TagTextSearchRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -189,12 +191,14 @@ async def filter_tag_content(
 
 @router.post("/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
 async def semantic_search_all_tags_content(
-    payload: SemanticCommentSearchRequestWithId,
+    payload: TagSemanticSearchRequestWithIds,
     top_k: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
+    all_tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
+    requested_tag_ids = set(payload.ids)
+    tag_ids = [tag_id for tag_id in all_tag_ids if tag_id in requested_tag_ids] if requested_tag_ids else all_tag_ids
     return _semantic_search_tag_scope(
         db=db,
         current_user=current_user,
@@ -208,7 +212,7 @@ async def semantic_search_all_tags_content(
 @router.post("/{tag_id}/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
 async def semantic_search_tag_content(
     tag_id: int,
-    payload: SemanticCommentSearchRequest,
+    payload: TagSemanticSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

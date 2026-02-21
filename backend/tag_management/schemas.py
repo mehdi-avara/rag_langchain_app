@@ -150,6 +150,84 @@ class TagCommentOut(BaseModel):
 TagTreeOut.update_forward_refs()
 
 
+class TagTextSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class TagDocumentSearchResult(BaseModel):
+    id: int
+    filename: str
+    n_pages: int
+    n_chunks: int
+    created_at: datetime
+    status: str
+    abstract: Optional[str] = None
+    file_path: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TagCommentSearchResult(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    type: CommentType
+    content: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TagContentSearchResponse(BaseModel):
+    documents: List[TagDocumentSearchResult] = Field(default_factory=list)
+    comments: List[TagCommentSearchResult] = Field(default_factory=list)
+
+
+class TagSemanticSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    types: List[CommentType] = Field(default_factory=list)
+
+
+class TagSemanticSearchRequestWithIds(TagSemanticSearchRequest):
+    ids: List[int] = Field(default_factory=list)
+
+
+class TagDocumentSemanticHit(BaseModel):
+    tag_id: int
+    tag_title: str
+    model_id: Optional[int] = None
+    model_title: Optional[str] = None
+    document_id: int
+    document_title: str
+    part_id: int
+    part_text: str
+    createdAt: datetime
+    status: str
+    owner_id: int
+
+
+class TagCommentSemanticHit(BaseModel):
+    tag_id: int
+    tag_title: str
+    model_id: Optional[int] = None
+    model_title: Optional[str] = None
+    comment_id: int
+    comment_title: str
+    comment_content: str
+    type: CommentType
+    createdAt: datetime
+    userId: int
+
+
+class TagSemanticSearchResponse(BaseModel):
+    documents: List[TagDocumentSemanticHit] = Field(default_factory=list)
+    comments: List[TagCommentSemanticHit] = Field(default_factory=list)
+
+
 class TagAskRequest(BaseModel):
     question: str
     mode: Literal["keyword", "vector", "hybrid"]
