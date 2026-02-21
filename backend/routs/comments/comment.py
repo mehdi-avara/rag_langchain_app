@@ -13,7 +13,7 @@ from schemas.comment import (
     CommentOut,
     CommentUpdate,
 )
-from schemas.search import TextSearchRequest, SemanticSearchRequest, CommentSemanticHit, SemanticCommentSearchRequest
+from schemas.search import TextSearchRequest, SemanticCommentSearchRequestWithId, CommentSemanticHit
 
 
 from components import generate_embeddings_for_chunks
@@ -54,7 +54,7 @@ def filter_comments(
 
 @router.post("/semantic-search", response_model=List[CommentSemanticHit], status_code=status.HTTP_200_OK)
 def semantic_search_comments(
-    payload: SemanticCommentSearchRequest,
+    payload: SemanticCommentSearchRequestWithId,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

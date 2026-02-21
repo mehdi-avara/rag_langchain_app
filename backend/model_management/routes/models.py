@@ -33,6 +33,7 @@ from schemas.search import (
     ContentSearchResponse,
     ModelSemanticSearchResponse,
     SemanticCommentSearchRequest,
+    SemanticCommentSearchRequestWithId
 )
 
 
@@ -237,7 +238,7 @@ def filter_model_content(
     status_code=status.HTTP_200_OK,
 )
 def semantic_search_all_models_content(
-    payload: SemanticCommentSearchRequest,
+    payload: SemanticCommentSearchRequestWithId,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
