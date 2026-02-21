@@ -198,6 +198,8 @@ class TagSemanticSearchRequestWithIds(TagSemanticSearchRequest):
 
 class TagScopeItem(TagBase):
     tag_id: int
+    createdAt: datetime
+    ownerId: int
 
 
 class TagDocumentSemanticHit(BaseModel):

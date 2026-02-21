@@ -148,7 +148,19 @@ def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
     monkeypatch.setattr("tag_management.routes.tags.get_comment_ids_for_tags", lambda *_args, **_kwargs: [200])
     monkeypatch.setattr("tag_management.routes.tags.get_model_ids_for_tags", lambda *_args, **_kwargs: [500])
     monkeypatch.setattr("tag_management.routes.tags.get_model_document_ids", lambda *_args, **_kwargs: [101])
-    monkeypatch.setattr("tag_management.routes.tags.get_tag_info_map", lambda *_args, **_kwargs: {1: SimpleNamespace(id=1, tag_name="Engine")})
+    monkeypatch.setattr(
+        "tag_management.routes.tags.get_tag_info_map",
+        lambda *_args, **_kwargs: {
+            1: SimpleNamespace(
+                id=1,
+                tag_name="Engine",
+                description=None,
+                father_tag_id=None,
+                created_at="2026-02-17T08:00:00",
+                owner_id=7,
+            )
+        },
+    )
     monkeypatch.setattr("tag_management.routes.tags.get_model_info_map", lambda *_args, **_kwargs: {500: SimpleNamespace(id=500, model="M-500")})
     monkeypatch.setattr("tag_management.routes.tags.get_doc_to_tag_map", lambda *_args, **_kwargs: {100: 1})
     monkeypatch.setattr("tag_management.routes.tags.get_comment_to_tag_map", lambda *_args, **_kwargs: {200: 1})
@@ -202,6 +214,8 @@ def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
         "tag_name": "Engine",
         "description": None,
         "father_tag_id": None,
+        "createdAt": "2026-02-17T08:00:00",
+        "ownerId": 7,
     }]
     assert len(body["documents"]) == 2
     assert body["documents"][1]["model_id"] == 500

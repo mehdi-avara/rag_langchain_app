@@ -97,6 +97,8 @@ def _semantic_search_tag_scope(
                 "tag_name": scoped_tag.tag_name,
                 "description": getattr(scoped_tag, "description", None),
                 "father_tag_id": getattr(scoped_tag, "father_tag_id", None),
+                "createdAt": scoped_tag.created_at,
+                "ownerId": scoped_tag.owner_id,
             }
         )
 
