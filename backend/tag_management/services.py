@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from Models import User
 
 from .system_tag import SystemTag
-from .models import TagDocumentLink, TagCommentLink
+from .models import TagDocumentLink, TagCommentLink, TagModelLink
+from model_management.models import ManagedModel, ModelDocumentLink
 
 
 def is_admin(user: User) -> bool:
@@ -103,3 +104,117 @@ def get_comment_ids_for_tags(db: Session, tag_ids: list[int]) -> list[int]:
         .all()
     )
     return list({row[0] for row in rows})
+
+
+def get_descendant_tag_ids(db: Session, root_tag_id: int, user_id: int) -> list[int]:
+    tag_ids: list[int] = []
+    stack = [root_tag_id]
+
+    while stack:
+        current_id = stack.pop()
+        if current_id in tag_ids:
+            continue
+        tag_ids.append(current_id)
+
+        children = (
+            db.query(SystemTag.id)
+            .filter(SystemTag.father_tag_id == current_id, SystemTag.owner_id == user_id)
+            .all()
+        )
+        stack.extend([row[0] for row in children])
+
+    return tag_ids
+
+
+def get_model_ids_for_tags(db: Session, tag_ids: list[int]) -> list[int]:
+    if not tag_ids:
+        return []
+
+    rows = (
+        db.query(TagModelLink.model_id)
+        .filter(TagModelLink.tag_id.in_(tag_ids))
+        .all()
+    )
+    return list({row[0] for row in rows})
+
+
+def get_model_document_ids(db: Session, model_ids: list[int]) -> list[int]:
+    if not model_ids:
+        return []
+
+    rows = (
+        db.query(ModelDocumentLink.document_id)
+        .filter(ModelDocumentLink.model_id.in_(model_ids))
+        .all()
+    )
+    return list({row[0] for row in rows})
+
+
+def get_tag_info_map(db: Session, tag_ids: list[int]) -> dict[int, SystemTag]:
+    if not tag_ids:
+        return {}
+    tags = db.query(SystemTag).filter(SystemTag.id.in_(tag_ids)).all()
+    return {tag.id: tag for tag in tags}
+
+
+def get_model_info_map(db: Session, model_ids: list[int]) -> dict[int, ManagedModel]:
+    if not model_ids:
+        return {}
+    models = db.query(ManagedModel).filter(ManagedModel.id.in_(model_ids)).all()
+    return {model.id: model for model in models}
+
+
+def get_doc_to_tag_map(db: Session, tag_ids: list[int]) -> dict[int, int]:
+    if not tag_ids:
+        return {}
+    rows = (
+        db.query(TagDocumentLink.document_id, TagDocumentLink.tag_id)
+        .filter(TagDocumentLink.tag_id.in_(tag_ids))
+        .all()
+    )
+    mapping: dict[int, int] = {}
+    for document_id, tag_id in rows:
+        mapping.setdefault(document_id, tag_id)
+    return mapping
+
+
+def get_comment_to_tag_map(db: Session, tag_ids: list[int]) -> dict[int, int]:
+    if not tag_ids:
+        return {}
+    rows = (
+        db.query(TagCommentLink.comment_id, TagCommentLink.tag_id)
+        .filter(TagCommentLink.tag_id.in_(tag_ids))
+        .all()
+    )
+    mapping: dict[int, int] = {}
+    for comment_id, tag_id in rows:
+        mapping.setdefault(comment_id, tag_id)
+    return mapping
+
+
+def get_doc_to_model_map(db: Session, model_ids: list[int]) -> dict[int, int]:
+    if not model_ids:
+        return {}
+    rows = (
+        db.query(ModelDocumentLink.document_id, ModelDocumentLink.model_id)
+        .filter(ModelDocumentLink.model_id.in_(model_ids))
+        .all()
+    )
+    mapping: dict[int, int] = {}
+    for document_id, model_id in rows:
+        mapping.setdefault(document_id, model_id)
+    return mapping
+
+
+def get_tag_to_model_map(db: Session, tag_ids: list[int]) -> dict[int, int]:
+    if not tag_ids:
+        return {}
+    rows = (
+        db.query(TagModelLink.tag_id, TagModelLink.model_id)
+        .filter(TagModelLink.tag_id.in_(tag_ids))
+        .all()
+    )
+    mapping: dict[int, int] = {}
+    for tag_id, model_id in rows:
+        mapping.setdefault(tag_id, model_id)
+    return mapping

@@ -3,7 +3,7 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from Models import User
+from Models import User, Document, Comment
 
 from .models import ManagedModel, ModelDocumentLink, ModelCommentLink
 
@@ -62,3 +62,40 @@ def get_comment_ids_for_models(db: Session, model_ids: List[int]) -> List[int]:
         .all()
     )
     return list({row[0] for row in rows})
+
+
+def get_model_info_map(db: Session, model_ids: List[int]) -> dict[int, ManagedModel]:
+    if not model_ids:
+        return {}
+    models = db.query(ManagedModel).filter(ManagedModel.id.in_(model_ids)).all()
+    return {model.id: model for model in models}
+
+
+def get_doc_to_model_map(db: Session, model_ids: List[int]) -> dict[int, int]:
+    if not model_ids:
+        return {}
+
+    rows = (
+        db.query(ModelDocumentLink.document_id, ModelDocumentLink.model_id)
+        .filter(ModelDocumentLink.model_id.in_(model_ids))
+        .all()
+    )
+    mapping: dict[int, int] = {}
+    for document_id, model_id in rows:
+        mapping.setdefault(document_id, model_id)
+    return mapping
+
+
+def get_comment_to_model_map(db: Session, model_ids: List[int]) -> dict[int, int]:
+    if not model_ids:
+        return {}
+
+    rows = (
+        db.query(ModelCommentLink.comment_id, ModelCommentLink.model_id)
+        .filter(ModelCommentLink.model_id.in_(model_ids))
+        .all()
+    )
+    mapping: dict[int, int] = {}
+    for comment_id, model_id in rows:
+        mapping.setdefault(comment_id, model_id)
+    return mapping

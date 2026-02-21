@@ -8,12 +8,11 @@ import os
 from deps import get_current_user
 from Models import User,Document,Chunk,DocumentStatusType
 from db.init_db import get_db
-from db.search_connector import search_documents_text, search_documents_semantic
+from db.search_connector import search_documents_text, search_documents_semantic, search_document_part_hits_semantic
 from schemas.document import DocumentOut,ChunkOut
-from schemas.search import TextSearchRequest, SemanticSearchRequest
+from schemas.search import TextSearchRequest, SemanticSearchRequest, DocumentSemanticHit
 from settings import get_settings
 
-from core.celery.tasks import mineru_process_pdf
 
 settings = get_settings()
 
@@ -50,6 +49,8 @@ def upload_pdf_mineru(
     with open(orginal_pdf, "wb") as f:
         f.write(file_bytes)
     
+    from core.celery.tasks import mineru_process_pdf
+
     mineru_process_pdf.delay(
         pdf_path=os.path.join(f"{doc.id}","original.pdf"),
         doc_id=doc.id    
@@ -85,18 +86,19 @@ async def filter_documents(
     )
 
 
-@router.post("/semantic-search", response_model=List[DocumentOut], status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=List[DocumentSemanticHit], status_code=status.HTTP_200_OK)
 async def semantic_search_documents(
     payload: SemanticSearchRequest,
+    top_k: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return search_documents_semantic(
+    return search_document_part_hits_semantic(
         db=db,
         query_text=payload.query,
         owner_id=current_user.id,
         doc_ids=payload.ids or None,
-        limit=payload.limit,
+        limit=top_k,
     )
 
 

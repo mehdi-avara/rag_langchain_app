@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from Models.comment import CommentType
+
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
@@ -74,13 +76,15 @@ def search_comments_text(
     return query.order_by(Comment.created_at.desc()).limit(limit).all()
 
 
-def search_documents_semantic(
+
+
+def search_document_part_hits_semantic(
     db: Session,
     query_text: str,
     owner_id: int,
     doc_ids: Optional[List[int]] = None,
     limit: int = 50,
-) -> List[Document]:
+) -> List[Dict[str, Any]]:
     query_embedding = _embedding_client().embed_query(query_text)
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
@@ -102,33 +106,40 @@ def search_documents_semantic(
     where_clause = " AND ".join(filters)
     sql = text(
         f"""
-        SELECT d.id AS id, MAX(1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
+        SELECT
+            d.id AS document_id,
+            d.filename AS document_title,
+            c.id AS part_id,
+            c.content AS part_text,
+            (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
         FROM documents d
         JOIN chunks c ON c.doc_id = d.id
         WHERE {where_clause}
-        GROUP BY d.id
         ORDER BY similarity DESC
         LIMIT :limit
         """
     )
 
     rows = db.execute(sql, params).fetchall()
-    if not rows:
-        return []
+    return [
+        {
+            "document_id": row.document_id,
+            "document_title": row.document_title,
+            "part_id": row.part_id,
+            "part_text": row.part_text,
+        }
+        for row in rows
+    ]
 
-    ids_in_order = [row.id for row in rows]
-    docs = db.query(Document).filter(Document.id.in_(ids_in_order)).all()
-    docs_by_id = {doc.id: doc for doc in docs}
-    return [docs_by_id[doc_id] for doc_id in ids_in_order if doc_id in docs_by_id]
 
-
-def search_comments_semantic(
+def search_comment_hits_semantic(
     db: Session,
     query_text: str,
     user_id: int,
     comment_ids: Optional[List[int]] = None,
+    types: Optional[List[CommentType]] = None,
     limit: int = 50,
-) -> List[Comment]:
+) -> List[Dict[str, Any]]:
     query_embedding = _embedding_client().embed_query(query_text)
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
@@ -147,10 +158,20 @@ def search_comments_semantic(
         for i, comment_id in enumerate(comment_ids):
             params[f"comment_id_{i}"] = comment_id
 
+    if types:
+        placeholders = ", ".join(f":comment_type_{i}" for i in range(len(types)))
+        filters.append(f"c.type IN ({placeholders})")
+        for i, comment_type in enumerate(types):
+            params[f"comment_type_{i}"] = comment_type.value if hasattr(comment_type, "value") else str(comment_type)
+
     where_clause = " AND ".join(filters)
     sql = text(
         f"""
-        SELECT c.id AS id, (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
+        SELECT
+            c.id AS comment_id,
+            c.title AS comment_title,
+            c.content AS comment_content,
+            (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
         FROM comments c
         WHERE {where_clause}
         ORDER BY similarity DESC
@@ -159,10 +180,64 @@ def search_comments_semantic(
     )
 
     rows = db.execute(sql, params).fetchall()
-    if not rows:
+    return [
+        {
+            "comment_id": row.comment_id,
+            "comment_title": row.comment_title,
+            "comment_content": row.comment_content,
+        }
+        for row in rows
+    ]
+def search_documents_semantic(
+    db: Session,
+    query_text: str,
+    owner_id: int,
+    doc_ids: Optional[List[int]] = None,
+    limit: int = 50,
+) -> List[Document]:
+    part_hits = search_document_part_hits_semantic(
+        db=db,
+        query_text=query_text,
+        owner_id=owner_id,
+        doc_ids=doc_ids,
+        limit=limit,
+    )
+    if not part_hits:
         return []
 
-    ids_in_order = [row.id for row in rows]
+    seen: set[int] = set()
+    ids_in_order: List[int] = []
+    for hit in part_hits:
+        doc_id = hit["document_id"]
+        if doc_id not in seen:
+            seen.add(doc_id)
+            ids_in_order.append(doc_id)
+
+    docs = db.query(Document).filter(Document.id.in_(ids_in_order)).all()
+    docs_by_id = {doc.id: doc for doc in docs}
+    return [docs_by_id[doc_id] for doc_id in ids_in_order if doc_id in docs_by_id]
+
+
+def search_comments_semantic(
+    db: Session,
+    query_text: str,
+    user_id: int,
+    comment_ids: Optional[List[int]] = None,
+    types: Optional[List[CommentType]] = None,
+    limit: int = 50,
+) -> List[Comment]:
+    comment_hits = search_comment_hits_semantic(
+        db=db,
+        query_text=query_text,
+        user_id=user_id,
+        comment_ids=comment_ids,
+        types=types,
+        limit=limit,
+    )
+    if not comment_hits:
+        return []
+
+    ids_in_order = [hit["comment_id"] for hit in comment_hits]
     comments = db.query(Comment).filter(Comment.id.in_(ids_in_order)).all()
     comments_by_id = {comment.id: comment for comment in comments}
     return [comments_by_id[cid] for cid in ids_in_order if cid in comments_by_id]

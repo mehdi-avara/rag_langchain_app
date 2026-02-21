@@ -8,20 +8,93 @@ from sqlalchemy.exc import IntegrityError
 from db.init_db import get_db
 from db.search_connector import (
     search_documents_text,
-    search_documents_semantic,
+    search_document_part_hits_semantic,
     search_comments_text,
-    search_comments_semantic,
+    search_comment_hits_semantic,
 )
 from deps import get_current_user
-from Models import User
+from Models import User, CommentType
 
 from ..models import ManagedModel
 from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut
-from ..services import get_model_or_404, get_doc_ids, get_comment_ids, is_admin
-from schemas.search import TextSearchRequest, SemanticSearchRequest, ContentSearchResponse
+from ..services import (
+    get_model_or_404,
+    get_doc_ids,
+    get_comment_ids,
+    is_admin,
+    get_doc_ids_for_models,
+    get_comment_ids_for_models,
+    get_model_info_map,
+    get_doc_to_model_map,
+    get_comment_to_model_map,
+)
+from schemas.search import (
+    TextSearchRequest,
+    ContentSearchResponse,
+    ModelSemanticSearchResponse,
+    SemanticCommentSearchRequest,
+)
 
 
 router = APIRouter()
+
+
+def _semantic_search_model_scope(
+    db: Session,
+    current_user: User,
+    query: str,
+    model_ids: list[int],
+    top_k: int,
+    types: list[CommentType],
+):
+    doc_ids = get_doc_ids_for_models(db, model_ids)
+    comment_ids = get_comment_ids_for_models(db, model_ids)
+
+    document_hits = search_document_part_hits_semantic(
+        db=db,
+        query_text=query,
+        owner_id=current_user.id,
+        doc_ids=doc_ids,
+        limit=top_k,
+    )
+    comment_hits = search_comment_hits_semantic(
+        db=db,
+        query_text=query,
+        user_id=current_user.id,
+        comment_ids=comment_ids,
+        types=types or None,
+        limit=top_k,
+    )
+
+    model_map = get_model_info_map(db, model_ids)
+    doc_to_model = get_doc_to_model_map(db, model_ids)
+    comment_to_model = get_comment_to_model_map(db, model_ids)
+
+    documents = []
+    for hit in document_hits:
+        model_id = doc_to_model.get(hit["document_id"])
+        model = model_map.get(model_id) if model_id is not None else None
+        documents.append(
+            {
+                "model_id": model.id if model else None,
+                "model_title": model.model if model else None,
+                **hit,
+            }
+        )
+
+    comments = []
+    for hit in comment_hits:
+        model_id = comment_to_model.get(hit["comment_id"])
+        model = model_map.get(model_id) if model_id is not None else None
+        comments.append(
+            {
+                "model_id": model.id if model else None,
+                "model_title": model.model if model else None,
+                **hit,
+            }
+        )
+
+    return {"documents": documents, "comments": comments}
 
 
 @router.post("/", response_model=ModelOut, status_code=status.HTTP_201_CREATED)
@@ -159,36 +232,53 @@ def filter_model_content(
 
 
 @router.post(
+    "/semantic-search",
+    response_model=ModelSemanticSearchResponse,
+    status_code=status.HTTP_200_OK,
+)
+def semantic_search_all_models_content(
+    payload: SemanticCommentSearchRequest,
+    top_k: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = db.query(ManagedModel.id)
+    if not is_admin(current_user):
+        query = query.filter(ManagedModel.owner_id == current_user.id)
+    model_ids = [row[0] for row in query.all()]
+
+    return _semantic_search_model_scope(
+        db=db,
+        current_user=current_user,
+        query=payload.query,
+        model_ids=model_ids,
+        top_k=top_k,
+        types=payload.types,
+    )
+
+
+@router.post(
     "/{model_id}/semantic-search",
-    response_model=ContentSearchResponse,
+    response_model=ModelSemanticSearchResponse,
     status_code=status.HTTP_200_OK,
 )
 def semantic_search_model_content(
     model_id: int,
-    payload: SemanticSearchRequest,
+    payload: SemanticCommentSearchRequest,
+    top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     model = get_model_or_404(db, model_id, current_user)
-    doc_ids = get_doc_ids(db, model.id)
-    comment_ids = get_comment_ids(db, model.id)
 
-    return {
-        "documents": search_documents_semantic(
-            db=db,
-            query_text=payload.query,
-            owner_id=current_user.id,
-            doc_ids=doc_ids,
-            limit=payload.limit,
-        ),
-        "comments": search_comments_semantic(
-            db=db,
-            query_text=payload.query,
-            user_id=current_user.id,
-            comment_ids=comment_ids,
-            limit=payload.limit,
-        ),
-    }
+    return _semantic_search_model_scope(
+        db=db,
+        current_user=current_user,
+        query=payload.query,
+        model_ids=[model.id],
+        top_k=top_k,
+        types=payload.types,
+    )
 
 
 @router.patch("/{model_id}", response_model=ModelOut)

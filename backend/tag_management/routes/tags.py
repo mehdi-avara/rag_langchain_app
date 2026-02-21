@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -6,13 +6,18 @@ from sqlalchemy.orm import Session
 from db.init_db import get_db
 from db.search_connector import (
     search_documents_text,
-    search_documents_semantic,
+    search_document_part_hits_semantic,
     search_comments_text,
-    search_comments_semantic,
+    search_comment_hits_semantic,
 )
 from deps import get_current_user
-from Models import User, Document
-from schemas.search import TextSearchRequest, SemanticSearchRequest, ContentSearchResponse
+from Models import User, Document, CommentType
+from schemas.search import (
+    TextSearchRequest,
+    ContentSearchResponse,
+    TagSemanticSearchResponse,
+    SemanticCommentSearchRequest,
+)
 
 from ..system_tag import SystemTag
 
@@ -23,10 +28,110 @@ from ..services import (
     check_no_cycle,
     get_doc_ids,
     get_comment_ids,
+    get_descendant_tag_ids,
+    get_doc_ids_for_tags,
+    get_comment_ids_for_tags,
+    get_model_ids_for_tags,
+    get_model_document_ids,
+    get_tag_info_map,
+    get_model_info_map,
+    get_doc_to_tag_map,
+    get_comment_to_tag_map,
+    get_doc_to_model_map,
+    get_tag_to_model_map,
 )
 
 
 router = APIRouter()
+
+
+def _semantic_search_tag_scope(
+    db: Session,
+    current_user: User,
+    query: str,
+    tag_ids: list[int],
+    top_k: int,
+    types: list[CommentType],
+):
+    doc_ids = get_doc_ids_for_tags(db, tag_ids)
+    comment_ids = get_comment_ids_for_tags(db, tag_ids)
+
+    model_ids = get_model_ids_for_tags(db, tag_ids)
+    model_doc_ids = get_model_document_ids(db, model_ids)
+
+    all_doc_ids = list({*doc_ids, *model_doc_ids})
+
+    document_hits = search_document_part_hits_semantic(
+        db=db,
+        query_text=query,
+        owner_id=current_user.id,
+        doc_ids=all_doc_ids,
+        limit=top_k,
+    )
+    comment_hits = search_comment_hits_semantic(
+        db=db,
+        query_text=query,
+        user_id=current_user.id,
+        comment_ids=comment_ids,
+        types=types or None,
+        limit=top_k,
+    )
+
+    tag_map = get_tag_info_map(db, tag_ids)
+    model_map = get_model_info_map(db, model_ids)
+    doc_to_tag = get_doc_to_tag_map(db, tag_ids)
+    comment_to_tag = get_comment_to_tag_map(db, tag_ids)
+    doc_to_model = get_doc_to_model_map(db, model_ids)
+    tag_to_model = get_tag_to_model_map(db, tag_ids)
+
+    document_results = []
+    for hit in document_hits:
+        document_id = hit["document_id"]
+        tag_id = doc_to_tag.get(document_id)
+        model_id = doc_to_model.get(document_id)
+
+        if tag_id is None and model_id is not None:
+            for candidate_tag_id, candidate_model_id in tag_to_model.items():
+                if candidate_model_id == model_id:
+                    tag_id = candidate_tag_id
+                    break
+
+        tag = tag_map.get(tag_id) if tag_id is not None else None
+        if tag is None:
+            continue
+        model = model_map.get(model_id) if model_id is not None else None
+
+        document_results.append(
+            {
+                "tag_id": tag.id if tag else None,
+                "tag_title": tag.tag_name if tag else None,
+                "model_id": model.id if model else None,
+                "model_title": model.model if model else None,
+                **hit,
+            }
+        )
+
+    comment_results = []
+    for hit in comment_hits:
+        comment_id = hit["comment_id"]
+        tag_id = comment_to_tag.get(comment_id)
+        tag = tag_map.get(tag_id) if tag_id is not None else None
+        if tag is None:
+            continue
+        model_id = tag_to_model.get(tag_id) if tag_id is not None else None
+        model = model_map.get(model_id) if model_id is not None else None
+
+        comment_results.append(
+            {
+                "tag_id": tag.id if tag else None,
+                "tag_title": tag.tag_name if tag else None,
+                "model_id": model.id if model else None,
+                "model_title": model.model if model else None,
+                **hit,
+            }
+        )
+
+    return {"documents": document_results, "comments": comment_results}
 
 
 @router.get("/", response_model=List[TagOut], status_code=status.HTTP_200_OK)
@@ -81,33 +186,43 @@ async def filter_tag_content(
     }
 
 
-@router.post("/{tag_id}/semantic-search", response_model=ContentSearchResponse, status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
+async def semantic_search_all_tags_content(
+    payload: SemanticCommentSearchRequest,
+    top_k: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
+    return _semantic_search_tag_scope(
+        db=db,
+        current_user=current_user,
+        query=payload.query,
+        tag_ids=tag_ids,
+        top_k=top_k,
+        types=payload.types,
+    )
+
+
+@router.post("/{tag_id}/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
 async def semantic_search_tag_content(
     tag_id: int,
-    payload: SemanticSearchRequest,
+    payload: SemanticCommentSearchRequest,
+    top_k: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
-    doc_ids = get_doc_ids(db, tag_id)
-    comment_ids = get_comment_ids(db, tag_id)
+    tag_ids = get_descendant_tag_ids(db, tag_id, current_user.id)
 
-    return {
-        "documents": search_documents_semantic(
-            db=db,
-            query_text=payload.query,
-            owner_id=current_user.id,
-            doc_ids=doc_ids,
-            limit=payload.limit,
-        ),
-        "comments": search_comments_semantic(
-            db=db,
-            query_text=payload.query,
-            user_id=current_user.id,
-            comment_ids=comment_ids,
-            limit=payload.limit,
-        ),
-    }
+    return _semantic_search_tag_scope(
+        db=db,
+        current_user=current_user,
+        query=payload.query,
+        tag_ids=tag_ids,
+        top_k=top_k,
+        types=payload.types,
+    )
 
 
 @router.post("/", response_model=TagOut, status_code=status.HTTP_201_CREATED)

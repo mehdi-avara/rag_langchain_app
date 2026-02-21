@@ -1,11 +1,11 @@
 import os
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, Query
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
-from db.search_connector import search_comments_text, search_comments_semantic
+from db.search_connector import search_comments_text, search_comments_semantic, search_comment_hits_semantic
 from Models import Comment, User, CommentFile
 from deps import get_current_user
 from schemas.comment import (
@@ -13,7 +13,7 @@ from schemas.comment import (
     CommentOut,
     CommentUpdate,
 )
-from schemas.search import TextSearchRequest, SemanticSearchRequest
+from schemas.search import TextSearchRequest, SemanticSearchRequest, CommentSemanticHit, SemanticCommentSearchRequest
 
 
 from components import generate_embeddings_for_chunks
@@ -52,18 +52,20 @@ def filter_comments(
     )
 
 
-@router.post("/semantic-search", response_model=List[CommentOut], status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=List[CommentSemanticHit], status_code=status.HTTP_200_OK)
 def semantic_search_comments(
-    payload: SemanticSearchRequest,
+    payload: SemanticCommentSearchRequest,
+    top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return search_comments_semantic(
+    return search_comment_hits_semantic(
         db=db,
         query_text=payload.query,
         user_id=current_user.id,
         comment_ids=payload.ids or None,
-        limit=payload.limit,
+        types=payload.types or None,
+        limit=top_k,
     )
 
 
