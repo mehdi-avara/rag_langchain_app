@@ -53,7 +53,8 @@ def _semantic_search_tag_scope(
     current_user: User,
     query: str,
     tag_ids: list[int],
-    top_k: int,
+    doc_top_k: int,
+    comment_top_k: int,
     types: list[CommentType],
 ):
     doc_ids = get_doc_ids_for_tags(db, tag_ids)
@@ -64,21 +65,26 @@ def _semantic_search_tag_scope(
 
     all_doc_ids = list({*doc_ids, *model_doc_ids})
 
-    document_hits = search_document_part_hits_semantic(
-        db=db,
-        query_text=query,
-        owner_id=current_user.id,
-        doc_ids=all_doc_ids,
-        limit=top_k,
-    )
-    comment_hits = search_comment_hits_semantic(
-        db=db,
-        query_text=query,
-        user_id=current_user.id,
-        comment_ids=comment_ids,
-        types=types or None,
-        limit=top_k,
-    )
+    document_hits = []
+    if doc_top_k > 0:
+        document_hits = search_document_part_hits_semantic(
+            db=db,
+            query_text=query,
+            owner_id=current_user.id,
+            doc_ids=all_doc_ids,
+            limit=doc_top_k,
+        )
+
+    comment_hits = []
+    if comment_top_k > 0:
+        comment_hits = search_comment_hits_semantic(
+            db=db,
+            query_text=query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            types=types or None,
+            limit=comment_top_k,
+        )
 
     tag_map = get_tag_info_map(db, tag_ids)
     model_map = get_model_info_map(db, model_ids)
@@ -219,7 +225,8 @@ async def semantic_search_all_tags_content(
         current_user=current_user,
         query=payload.query,
         tag_ids=tag_ids,
-        top_k=top_k,
+        doc_top_k=top_k,
+        comment_top_k=top_k,
         types=payload.types,
     )
 
@@ -240,7 +247,8 @@ async def semantic_search_tag_content(
         current_user=current_user,
         query=payload.query,
         tag_ids=tag_ids,
-        top_k=top_k,
+        doc_top_k=top_k,
+        comment_top_k=top_k,
         types=payload.types,
     )
 

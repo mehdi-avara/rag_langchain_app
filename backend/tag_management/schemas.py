@@ -238,9 +238,10 @@ class TagSemanticSearchResponse(BaseModel):
 
 class TagAskRequest(BaseModel):
     question: str
-    mode: Literal["keyword", "vector", "hybrid"]
+    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     route: str = "full"
     scope: Literal["docs", "comments", "both"] = "both"
+    types: List[CommentType] = Field(default_factory=list)
 
 
 class TagAskMultiRequest(TagAskRequest):
@@ -252,3 +253,4 @@ class TagAskResponse(BaseModel):
     citations: List[int] = Field(default_factory=list)
     used_chunk_ids: List[int] = Field(default_factory=list)
     used_comment_ids: List[int] = Field(default_factory=list)
+    references: TagSemanticSearchResponse

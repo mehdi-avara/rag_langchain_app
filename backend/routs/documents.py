@@ -5,12 +5,19 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 import os
 
+from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from deps import get_current_user
 from Models import User,Document,Chunk,DocumentStatusType
 from db.init_db import get_db
 from db.search_connector import search_documents_text, search_documents_semantic, search_document_part_hits_semantic
 from schemas.document import DocumentOut,ChunkOut
-from schemas.search import TextSearchRequest, SemanticSearchRequest, DocumentSemanticHit
+from schemas.search import (
+    TextSearchRequest,
+    SemanticSearchRequest,
+    DocumentSemanticHit,
+    DocumentAskRequest,
+    DocumentAskResponse,
+)
 from settings import get_settings
 
 
@@ -100,6 +107,36 @@ async def semantic_search_documents(
         doc_ids=payload.ids or None,
         limit=top_k,
     )
+
+
+@router.post("/ask", response_model=DocumentAskResponse, status_code=status.HTTP_200_OK)
+async def ask_documents(
+    payload: DocumentAskRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc_top_k = 6 if payload.scope in {"docs", "both"} else 0
+    references = (
+        search_document_part_hits_semantic(
+            db=db,
+            query_text=payload.question,
+            owner_id=current_user.id,
+            doc_ids=None,
+            limit=doc_top_k,
+        )
+        if doc_top_k > 0
+        else []
+    )
+
+    answer = await generate_answer_from_references(payload.question, references)
+    used_chunk_ids, used_comment_ids, citations = parse_semantic_citations(answer)
+    return {
+        "answer": answer,
+        "citations": citations,
+        "used_chunk_ids": used_chunk_ids,
+        "used_comment_ids": used_comment_ids,
+        "references": references,
+    }
 
 
 @router.get("/{doc_id}", status_code=status.HTTP_200_OK, response_model=DocumentOut)

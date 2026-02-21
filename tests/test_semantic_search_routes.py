@@ -39,6 +39,8 @@ from tag_management.routes import tag_router
 
 model_routes_module = importlib.import_module("model_management.routes.models")
 tag_routes_module = importlib.import_module("tag_management.routes.tags")
+model_ask_module = importlib.import_module("model_management.routes.ask")
+tag_ask_module = importlib.import_module("tag_management.routes.ask")
 
 
 class DummyQuery:
@@ -286,3 +288,141 @@ def test_tag_route_uses_tag_owned_semantic_schema():
     source = Path(tag_routes_module.__file__).read_text()
     assert "from schemas.search import" not in source
     assert "SemanticCommentSearchRequestWithId" not in source
+
+
+def test_tag_ask_returns_semantic_references_and_parses_citations(monkeypatch):
+    captured = {}
+    references = {
+        "tags": [{"tag_id": 1, "tag_name": "Engine", "description": None, "father_tag_id": None, "createdAt": "2026-02-17T08:00:00", "ownerId": 7}],
+        "documents": [{"tag_id": 1, "tag_title": "Engine", "model_id": 500, "model_title": "M-500", "document_id": 100, "document_title": "Tag Doc", "part_id": 123, "part_text": "chunk", "createdAt": "2026-02-19T10:00:00", "status": "done", "owner_id": 7}],
+        "comments": [{"tag_id": 1, "tag_title": "Engine", "model_id": 500, "model_title": "M-500", "comment_id": 456, "comment_title": "C", "comment_content": "text", "type": "failure", "createdAt": "2026-02-19T13:00:00", "userId": 7}],
+    }
+
+    monkeypatch.setattr(tag_ask_module, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+    monkeypatch.setattr(tag_ask_module, "get_descendant_tag_ids", lambda *_args, **_kwargs: [1, 2])
+
+    def fake_scope(**kwargs):
+        captured.update(kwargs)
+        return references
+
+    async def fake_answer(*_args, **_kwargs):
+        return "Answer [chunk:123] [comment:456]"
+
+    monkeypatch.setattr(tag_ask_module, "_semantic_search_tag_scope", fake_scope)
+    monkeypatch.setattr(tag_ask_module, "generate_answer_from_references", fake_answer)
+
+    client = build_client(DummyDB())
+    resp = client.post("/system_tags/1/ask", json={"question": "q", "scope": "both", "types": ["failure"]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["references"] == references
+    assert body["used_chunk_ids"] == [123]
+    assert body["used_comment_ids"] == [456]
+    assert body["citations"] == [123, 456]
+    assert captured["tag_ids"] == [1, 2]
+    assert captured["doc_top_k"] == 6
+    assert captured["comment_top_k"] == 10
+    assert captured["types"] == [CommentType.FAILURE]
+
+
+def test_model_ask_returns_semantic_references_and_scope_limits(monkeypatch):
+    captured = {}
+    references = {
+        "documents": [{"model_id": 8, "model_title": "MX", "document_id": 60, "document_title": "Doc", "part_id": 11, "part_text": "chunk", "createdAt": "2026-02-18T09:00:00", "status": "done", "owner_id": 7}],
+        "comments": [],
+    }
+
+    monkeypatch.setattr(model_ask_module, "get_model_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=8))
+
+    def fake_scope(**kwargs):
+        captured.update(kwargs)
+        return references
+
+    async def fake_answer(*_args, **_kwargs):
+        return "Answer [chunk:11] [comment:456]"
+
+    monkeypatch.setattr(model_ask_module, "_semantic_search_model_scope", fake_scope)
+    monkeypatch.setattr(model_ask_module, "generate_answer_from_references", fake_answer)
+
+    client = build_client(DummyDB())
+    resp = client.post("/models/8/ask", json={"question": "q", "scope": "docs", "types": ["report"]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["references"] == references
+    assert body["used_chunk_ids"] == [11]
+    assert body["used_comment_ids"] == [456]
+    assert body["citations"] == [11, 456]
+    assert captured["model_ids"] == [8]
+    assert captured["doc_top_k"] == 6
+    assert captured["comment_top_k"] == 0
+    assert captured["types"] == [CommentType.REPORT]
+
+
+def test_document_ask_returns_document_semantic_references(monkeypatch):
+    captured = {}
+    references = [
+        {
+            "document_id": 10,
+            "document_title": "Doc A",
+            "part_id": 123,
+            "part_text": "matched part",
+            "createdAt": "2026-02-20T10:00:00",
+            "status": "done",
+            "owner_id": 7,
+        }
+    ]
+
+    def fake_search(**kwargs):
+        captured.update(kwargs)
+        return references
+
+    async def fake_answer(*_args, **_kwargs):
+        return "Answer [chunk:123] [comment:456]"
+
+    monkeypatch.setattr("routs.documents.search_document_part_hits_semantic", fake_search)
+    monkeypatch.setattr("routs.documents.generate_answer_from_references", fake_answer)
+
+    client = build_client(DummyDB())
+    resp = client.post("/documents/ask", json={"question": "q", "scope": "both"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["references"] == references
+    assert body["used_chunk_ids"] == [123]
+    assert body["used_comment_ids"] == [456]
+    assert body["citations"] == [123, 456]
+    assert captured["limit"] == 6
+
+
+def test_comment_ask_returns_comment_semantic_references_and_types(monkeypatch):
+    captured = {}
+    references = [
+        {
+            "comment_id": 30,
+            "comment_title": "Failure note",
+            "comment_content": "motor failure",
+            "type": "failure",
+            "createdAt": "2026-02-20T11:00:00",
+            "userId": 7,
+        }
+    ]
+
+    def fake_search(**kwargs):
+        captured.update(kwargs)
+        return references
+
+    async def fake_answer(*_args, **_kwargs):
+        return "Answer [chunk:123] [comment:30]"
+
+    monkeypatch.setattr("routs.comments.comment.search_comment_hits_semantic", fake_search)
+    monkeypatch.setattr("routs.comments.comment.generate_answer_from_references", fake_answer)
+
+    client = build_client(DummyDB())
+    resp = client.post("/comments/ask", json={"question": "q", "scope": "both", "types": ["failure", "report"]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["references"] == references
+    assert body["used_chunk_ids"] == [123]
+    assert body["used_comment_ids"] == [30]
+    assert body["citations"] == [123, 30]
+    assert captured["limit"] == 10
+    assert captured["types"] == [CommentType.FAILURE, CommentType.REPORT]

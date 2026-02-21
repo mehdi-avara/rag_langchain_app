@@ -4,6 +4,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 from Models import CommentType
+from schemas.search import ModelSemanticSearchResponse
 
 
 class ModelCreate(BaseModel):
@@ -108,9 +109,10 @@ class ModelCommentOut(BaseModel):
 
 class ModelAskRequest(BaseModel):
     question: str
-    mode: Literal["keyword", "vector", "hybrid"]
+    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     route: str = "full"
     scope: Literal["docs", "comments", "both"] = "both"
+    types: List[CommentType] = Field(default_factory=list)
 
 
 class ModelAskMultiRequest(ModelAskRequest):
@@ -122,3 +124,4 @@ class ModelAskResponse(BaseModel):
     citations: List[int] = Field(default_factory=list)
     used_chunk_ids: List[int] = Field(default_factory=list)
     used_comment_ids: List[int] = Field(default_factory=list)
+    references: ModelSemanticSearchResponse

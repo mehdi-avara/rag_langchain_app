@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -84,3 +84,30 @@ class ModelSemanticSearchResponse(BaseModel):
 class ContentSearchResponse(BaseModel):
     documents: List[DocumentOut] = Field(default_factory=list)
     comments: List[CommentOut] = Field(default_factory=list)
+
+
+class DocumentAskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    scope: Literal["docs", "comments", "both"] = "both"
+
+
+class DocumentAskResponse(BaseModel):
+    answer: str
+    citations: List[int] = Field(default_factory=list)
+    used_chunk_ids: List[int] = Field(default_factory=list)
+    used_comment_ids: List[int] = Field(default_factory=list)
+    references: List[DocumentSemanticHit] = Field(default_factory=list)
+
+
+class CommentAskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    scope: Literal["docs", "comments", "both"] = "both"
+    types: List[CommentType] = Field(default_factory=list)
+
+
+class CommentAskResponse(BaseModel):
+    answer: str
+    citations: List[int] = Field(default_factory=list)
+    used_chunk_ids: List[int] = Field(default_factory=list)
+    used_comment_ids: List[int] = Field(default_factory=list)
+    references: List[CommentSemanticHit] = Field(default_factory=list)

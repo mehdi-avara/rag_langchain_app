@@ -45,27 +45,33 @@ def _semantic_search_model_scope(
     current_user: User,
     query: str,
     model_ids: list[int],
-    top_k: int,
+    doc_top_k: int,
+    comment_top_k: int,
     types: list[CommentType],
 ):
     doc_ids = get_doc_ids_for_models(db, model_ids)
     comment_ids = get_comment_ids_for_models(db, model_ids)
 
-    document_hits = search_document_part_hits_semantic(
-        db=db,
-        query_text=query,
-        owner_id=current_user.id,
-        doc_ids=doc_ids,
-        limit=top_k,
-    )
-    comment_hits = search_comment_hits_semantic(
-        db=db,
-        query_text=query,
-        user_id=current_user.id,
-        comment_ids=comment_ids,
-        types=types or None,
-        limit=top_k,
-    )
+    document_hits = []
+    if doc_top_k > 0:
+        document_hits = search_document_part_hits_semantic(
+            db=db,
+            query_text=query,
+            owner_id=current_user.id,
+            doc_ids=doc_ids,
+            limit=doc_top_k,
+        )
+
+    comment_hits = []
+    if comment_top_k > 0:
+        comment_hits = search_comment_hits_semantic(
+            db=db,
+            query_text=query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            types=types or None,
+            limit=comment_top_k,
+        )
 
     model_map = get_model_info_map(db, model_ids)
     doc_to_model = get_doc_to_model_map(db, model_ids)
@@ -253,7 +259,8 @@ def semantic_search_all_models_content(
         current_user=current_user,
         query=payload.query,
         model_ids=model_ids,
-        top_k=top_k,
+        doc_top_k=top_k,
+        comment_top_k=top_k,
         types=payload.types,
     )
 
@@ -277,7 +284,8 @@ def semantic_search_model_content(
         current_user=current_user,
         query=payload.query,
         model_ids=[model.id],
-        top_k=top_k,
+        doc_top_k=top_k,
+        comment_top_k=top_k,
         types=payload.types,
     )
 

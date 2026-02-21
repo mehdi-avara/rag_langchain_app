@@ -4,6 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, Query
 from sqlalchemy.orm import Session
 
+from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from db.init_db import get_db
 from db.search_connector import search_comments_text, search_comments_semantic, search_comment_hits_semantic
 from Models import Comment, User, CommentFile
@@ -13,7 +14,13 @@ from schemas.comment import (
     CommentOut,
     CommentUpdate,
 )
-from schemas.search import TextSearchRequest, SemanticCommentSearchRequestWithId, CommentSemanticHit
+from schemas.search import (
+    TextSearchRequest,
+    SemanticCommentSearchRequestWithId,
+    CommentSemanticHit,
+    CommentAskRequest,
+    CommentAskResponse,
+)
 
 
 from components import generate_embeddings_for_chunks
@@ -67,6 +74,37 @@ def semantic_search_comments(
         types=payload.types or None,
         limit=top_k,
     )
+
+
+@router.post("/ask", response_model=CommentAskResponse, status_code=status.HTTP_200_OK)
+async def ask_comments(
+    payload: CommentAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    comment_top_k = 10 if payload.scope in {"comments", "both"} else 0
+    references = (
+        search_comment_hits_semantic(
+            db=db,
+            query_text=payload.question,
+            user_id=current_user.id,
+            comment_ids=None,
+            types=payload.types or None,
+            limit=comment_top_k,
+        )
+        if comment_top_k > 0
+        else []
+    )
+
+    answer = await generate_answer_from_references(payload.question, references)
+    used_chunk_ids, used_comment_ids, citations = parse_semantic_citations(answer)
+    return {
+        "answer": answer,
+        "citations": citations,
+        "used_chunk_ids": used_chunk_ids,
+        "used_comment_ids": used_comment_ids,
+        "references": references,
+    }
 
 
 @router.get("/{comment_id}", response_model=CommentOut)
