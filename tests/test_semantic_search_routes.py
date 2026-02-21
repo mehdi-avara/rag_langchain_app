@@ -197,6 +197,12 @@ def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
     )
     assert resp.status_code == 200
     body = resp.json()
+    assert body["tags"] == [{
+        "tag_id": 1,
+        "tag_name": "Engine",
+        "description": None,
+        "father_tag_id": None,
+    }]
     assert len(body["documents"]) == 2
     assert body["documents"][1]["model_id"] == 500
     assert body["documents"][1]["part_id"] == 2

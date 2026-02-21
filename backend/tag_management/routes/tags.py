@@ -86,6 +86,19 @@ def _semantic_search_tag_scope(
     comment_to_tag = get_comment_to_tag_map(db, tag_ids)
     doc_to_model = get_doc_to_model_map(db, model_ids)
     tag_to_model = get_tag_to_model_map(db, tag_ids)
+    scope_tags = []
+    for scoped_tag_id in list(dict.fromkeys(tag_ids)):
+        scoped_tag = tag_map.get(scoped_tag_id)
+        if scoped_tag is None:
+            continue
+        scope_tags.append(
+            {
+                "tag_id": scoped_tag.id,
+                "tag_name": scoped_tag.tag_name,
+                "description": getattr(scoped_tag, "description", None),
+                "father_tag_id": getattr(scoped_tag, "father_tag_id", None),
+            }
+        )
 
     document_results = []
     for hit in document_hits:
@@ -134,7 +147,7 @@ def _semantic_search_tag_scope(
             }
         )
 
-    return {"documents": document_results, "comments": comment_results}
+    return {"tags": scope_tags, "documents": document_results, "comments": comment_results}
 
 
 @router.get("/", response_model=List[TagOut], status_code=status.HTTP_200_OK)

@@ -196,6 +196,10 @@ class TagSemanticSearchRequestWithIds(TagSemanticSearchRequest):
     ids: List[int] = Field(default_factory=list)
 
 
+class TagScopeItem(TagBase):
+    tag_id: int
+
+
 class TagDocumentSemanticHit(BaseModel):
     tag_id: int
     tag_title: str
@@ -224,8 +228,10 @@ class TagCommentSemanticHit(BaseModel):
 
 
 class TagSemanticSearchResponse(BaseModel):
+    tags: List[TagScopeItem] = Field(default_factory=list)
     documents: List[TagDocumentSemanticHit] = Field(default_factory=list)
     comments: List[TagCommentSemanticHit] = Field(default_factory=list)
+    
 
 
 class TagAskRequest(BaseModel):
