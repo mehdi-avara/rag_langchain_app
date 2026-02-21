@@ -17,6 +17,7 @@ from schemas.search import (
     ContentSearchResponse,
     TagSemanticSearchResponse,
     SemanticCommentSearchRequest,
+    SemanticCommentSearchRequestWithId
 )
 
 from ..system_tag import SystemTag
@@ -188,7 +189,7 @@ async def filter_tag_content(
 
 @router.post("/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
 async def semantic_search_all_tags_content(
-    payload: SemanticCommentSearchRequest,
+    payload: SemanticCommentSearchRequestWithId,
     top_k: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

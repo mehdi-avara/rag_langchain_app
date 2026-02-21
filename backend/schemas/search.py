@@ -58,9 +58,10 @@ class ModelCommentSemanticHit(CommentSemanticHit):
 
 class SemanticCommentSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    ids: List[int] = Field(default_factory=list)
     types: List[CommentType] = Field(default_factory=list)
 
+class SemanticCommentSearchRequestWithId(SemanticCommentSearchRequest):
+    ids: List[int] = Field(default_factory=list)
 
 class TagSemanticSearchResponse(BaseModel):
     documents: List[TagDocumentSemanticHit] = Field(default_factory=list)
