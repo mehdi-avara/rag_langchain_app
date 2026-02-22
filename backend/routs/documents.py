@@ -1,9 +1,14 @@
 from typing import List, Optional
-from fastapi import Depends, APIRouter, UploadFile, status, Response , HTTPException, Query, Request, Header
+from fastapi import Depends, APIRouter, UploadFile, status, Response , HTTPException, Query, Request, Header, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
 import os
+import io
+import json
+import shutil
+import zipfile
+import posixpath
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from deps import get_current_user
@@ -25,6 +30,63 @@ settings = get_settings()
 
 
 router = APIRouter()
+
+
+def _normalize_zip_member_name(name: str) -> str:
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail=f"Invalid zip entry path: {name}")
+    normalized = posixpath.normpath(normalized)
+    if normalized in {"", "."}:
+        return ""
+    if normalized == ".." or normalized.startswith("../"):
+        raise HTTPException(status_code=400, detail=f"Invalid zip entry path: {name}")
+    if ":" in normalized.split("/", 1)[0]:
+        raise HTTPException(status_code=400, detail=f"Invalid zip entry path: {name}")
+    return normalized
+
+
+def _validate_member_target(base_dir: Path, relative_name: str) -> Path:
+    target = (base_dir / relative_name).resolve()
+    base = base_dir.resolve()
+    if os.path.commonpath([str(base), str(target)]) != str(base):
+        raise HTTPException(status_code=400, detail=f"Invalid zip entry path: {relative_name}")
+    return target
+
+
+def _find_middle_json_candidate(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfile.ZipInfo]) -> str:
+    middle_by_name = [name for name in file_entries if name.lower().endswith("_middle.json")]
+    if len(middle_by_name) == 1:
+        return middle_by_name[0]
+    if len(middle_by_name) > 1:
+        raise HTTPException(status_code=400, detail="Zip package must contain exactly one MinerU _middle.json file")
+
+    middle_by_content = []
+    for name, info in file_entries.items():
+        if not name.lower().endswith(".json"):
+            continue
+        try:
+            with zip_file.open(info) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        pdf_info = data.get("pdf_info", data) if isinstance(data, dict) else data
+        if isinstance(pdf_info, list):
+            middle_by_content.append(name)
+
+    if len(middle_by_content) == 1:
+        return middle_by_content[0]
+    if len(middle_by_content) > 1:
+        raise HTTPException(status_code=400, detail="Zip package contains multiple middle-json candidates")
+    raise HTTPException(status_code=400, detail="Zip package must contain one MinerU middle JSON file")
+
+
+def _extract_zip_safely(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfile.ZipInfo], dest_dir: Path) -> None:
+    for relative_name, info in file_entries.items():
+        target_path = _validate_member_target(dest_dir, relative_name)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with zip_file.open(info) as src, open(target_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
 
 
 @router.post("/upload")
@@ -64,6 +126,96 @@ def upload_pdf_mineru(
         )
 
     return {"doc_id": doc.id, "status": DocumentStatusType.QUEUED.value}
+
+
+@router.post("/import-processed-zip", status_code=status.HTTP_200_OK)
+async def import_processed_zip(
+    package: UploadFile = File(...),
+    display_filename: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    package_bytes = await package.read()
+    package_stream = io.BytesIO(package_bytes)
+
+    if not zipfile.is_zipfile(package_stream):
+        raise HTTPException(status_code=400, detail="Uploaded package must be a valid .zip file")
+    package_stream.seek(0)
+
+    with zipfile.ZipFile(package_stream) as zip_file:
+        file_entries: dict[str, zipfile.ZipInfo] = {}
+        for info in zip_file.infolist():
+            if info.is_dir():
+                continue
+            relative_name = _normalize_zip_member_name(info.filename)
+            if not relative_name:
+                continue
+            if relative_name in file_entries:
+                raise HTTPException(status_code=400, detail=f"Duplicate zip entry: {relative_name}")
+            file_entries[relative_name] = info
+
+        pdf_candidates = [name for name in file_entries if name.lower().endswith(".pdf")]
+        if len(pdf_candidates) != 1:
+            raise HTTPException(status_code=400, detail="Zip package must contain exactly one PDF file")
+        pdf_relative_name = pdf_candidates[0]
+
+        middle_relative_name = _find_middle_json_candidate(zip_file, file_entries)
+
+        doc_filename = (display_filename.strip() if display_filename else "") or Path(pdf_relative_name).name
+        doc = Document(
+            owner_id=current_user.id,
+            filename=doc_filename,
+            n_pages=0,
+            n_chunks=0,
+            file_path=None,
+            status=DocumentStatusType.INPROGGRESS.value,
+        )
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+
+        try:
+            doc_dir = Path(settings.files_dir) / str(doc.id)
+            doc_dir.mkdir(parents=True, exist_ok=True)
+            _extract_zip_safely(zip_file, file_entries, doc_dir)
+
+            extracted_pdf_path = _validate_member_target(doc_dir, pdf_relative_name)
+            middle_json_path = _validate_member_target(doc_dir, middle_relative_name)
+
+            original_pdf_path = doc_dir / "original.pdf"
+            if extracted_pdf_path.resolve() != original_pdf_path.resolve():
+                shutil.copyfile(extracted_pdf_path, original_pdf_path)
+
+            from core.simple_ingestion import ingest_processed_middle_json
+
+            n_pages, n_chunks = ingest_processed_middle_json(
+                middle_json_path=str(middle_json_path),
+                doc_id=doc.id,
+                db=db,
+            )
+            db.query(Document).filter(Document.id == doc.id).update({
+                Document.status: DocumentStatusType.DONE.value
+            })
+            db.commit()
+
+            return {
+                "doc_id": doc.id,
+                "status": DocumentStatusType.DONE.value,
+                "n_pages": n_pages,
+                "n_chunks": n_chunks,
+            }
+        except HTTPException:
+            db.query(Document).filter(Document.id == doc.id).update({
+                Document.status: DocumentStatusType.FAIELED.value
+            })
+            db.commit()
+            raise
+        except Exception as exc:
+            db.query(Document).filter(Document.id == doc.id).update({
+                Document.status: DocumentStatusType.FAIELED.value
+            })
+            db.commit()
+            raise HTTPException(status_code=500, detail=f"Failed to import processed package: {exc}")
 
 @router.get("", response_model=List[DocumentOut])
 async def list_documents(

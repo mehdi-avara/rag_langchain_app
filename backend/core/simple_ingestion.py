@@ -182,3 +182,75 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
         })
         db.bulk_save_objects(chunk_records)
         db.commit()
+
+
+def ingest_processed_middle_json(
+    middle_json_path: str,
+    doc_id: int,
+    db,
+    chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
+) -> tuple[int, int]:
+    """
+    Ingest an existing MinerU `_middle.json` for an already-created document.
+    Mirrors chunk/embedding/document updates used in run_mineru_on_file.
+    """
+    with open(middle_json_path, "r", encoding="utf-8") as f:
+        middle_data = json.load(f)
+
+    pdf_info = middle_data.get("pdf_info", middle_data)
+    if not isinstance(pdf_info, list):
+        raise ValueError("Invalid MinerU middle json: expected list under `pdf_info`")
+
+    chunks = chunk_text(
+        pdf_info=pdf_info,
+        mode=chunking_mode,
+        doc_id=doc_id,
+        base_url=settings.base_url,
+        max_tokens=800,
+        overlap_tokens=150,
+        min_chunk_tokens=20,
+    )
+
+    page_indices = [int(p.get("page_idx", -1)) for p in pdf_info if isinstance(p, dict)]
+    n_pages = (max(page_indices) + 1) if page_indices else 0
+
+    text_embeddings = []
+    embedding_chunks = [f"search_document: {c['chunk_embedding_text']}" for c in chunks]
+    if chunks:
+        text_embeddings = generate_embeddings_for_chunks(embedding_chunks)
+
+    chunk_records = []
+    current_pos = 0
+    for i, chunk in enumerate(chunks):
+        chunk_text_mm = chunk["chunk_text"]
+        start_pos = current_pos
+        end_pos = start_pos + len(chunk_text_mm)
+        current_pos = end_pos
+
+        chunk_embedding = text_embeddings[i] if i < len(text_embeddings) else None
+
+        holder = Chunk(
+            doc_id=doc_id,
+            page_num=int(chunk["start_page"]),
+            token_count=int(chunk["token_count"]),
+            content=chunk_text_mm,
+            start_pos=start_pos,
+            end_pos=end_pos,
+            chunk_type="text",
+            embedding=chunk_embedding
+        )
+        chunk_records.append(holder)
+
+    for i, chunk in enumerate(chunk_records):
+        chunk.vdb_id = f"{doc_id}_{i}"
+        chunk.es_id = f"{doc_id}_{i}"
+
+    db.query(Document).filter(Document.id == doc_id).update({
+        Document.n_pages: n_pages,
+        Document.n_chunks: len(chunks),
+        Document.file_path: str(doc_id),
+    })
+    if chunk_records:
+        db.bulk_save_objects(chunk_records)
+
+    return n_pages, len(chunks)
