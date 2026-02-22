@@ -66,31 +66,67 @@ def build_context_from_references(references: Any) -> str:
     return "\n".join(lines).strip()
 
 
-async def generate_answer_from_references(question: str, references: Any) -> str:
+def _ask_messages(question: str, references: Any) -> List[Dict[str, str]]:
     context = build_context_from_references(references)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Answer using ONLY the provided references.\n"
+                "If the references are insufficient, say so.\n"
+                "Cite sources strictly as [chunk:<part_id>] for chunks "
+                "and [comment:<comment_id>] for comments."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question:\n{question}\n\n"
+                f"References:\n{context if context else '(no references)'}"
+            ),
+        },
+    ]
+
+
+async def generate_answer_from_references(question: str, references: Any) -> str:
     response = await llm_client.async_openai_client.chat.completions.create(
         model=settings.openai_model,
         temperature=settings.llm_temperature,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Answer using ONLY the provided references.\n"
-                    "If the references are insufficient, say so.\n"
-                    "Cite sources strictly as [chunk:<part_id>] for chunks "
-                    "and [comment:<comment_id>] for comments."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Question:\n{question}\n\n"
-                    f"References:\n{context if context else '(no references)'}"
-                ),
-            },
-        ],
+        messages=_ask_messages(question, references),
     )
     return (response.choices[0].message.content or "").strip()
+
+
+def _extract_delta_text(delta_content: Any) -> str:
+    if isinstance(delta_content, str):
+        return delta_content
+    if isinstance(delta_content, list):
+        output: List[str] = []
+        for part in delta_content:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                output.append(part["text"])
+        return "".join(output)
+    return ""
+
+
+async def stream_answer_from_references(question: str, references: Any):
+    stream = await llm_client.async_openai_client.chat.completions.create(
+        model=settings.openai_model,
+        temperature=settings.llm_temperature,
+        messages=_ask_messages(question, references),
+        stream=True,
+    )
+
+    async for chunk in stream:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        if delta is None:
+            continue
+        text = _extract_delta_text(getattr(delta, "content", None))
+        if text:
+            yield text
 
 
 def parse_semantic_citations(answer: str) -> Tuple[List[int], List[int], List[int]]:

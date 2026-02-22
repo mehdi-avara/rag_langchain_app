@@ -1,3 +1,4 @@
+import json
 import os
 
 os.environ.setdefault("POSTGRES_DB", "test")
@@ -476,3 +477,124 @@ def test_model_ask_multi_without_ids_uses_all_available_models(monkeypatch):
     assert captured["model_ids"] == [8, 9]
     assert captured["doc_top_k"] == 6
     assert captured["comment_top_k"] == 10
+
+
+def _parse_sse_events(raw: str):
+    events = []
+    for block in [b for b in raw.split("\n\n") if b.strip()]:
+        event = None
+        data = None
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                event = line[len("event: "):]
+            elif line.startswith("data: "):
+                data = json.loads(line[len("data: "):])
+        if event is not None:
+            events.append((event, data))
+    return events
+
+
+def test_tag_ask_stream_emits_references_then_deltas_then_done(monkeypatch):
+    references = {
+        "tags": [{"tag_id": 1, "tag_name": "Engine"}],
+        "documents": [{"part_id": 101, "part_text": "doc text", "document_id": 10, "document_title": "Doc"}],
+        "comments": [{"comment_id": 202, "comment_content": "comment text", "comment_title": "C", "type": "failure"}],
+    }
+
+    def fake_scope(**_kwargs):
+        return references
+
+    async def fake_stream_answer(_question, _references):
+        for token in ["Answer ", "[chunk:101] ", "[comment:202]"]:
+            yield token
+
+    monkeypatch.setattr(tag_ask_module, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+    monkeypatch.setattr(tag_ask_module, "_semantic_search_tag_scope", fake_scope)
+    monkeypatch.setattr(tag_ask_module, "stream_answer_from_references", fake_stream_answer)
+
+    client = build_client(DummyDB(tag_ids=[1]))
+    with client.stream("POST", "/system_tags/ask/stream", json={"question": "q", "scope": "both"}) as resp:
+        assert resp.status_code == 200
+        events = _parse_sse_events("".join(resp.iter_text()))
+
+    assert events[0][0] == "references"
+    assert events[0][1] == {"references": references}
+    assert [name for name, _ in events[1:-1]] == ["delta", "delta", "delta"]
+    assert [payload["text"] for _, payload in events[1:-1]] == ["Answer ", "[chunk:101] ", "[comment:202]"]
+
+    done_payload = events[-1][1]
+    assert events[-1][0] == "done"
+    assert done_payload["answer"] == "Answer [chunk:101] [comment:202]"
+    assert done_payload["used_chunk_ids"] == [101]
+    assert done_payload["used_comment_ids"] == [202]
+    assert done_payload["citations"] == [101, 202]
+
+
+def test_tag_ask_stream_scope_limits_docs_only(monkeypatch):
+    references = {
+        "tags": [],
+        "documents": [{"part_id": i} for i in range(1, 9)],
+        "comments": [{"comment_id": i} for i in range(1, 13)],
+    }
+
+    def fake_scope(**_kwargs):
+        return references
+
+    async def fake_stream_answer(_question, _references):
+        yield "No citations"
+
+    monkeypatch.setattr(tag_ask_module, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+    monkeypatch.setattr(tag_ask_module, "_semantic_search_tag_scope", fake_scope)
+    monkeypatch.setattr(tag_ask_module, "stream_answer_from_references", fake_stream_answer)
+
+    client = build_client(DummyDB(tag_ids=[1]))
+    with client.stream("POST", "/system_tags/ask/stream", json={"question": "q", "scope": "docs"}) as resp:
+        events = _parse_sse_events("".join(resp.iter_text()))
+
+    refs = events[0][1]["references"]
+    assert len(refs["documents"]) == 6
+    assert refs["comments"] == []
+
+
+def test_tag_ask_stream_scope_limits_both_and_model_failure_event(monkeypatch):
+    references = {
+        "tags": [],
+        "documents": [{"part_id": i} for i in range(1, 9)],
+        "comments": [{"comment_id": i} for i in range(1, 13)],
+    }
+
+    def fake_scope(**_kwargs):
+        return references
+
+    async def fake_stream_answer(_question, _references):
+        yield "partial "
+        raise RuntimeError("stream boom")
+
+    monkeypatch.setattr(tag_ask_module, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+    monkeypatch.setattr(tag_ask_module, "_semantic_search_tag_scope", fake_scope)
+    monkeypatch.setattr(tag_ask_module, "stream_answer_from_references", fake_stream_answer)
+
+    client = build_client(DummyDB(tag_ids=[1]))
+    with client.stream("POST", "/system_tags/ask/stream", json={"question": "q", "scope": "both"}) as resp:
+        events = _parse_sse_events("".join(resp.iter_text()))
+
+    refs = events[0][1]["references"]
+    assert len(refs["documents"]) == 6
+    assert len(refs["comments"]) == 10
+    assert events[-1][0] == "error"
+    assert "Model stream failed" in events[-1][1]["message"]
+
+
+def test_tag_ask_stream_semantic_search_failure_emits_error(monkeypatch):
+    def failing_scope(**_kwargs):
+        raise RuntimeError("search boom")
+
+    monkeypatch.setattr(tag_ask_module, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=1))
+    monkeypatch.setattr(tag_ask_module, "_semantic_search_tag_scope", failing_scope)
+
+    client = build_client(DummyDB(tag_ids=[1]))
+    with client.stream("POST", "/system_tags/ask/stream", json={"question": "q", "scope": "both"}) as resp:
+        events = _parse_sse_events("".join(resp.iter_text()))
+
+    assert events[0][0] == "error"
+    assert "Semantic search failed" in events[0][1]["message"]
