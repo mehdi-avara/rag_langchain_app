@@ -89,7 +89,6 @@ def list_tag_comments(
     current_user: User = Depends(get_current_user),
     search: Optional[str] = Query(None),
     type: Optional[CommentType] = Query(None),
-    system_tag_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -110,8 +109,6 @@ def list_tag_comments(
         )
     if type:
         query = query.filter(Comment.type == type)
-    if system_tag_id:
-        query = query.filter(Comment.system_tag_id == system_tag_id)
 
     rows = (
         query
@@ -127,7 +124,7 @@ def list_tag_comments(
             TagCommentOut(
                 id=comment.id,
                 user_id=comment.user_id,
-                system_tag_id=comment.system_tag_id,
+                system_tag_id=link.tag_id,
                 title=comment.title,
                 type=comment.type,
                 content=comment.content,

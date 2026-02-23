@@ -310,13 +310,6 @@ async def delete_tag(
 ):
     tag = get_tag_or_404(db, tag_id, current_user.id)
 
-    docs = (
-        db.query(Document)
-        .filter(Document.owner_id == current_user.id, Document.system_tag_id == tag.id)
-        .all()
-    )
-    for doc in docs:
-        doc.system_tag_id = None
 
     db.delete(tag)
     db.commit()
