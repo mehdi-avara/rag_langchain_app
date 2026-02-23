@@ -27,4 +27,11 @@ class Document(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="documents")
+    chunks = relationship(
+        "Chunk",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     
