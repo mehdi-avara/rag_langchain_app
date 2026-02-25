@@ -11,6 +11,7 @@ from Models import Chat, ChatMessage, User, Document, DocumentStatusType
 from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
 from Models.chat import ChatRole
 from settings import get_settings
+from core.celery.tasks import chat_generate_title
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ def get_or_create_chat(
     *,
     chat_id: int | None,
     user: User,
-) -> Chat:
+) -> tuple[Chat, bool]:
     if chat_id:
         chat = (
             db.query(Chat)
@@ -29,13 +30,13 @@ def get_or_create_chat(
         )
         if not chat:
             raise chat_not_found_exception()
-        return chat
+        return chat, False
 
     chat = Chat(name="New Chat", user_id=user.id)
     db.add(chat)
     db.commit()
     db.refresh(chat)
-    return chat
+    return chat, True
 
 
 def add_message(
@@ -119,7 +120,7 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> ChatResponse:
-    chat = get_or_create_chat(
+    chat, is_new_chat = get_or_create_chat(
         db,
         chat_id=request.chat_id,
         user=current_user,
@@ -131,6 +132,9 @@ async def chat(
         role=ChatRole.user,
         content=request.query,
     )
+
+    if is_new_chat:
+        chat_generate_title.delay(chat.id, request.query)
 
     query = request.query
     if request.rewrite_query:
