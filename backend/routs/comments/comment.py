@@ -145,15 +145,15 @@ async def create_comment(
         type=payload.type,
         embedding=embedding_vec
     )
-    if payload.media_addresses:
-        new_comment.files = [
-            CommentFile(
-                media_address=addr,
-                file_name=os.path.basename(addr),
-                user_id=current_user.id,
-            )
-            for addr in payload.media_addresses
-        ]
+    # if payload.media_addresses:
+    #     new_comment.files = [
+    #         CommentFile(
+    #             media_address=addr,
+    #             file_name=os.path.basename(addr),
+    #             user_id=current_user.id,
+    #         )
+    #         for addr in payload.media_addresses
+    #     ]
 
     db.add(new_comment)
     db.commit()
@@ -163,7 +163,7 @@ async def create_comment(
 
 
 @router.put("/{comment_id}", response_model=CommentOut)
-async def update_comment_text(
+async def update_comment(
     comment_id: int,
     payload: CommentUpdate,
     db: Session = Depends(get_db),
@@ -172,6 +172,8 @@ async def update_comment_text(
     """
     Update comment content (and re-embed).
     """
+    #TODO upadate access contorl after I added user access control
+    
     comment = db.query(Comment).filter(Comment.id == comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
@@ -179,8 +181,10 @@ async def update_comment_text(
     # regenerate embedding for new text
     embeddings = generate_embeddings_for_chunks([payload.content])
     embedding_vec = embeddings[0] if embeddings else None
-
-    comment.content = payload.content
+    
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(comment, key, value)
     comment.embedding = embedding_vec
 
     db.commit()

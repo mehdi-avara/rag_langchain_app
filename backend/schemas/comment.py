@@ -9,8 +9,8 @@ from Models import CommentType
 class CommentBase(BaseModel):
     type: CommentType = CommentType.COMMENT
     content: str
-    title: str = "unknown"
-    media_addresses: List[str] = Field(default_factory=list)
+    title: str
+    # media_addresses: List[str] = Field(default_factory=list)
 
 
 class CommentCreate(CommentBase):
@@ -18,7 +18,10 @@ class CommentCreate(CommentBase):
 
 
 class CommentUpdate(BaseModel):
-    content: str
+    type: CommentType | None = None
+    content: str | None = None
+    title: str | None = None
+
 
 
 class CommentFileOut(BaseModel):
