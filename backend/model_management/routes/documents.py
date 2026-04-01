@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
@@ -9,6 +9,7 @@ from Models import User, Document
 
 from ..models import ModelDocumentLink
 from ..schemas import ModelDocLinkCreate, ModelDocLinkOut, ModelDocumentOut
+from routs.documents import upload_pdf_mineru
 from ..services import get_model_or_404, is_admin
 
 
@@ -51,6 +52,25 @@ def link_document(
     db.commit()
     db.refresh(link)
     return link
+
+
+@router.post("/{model_id}/documents/upload", response_model=ModelDocLinkOut, status_code=status.HTTP_201_CREATED)
+def upload_document_and_link(
+    model_id: int,
+    file: UploadFile = File(...),
+    link_description: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = get_model_or_404(db, model_id, current_user)
+
+    upload_result = upload_pdf_mineru(file=file, current_user=current_user, db=db)
+    doc_id = upload_result.get("doc_id")
+    if doc_id is None:
+        raise HTTPException(status_code=500, detail="Document upload did not return doc_id")
+
+    payload = ModelDocLinkCreate(document_id=doc_id, note=link_description)
+    return link_document(model_id=model_id, payload=payload, db=db, current_user=current_user)
 
 
 @router.delete("/{model_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

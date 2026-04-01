@@ -9,7 +9,13 @@ from deps import get_current_user
 from Models import User, Comment, CommentType
 
 from ..models import TagCommentLink
-from ..schemas import TagCommentOut, TagCommentLinkCreate, TagCommentLinkOut
+from ..schemas import (
+    TagCommentOut,
+    TagCommentLinkCreate,
+    TagCommentLinkOut,
+    TagCreateCommentAndLinkRequest,
+)
+from routs.comments.comment import create_comment
 from ..services import get_tag_or_404, is_admin
 
 
@@ -55,6 +61,20 @@ def link_comment(
     db.commit()
     db.refresh(link)
     return link
+
+
+@router.post("/{tag_id}/comments/create", response_model=TagCommentLinkOut, status_code=status.HTTP_201_CREATED)
+async def create_comment_and_link(
+    tag_id: int,
+    body: TagCreateCommentAndLinkRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = get_tag_or_404(db, tag_id, current_user.id)
+
+    comment = await create_comment(payload=body.payload, db=db, current_user=current_user)
+    payload = TagCommentLinkCreate(comment_id=comment.id, note=body.link_description)
+    return link_comment(tag_id=tag_id, payload=payload, db=db, current_user=current_user)
 
 
 @router.delete("/{tag_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)

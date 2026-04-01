@@ -3,6 +3,7 @@ from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field, model_validator
 from Models import CommentType
+from schemas.comment import CommentCreate
 
 
 class TagBase(BaseModel):
@@ -122,6 +123,11 @@ class TagDocLinkOut(BaseModel):
 class TagCommentLinkCreate(BaseModel):
     comment_id: int
     note: Optional[str] = None
+
+
+class TagCreateCommentAndLinkRequest(BaseModel):
+    payload: CommentCreate
+    link_description: Optional[str] = None
 
 
 class TagCommentLinkOut(BaseModel):

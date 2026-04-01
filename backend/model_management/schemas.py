@@ -4,6 +4,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 from Models import CommentType
+from schemas.comment import CommentCreate
 from schemas.search import ModelSemanticSearchResponse
 
 
@@ -59,6 +60,11 @@ class ModelDocLinkCreate(BaseModel):
 class ModelCommentLinkCreate(BaseModel):
     comment_id: int
     note: Optional[str] = None
+
+
+class ModelCreateCommentAndLinkRequest(BaseModel):
+    payload: CommentCreate
+    link_description: Optional[str] = None
 
 
 class ModelDocLinkOut(BaseModel):
