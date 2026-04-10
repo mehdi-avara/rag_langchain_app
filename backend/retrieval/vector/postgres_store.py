@@ -13,7 +13,7 @@ settings = get_settings()
 class PostgresVectorStore:
     def __init__(self, db: Session):
         self.db = db
-        self.embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
+        self.embeddings = JinaAPIEmbeddings()
 
     def add_texts(
         self,

@@ -5,7 +5,7 @@ from settings import get_settings
 
 settings = get_settings()
 
-embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
+embeddings = JinaAPIEmbeddings()
 
 
 def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:

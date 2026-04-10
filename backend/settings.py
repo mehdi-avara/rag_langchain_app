@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     openai_model: str =  "gpt-oss-120b"
     
     #services embedding_model
+    embedding_dim: int = 1024
+    embedding_model: str = "jina-embeddings-v3"
+    
     embedding_base_url: str = "http://10.0.0.10:8088/v1"
     embedding_api_key: str = "None"
     jina_api_key: str

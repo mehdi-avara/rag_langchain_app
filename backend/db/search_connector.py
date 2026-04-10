@@ -16,7 +16,7 @@ settings = get_settings()
 
 
 def _embedding_client() -> JinaAPIEmbeddings:
-    return JinaAPIEmbeddings(api_key=settings.jina_api_key)
+    return JinaAPIEmbeddings()
 
 
 def search_documents_text(
