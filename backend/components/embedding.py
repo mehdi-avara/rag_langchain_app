@@ -1,11 +1,15 @@
 import requests
 from langchain.embeddings.base import Embeddings
 
+from ui.settigs import get_settings
+
+settings = get_settings()
+
 class JinaAPIEmbeddings(Embeddings):
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.model = "jina-embeddings-v3"
-        self.api_url = "http://10.0.0.10:8088/v1/embeddings"
+        self.model = settings.embedding_model
+        self.api_url = settings.embedding_api_url
         self.task = "text-matching"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -13,14 +17,18 @@ class JinaAPIEmbeddings(Embeddings):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        payload = {
 
+        payload = {
+            "model": self.model,
             "input": texts
         }
+
         response = requests.post(self.api_url, headers=headers, json=payload)
         response.raise_for_status()
-        
-        return [item["embedding"] for item in response.json()["data"]]
+
+        result = response.json()
+
+        return result["result"]["data"]
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]

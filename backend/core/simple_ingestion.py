@@ -24,7 +24,7 @@ import asyncio
 
 settings = get_settings()
 # Use centralized async client via llm_client
-embeddings = JinaAPIEmbeddings(api_key=settings.jina_api_key)
+embeddings = JinaAPIEmbeddings(api_key=settings.embedding_api_key)
 
 async def generate_embeddings_for_chunks(chunks: List[str]) -> List[List[float]]:
     """Generate embeddings for a list of text chunks."""

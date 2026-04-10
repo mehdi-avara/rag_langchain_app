@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_exp_hours: int = 744
 
-    jina_api_key: str
+    embedding_api_key: str
+    embedding_dim: int = 1024
+    embedding_model: str = "jina-embeddings-v3"
+    embedding_api_url: str = "http://localhost:8080"
+    
     
     bm25_index_path: str = "data/bm25.pkl"
     
