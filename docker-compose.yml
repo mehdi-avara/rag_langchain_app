@@ -10,10 +10,10 @@ services:
       - redis_data:/data
 
   backend:
-    # image: rag_langchain_app-backend
-    build:
-      context: ./backend
-      target: backend
+    image: rag_langchain_app-backend
+    # build:
+      # context: ./backend
+      # target: backend
     env_file: .env
     environment:
       files_dir: /app/uploaded_files
@@ -33,14 +33,15 @@ services:
       # - chroma_data:/data/chroma
 
   celery:
-    build:
-      context: ./backend
-      target: celery
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
+    image: rag_langchain_app-celery
+    # build:
+    #   context: ./backend
+    #   target: celery
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
     env_file: .env
     environment:
       files_dir: /app/uploaded_files
@@ -60,13 +61,14 @@ services:
       - $files_dir:/app/uploaded_files
 
   stt:
-    build:
-      context: ./services/stt
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
+    image: rag_langchain_app-stt
+    # build:
+    #   context: ./services/stt
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
     env_file: .env
     environment:
       WHISPER_MODEL: medium
