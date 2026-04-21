@@ -13,11 +13,12 @@ class User(Base):
     First_name = Column(String, nullable=False)
     Last_name = Column(String, nullable=True)
     pw_hash = Column(String, nullable=False)
-    role = Column(String, nullable=False, default="user")
+    role = Column(String, nullable=False, default="user")  # این رو بعداً می‌تونی حذف کنی
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     notification_token = Column(String, nullable=True)
     image_path = Column(String, nullable=True)
 
+    roles = relationship("Role", secondary="user_role", back_populates="users", overlaps="user_role")
     
     system_tags = relationship("SystemTag", back_populates="owner", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
