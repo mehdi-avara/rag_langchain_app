@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -10,8 +11,8 @@ settings = get_settings()
 
 engine = create_engine(
     settings.postgres_url,
-    pool_pre_ping=True,  # auto-check dead connections
-    future=True
+    pool_pre_ping=True,
+    future=True,
 )
 
 
@@ -19,16 +20,13 @@ SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,
     autocommit=False,
-    future=True
+    future=True,
 )
 
 
 def get_db():
-    """
-    Used in FastAPI routes:
-    db: Session = Depends(get_db)
-    """
     db = SessionLocal()
+
     try:
         yield db
     finally:
@@ -37,13 +35,8 @@ def get_db():
 
 @contextmanager
 def db_session():
-    """
-    Used in scripts:
-        with db_session() as db:
-            db.query(...)
-            db.add(...)
-    """
     db = SessionLocal()
+
     try:
         yield db
         db.commit()

@@ -6,11 +6,10 @@ from typing import List
 from core.exceptions import chat_not_found_exception
 from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem, ChatHistoryResponse, ChatMessageItem
 from db.init_db import get_db
-from deps import get_current_user
-from Models import Chat, ChatMessage, User, Document, DocumentStatusType
-from core.agents import build_answer_graph , GraphState, call_llm_to_rewrite
+from deps import require_permission
+from Models import Chat, ChatMessage, User, Document
+from core.agents import build_answer_graph, GraphState, call_llm_to_rewrite
 from Models.chat import ChatRole
-from settings import get_settings
 from core.celery.tasks import chat_generate_title
 
 router = APIRouter()
@@ -61,13 +60,13 @@ def add_message(
     db.refresh(message)
     return message
 
+
 def build_retrieved_data(
     db: Session,
     *,
     chunks: list,
     comments: list,
 ) -> tuple[list[Retrieved_data], list[int]]:
-
     retrieved_data: list[Retrieved_data] = []
     citations: list[int] = []
 
@@ -87,8 +86,8 @@ def build_retrieved_data(
             Retrieved_data(
                 content=chunk.content,
                 doc_id=chunk.doc_id,
-                doc_name=doc_name_map[chunk.doc_id],
-                title=doc_name_map[chunk.doc_id],
+                doc_name=doc_name_map.get(chunk.doc_id, ""),
+                title=doc_name_map.get(chunk.doc_id, ""),
                 chunk_id=chunk.id,
                 chunk_page=chunk.page_num + 1,
                 comment_id=None,
@@ -102,7 +101,7 @@ def build_retrieved_data(
             Retrieved_data(
                 content=comment.content,
                 doc_id=None,
-                doc_name= "",
+                doc_name="",
                 title=comment.title,
                 chunk_id=None,
                 chunk_page=None,
@@ -113,14 +112,14 @@ def build_retrieved_data(
 
     return retrieved_data, citations
 
-# Chat route /chat itself
-@router.post("")
+
+@router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(require_permission("chat:use")),
+    db: Session = Depends(get_db),
 ) -> ChatResponse:
-    chat, is_new_chat = get_or_create_chat(
+    chat_obj, is_new_chat = get_or_create_chat(
         db,
         chat_id=request.chat_id,
         user=current_user,
@@ -128,15 +127,16 @@ async def chat(
 
     add_message(
         db,
-        chat_id=chat.id,
+        chat_id=chat_obj.id,
         role=ChatRole.user,
         content=request.query,
     )
 
     if is_new_chat:
-        chat_generate_title.delay(chat.id, request.query)
+        chat_generate_title.delay(chat_obj.id, request.query)
 
     query = request.query
+
     if request.rewrite_query:
         query = await call_llm_to_rewrite(query)
 
@@ -161,70 +161,74 @@ async def chat(
 
     add_message(
         db,
-        chat_id=chat.id,
+        chat_id=chat_obj.id,
         role=ChatRole.assistant,
         content=result["answer"],
         citations=citations,
         retrieved_chunks=[c.model_dump() for c in retrieved_data],
     )
 
-    return {
-        "answer": result["answer"],
-        "citations": citations,
-        "retrieved_chunks": retrieved_data,
-        "chat_id": chat.id,
-    }
-
+    return ChatResponse(
+        answer=result["answer"],
+        citations=citations,
+        retrieved_chunks=retrieved_data,
+        chat_id=chat_obj.id,
+    )
 
 
 @router.patch("/{chat_id}/name")
 async def update_chat_name(
     chat_id: int,
     request: ChatUpdateNameRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
-    if not chat:
-        raise chat_not_found_exception()
-
-    chat.name = request.name
-    db.commit()
-    db.refresh(chat)
-
-    return {"chat_id": chat.id, "name": chat.name}
-
-
-@router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_chat(
-    chat_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("chat:update")),
     db: Session = Depends(get_db),
 ):
-    chat = (
+    chat_obj = (
         db.query(Chat)
         .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
         .first()
     )
 
-    if not chat:
+    if not chat_obj:
         raise chat_not_found_exception()
 
-    # delete messages first
-    db.query(ChatMessage).filter(ChatMessage.chat_id == chat.id).delete()
-    db.delete(chat)
+    chat_obj.name = request.name
+
     db.commit()
-    
+    db.refresh(chat_obj)
+
+    return {"chat_id": chat_obj.id, "name": chat_obj.name}
+
+
+@router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(
+    chat_id: int,
+    current_user: User = Depends(require_permission("chat:delete")),
+    db: Session = Depends(get_db),
+):
+    chat_obj = (
+        db.query(Chat)
+        .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
+        .first()
+    )
+
+    if not chat_obj:
+        raise chat_not_found_exception()
+
+    db.query(ChatMessage).filter(ChatMessage.chat_id == chat_obj.id).delete()
+    db.delete(chat_obj)
+    db.commit()
+
 
 @router.get("/list", response_model=ChatListResponse)
 async def list_user_chats(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("chat:read")),
     db: Session = Depends(get_db),
 ):
     chats = (
         db.query(Chat.id, Chat.name)
         .filter(Chat.user_id == current_user.id)
-        .order_by(desc(Chat.id))  # newest first
+        .order_by(desc(Chat.id))
         .all()
     )
 
@@ -232,50 +236,43 @@ async def list_user_chats(
         chats=[
             ChatListItem(
                 chat_id=chat.id,
-                name=chat.name
-                )
+                name=chat.name,
+            )
             for chat in chats
         ]
     )
-    
-    
+
+
 @router.get("/{chat_id}/history", response_model=ChatHistoryResponse)
 async def get_chat_history(
     chat_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("chat:read")),
     db: Session = Depends(get_db),
 ):
-    # Ensure the chat belongs to the current user
-    chat = (
+    chat_obj = (
         db.query(Chat)
         .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
         .first()
     )
-    if not chat:
+
+    if not chat_obj:
         raise chat_not_found_exception()
 
-    # Load messages (oldest -> newest)
     messages = (
         db.query(ChatMessage)
-        .filter(ChatMessage.chat_id == chat.id)
+        .filter(ChatMessage.chat_id == chat_obj.id)
         .order_by(desc(ChatMessage.id))
         .all()
     )
 
     def parse_retrieved_chunks(raw) -> List[Retrieved_data]:
-        """
-        raw is what you stored in DB:
-        - None
-        - list[dict] (from c.model_dump())
-        """
         if not raw:
             return []
-        # validate/convert dicts -> Retrieved_data
         return [Retrieved_data.model_validate(item) for item in raw]
 
     return ChatHistoryResponse(
-        chat_id=chat.id,
-        name=chat.name,
+        chat_id=chat_obj.id,
+        name=chat_obj.name,
         messages=[
             ChatMessageItem(
                 id=m.id,

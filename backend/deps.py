@@ -8,13 +8,14 @@ from Models import User
 from db.init_db import get_db
 from settings import get_settings
 
+
 settings = get_settings()
 security = HTTPBearer()
 
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -24,15 +25,13 @@ def get_current_user(
 
     try:
         token = credentials.credentials
-
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        user_id = payload.get("sub")
+        token_type = payload.get("type")
 
-        user_id: str = payload.get("sub")
-        token_type: str = payload.get("type")
-        if user_id is None:
+        if user_id is None or token_type != "access":
             raise credentials_exception
-        if token_type != "access":
-            raise credentials_exception
+
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,9 +42,43 @@ def get_current_user(
         raise credentials_exception
 
     user = db.query(User).filter(User.id == int(user_id)).first()
+
     if user is None:
-        print(f"❌ No user found with ID: {user_id}")
         raise credentials_exception
 
-    print(f"✅ Authenticated user: {user.username}")
     return user
+
+
+def require_permission(permission_name: str):
+    def checker(current_user: User = Depends(get_current_user)) -> User:
+        permissions = {
+            permission.name
+            for role in current_user.roles
+            if role.is_active
+            for permission in role.permissions
+        }
+
+        if permission_name not in permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied",
+            )
+
+        return current_user
+
+    return checker
+
+
+def require_role(role_name: str):
+    def checker(current_user: User = Depends(get_current_user)) -> User:
+        roles = {role.name for role in current_user.roles if role.is_active}
+
+        if role_name not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role denied",
+            )
+
+        return current_user
+
+    return checker

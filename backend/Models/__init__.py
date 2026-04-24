@@ -1,4 +1,5 @@
 from .user import User
+from .rbac import Role, Permission, user_role, role_permission
 from .document import Document, DocumentStatusType
 from .chunk import Chunk
 from .comment import Comment, CommentType
@@ -11,6 +12,10 @@ from tag_management.models import TagModelLink, TagDocumentLink, TagCommentLink
 
 __all__ = [
     "User",
+    "Role",
+    "Permission",
+    "user_role",
+    "role_permission",
     "Document",
     "Chunk",
     "Comment",
