@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from db.init_db import get_db
-from deps import get_current_user
+from deps import require_permission
 from Models import User
 
 from ..models import ManagedModel
@@ -33,7 +33,7 @@ async def ask_model(
     model_id: int,
     payload: ModelAskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:ask")),
 ):
     model = get_model_or_404(db, model_id, current_user)
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
@@ -64,7 +64,7 @@ async def ask_model(
 async def ask_models(
     payload: ModelAskMultiRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:ask")),
 ):
     model_ids = list(dict.fromkeys(payload.model_ids))
     if not model_ids:
@@ -75,6 +75,7 @@ async def ask_models(
 
     for provided_model_id in model_ids:
         get_model_or_404(db, provided_model_id, current_user)
+
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
 
     references = _semantic_search_model_scope(

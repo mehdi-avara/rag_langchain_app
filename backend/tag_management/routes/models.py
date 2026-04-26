@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from db.init_db import get_db
-from deps import get_current_user
+from deps import require_permission
 from Models import User
 
 from model_management.models import ManagedModel
@@ -23,7 +23,7 @@ def link_model(
     tag_id: int,
     payload: TagModelLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:models")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
 
@@ -61,7 +61,7 @@ def unlink_model(
     tag_id: int,
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:models")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
 
@@ -85,7 +85,7 @@ def unlink_model(
 def list_tag_models(
     tag_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:models")),
     search: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),

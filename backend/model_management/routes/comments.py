@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from db.init_db import get_db
-from deps import get_current_user
+from deps import require_permission
 from Models import User, Comment
 
 from ..models import ModelCommentLink
@@ -27,7 +27,7 @@ def link_comment(
     model_id: int,
     payload: ModelCommentLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:comments")),
 ):
     model = get_model_or_404(db, model_id, current_user)
 
@@ -65,7 +65,7 @@ async def create_comment_and_link(
     model_id: int,
     body: ModelCreateCommentAndLinkRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:comments")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -79,7 +79,7 @@ def unlink_comment(
     model_id: int,
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:comments")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -103,10 +103,9 @@ def unlink_comment(
 def list_linked_comments(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:comments")),
     search: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
-    # system_tag_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -127,8 +126,6 @@ def list_linked_comments(
         )
     if type:
         query = query.filter(Comment.type == type)
-    # if system_tag_id:
-    #     query = query.filter(Comment.system_tag_id == system_tag_id)
 
     rows = (
         query
@@ -144,10 +141,7 @@ def list_linked_comments(
             ModelCommentOut(
                 id=comment.id,
                 user_id=comment.user_id,
-                # system_tag_id=comment.system_tag_id,
                 title=comment.title,
-                # doc_id=comment.doc_id,
-                # chunk_id=comment.chunk_id,
                 type=comment.type,
                 content=comment.content,
                 created_at=comment.created_at,

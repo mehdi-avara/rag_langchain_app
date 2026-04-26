@@ -1,7 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime
 from sqlalchemy.orm import relationship
-
 from db.base import Base
 
 
@@ -9,7 +8,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    username = Column(String, unique=True, nullable=False)
+    username = Column(String, unique=True, nullable=False, index=True)
     First_name = Column(String, nullable=False)
     Last_name = Column(String, nullable=True)
     pw_hash = Column(String, nullable=False)
@@ -18,7 +17,7 @@ class User(Base):
     notification_token = Column(String, nullable=True)
     image_path = Column(String, nullable=True)
 
-    
+    roles = relationship("Role", secondary="user_role", back_populates="users", lazy="selectin")
     system_tags = relationship("SystemTag", back_populates="owner", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="user")

@@ -1,6 +1,7 @@
-from typing import Optional
+from datetime import datetime
+from typing import Optional, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserNotificationTokenOut(BaseModel):
@@ -11,6 +12,49 @@ class UserNotificationTokenIn(BaseModel):
     notification_token: str
 
 
+class PermissionBase(BaseModel):
+    name: str
+    resource: str
+    action: str
+    description: Optional[str] = None
+
+
+class PermissionCreate(PermissionBase):
+    pass
+
+
+class PermissionOut(PermissionBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class RoleBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class RoleCreate(RoleBase):
+    permission_ids: List[int] = Field(default_factory=list)
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    permission_ids: Optional[List[int]] = None
+
+
+class RoleOut(RoleBase):
+    id: int
+    permissions: List[PermissionOut] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
 class CurrentUserOut(BaseModel):
     id: int
     username: str
@@ -18,15 +62,49 @@ class CurrentUserOut(BaseModel):
     First_name: str
     Last_name: Optional[str] = None
     image_path: Optional[str] = None
+    roles: List[RoleOut] = Field(default_factory=list)
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    First_name: str
+    Last_name: Optional[str] = None
+    role_ids: List[int] = Field(default_factory=list)
+
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    First_name: Optional[str] = None
+    Last_name: Optional[str] = None
+    notification_token: Optional[str] = None
+    image_path: Optional[str] = None
+    role_ids: Optional[List[int]] = None
 
 
 class UserUpdateIn(BaseModel):
     username: Optional[str] = None
     First_name: Optional[str] = None
     Last_name: Optional[str] = None
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    First_name: str
+    Last_name: Optional[str] = None
+    role: str
+    created_at: datetime
+    notification_token: Optional[str] = None
+    image_path: Optional[str] = None
+    roles: List[RoleOut] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
 
 
 class ChangePasswordIn(BaseModel):
