@@ -331,4 +331,4 @@ async def list_child_tags(
     db: Session = Depends(get_db),
 ):
     parent = get_tag_or_404(db, tag_id, current_user.id)
-    return sorted(parent.children, key=lambda t: t.created_at)a
+    return sorted(parent.children, key=lambda t: t.created_at)
