@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
-from deps import get_current_user
+from deps import require_permission
 from Models import User, Document
 
 from ..models import TagDocumentLink
@@ -21,7 +21,7 @@ def link_document(
     tag_id: int,
     payload: TagDocLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:documents")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
 
@@ -67,7 +67,7 @@ def upload_document_and_link(
     file: UploadFile = File(...),
     link_description: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:documents")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
 
@@ -85,7 +85,7 @@ def unlink_document(
     tag_id: int,
     document_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:documents")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
 
@@ -109,7 +109,7 @@ def unlink_document(
 def list_tag_documents(
     tag_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:documents")),
     search: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),

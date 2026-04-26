@@ -10,7 +10,7 @@ from db.search_connector import (
     search_comments_text,
     search_comment_hits_semantic,
 )
-from deps import get_current_user
+from deps import require_permission
 from Models import User, Document, CommentType
 
 from ..system_tag import SystemTag
@@ -92,6 +92,7 @@ def _semantic_search_tag_scope(
     comment_to_tag = get_comment_to_tag_map(db, tag_ids)
     doc_to_model = get_doc_to_model_map(db, model_ids)
     tag_to_model = get_tag_to_model_map(db, tag_ids)
+
     scope_tags = []
     for scoped_tag_id in list(dict.fromkeys(tag_ids)):
         scoped_tag = tag_map.get(scoped_tag_id)
@@ -123,6 +124,7 @@ def _semantic_search_tag_scope(
         tag = tag_map.get(tag_id) if tag_id is not None else None
         if tag is None:
             continue
+
         model = model_map.get(model_id) if model_id is not None else None
 
         document_results.append(
@@ -142,6 +144,7 @@ def _semantic_search_tag_scope(
         tag = tag_map.get(tag_id) if tag_id is not None else None
         if tag is None:
             continue
+
         model_id = tag_to_model.get(tag_id) if tag_id is not None else None
         model = model_map.get(model_id) if model_id is not None else None
 
@@ -160,7 +163,7 @@ def _semantic_search_tag_scope(
 
 @router.get("/", response_model=List[TagOut], status_code=status.HTTP_200_OK)
 async def list_tags(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:read")),
     db: Session = Depends(get_db),
     root_only: bool = Query(False, description="If true, only return root tags"),
 ):
@@ -174,7 +177,7 @@ async def list_tags(
 @router.get("/{tag_id}", response_model=TagOut, status_code=status.HTTP_200_OK)
 async def get_tag(
     tag_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:read")),
     db: Session = Depends(get_db),
 ):
     tag = get_tag_or_404(db, tag_id, current_user.id)
@@ -185,7 +188,7 @@ async def get_tag(
 async def filter_tag_content(
     tag_id: int,
     payload: TagTextSearchRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:search")),
     db: Session = Depends(get_db),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
@@ -214,12 +217,18 @@ async def filter_tag_content(
 async def semantic_search_all_tags_content(
     payload: TagSemanticSearchRequestWithIds,
     top_k: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:search")),
     db: Session = Depends(get_db),
 ):
-    all_tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
+    all_tag_ids = [
+        row[0]
+        for row in db.query(SystemTag.id)
+        .filter(SystemTag.owner_id == current_user.id)
+        .all()
+    ]
     requested_tag_ids = set(payload.ids)
     tag_ids = [tag_id for tag_id in all_tag_ids if tag_id in requested_tag_ids] if requested_tag_ids else all_tag_ids
+
     return _semantic_search_tag_scope(
         db=db,
         current_user=current_user,
@@ -236,7 +245,7 @@ async def semantic_search_tag_content(
     tag_id: int,
     payload: TagSemanticSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:search")),
     db: Session = Depends(get_db),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
@@ -256,7 +265,7 @@ async def semantic_search_tag_content(
 @router.post("/", response_model=TagOut, status_code=status.HTTP_201_CREATED)
 async def create_tag(
     payload: TagCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:create")),
     db: Session = Depends(get_db),
 ):
     _ = validate_parent_tag(db, payload.father_tag_id, current_user.id)
@@ -278,7 +287,7 @@ async def create_tag(
 async def update_tag(
     tag_id: int,
     payload: TagUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:update")),
     db: Session = Depends(get_db),
 ):
     tag = get_tag_or_404(db, tag_id, current_user.id)
@@ -305,11 +314,10 @@ async def update_tag(
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tag(
     tag_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:delete")),
     db: Session = Depends(get_db),
 ):
     tag = get_tag_or_404(db, tag_id, current_user.id)
-
 
     db.delete(tag)
     db.commit()
@@ -319,8 +327,8 @@ async def delete_tag(
 @router.get("/{tag_id}/children", response_model=List[TagOut], status_code=status.HTTP_200_OK)
 async def list_child_tags(
     tag_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:read")),
     db: Session = Depends(get_db),
 ):
     parent = get_tag_or_404(db, tag_id, current_user.id)
-    return sorted(parent.children, key=lambda t: t.created_at)
+    return sorted(parent.children, key=lambda t: t.created_at)a

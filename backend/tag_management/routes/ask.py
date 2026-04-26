@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations, stream_answer_from_references
 from db.init_db import get_db
-from deps import get_current_user
+from deps import require_permission
 from Models import User
 
 from ..schemas import TagAskRequest, TagAskMultiRequest, TagAskResponse
@@ -36,7 +36,7 @@ async def ask_tag(
     tag_id: int,
     payload: TagAskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:ask")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user.id)
     tag_ids = get_descendant_tag_ids(db, tag_id, current_user.id)
@@ -72,7 +72,7 @@ def _sse_event(event: str, data: dict) -> str:
 async def ask_tags_stream(
     payload: TagAskMultiRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:ask")),
 ):
     tag_ids = list(dict.fromkeys(payload.tag_ids))
     if not tag_ids:
@@ -133,7 +133,7 @@ async def ask_tags_stream(
 async def ask_tags(
     payload: TagAskMultiRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("tags:ask")),
 ):
     tag_ids = list(dict.fromkeys(payload.tag_ids))
     if not tag_ids:
@@ -141,6 +141,7 @@ async def ask_tags(
 
     for provided_tag_id in tag_ids:
         get_tag_or_404(db, provided_tag_id, current_user.id)
+
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
 
     references = _semantic_search_tag_scope(

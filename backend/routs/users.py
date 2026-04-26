@@ -25,11 +25,31 @@ router = APIRouter()
 settings = get_settings()
 
 
+def get_user_permission_names(user: User) -> list[str]:
+    return sorted(
+        {
+            permission.name
+            for role in user.roles
+            if role.is_active
+            for permission in role.permissions
+        }
+    )
+
+
 @router.get("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
 def get_me(
     current_user: User = Depends(require_permission("profile:read")),
 ) -> CurrentUserOut:
-    return current_user
+    return CurrentUserOut(
+        id=current_user.id,
+        username=current_user.username,
+        role=current_user.role,
+        First_name=current_user.First_name,
+        Last_name=current_user.Last_name,
+        image_path=current_user.image_path,
+        roles=current_user.roles,
+        permissions=get_user_permission_names(current_user),
+    )
 
 
 @router.put("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
@@ -63,7 +83,16 @@ def update_user(
     db.commit()
     db.refresh(user)
 
-    return user
+    return CurrentUserOut(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        First_name=user.First_name,
+        Last_name=user.Last_name,
+        image_path=user.image_path,
+        roles=user.roles,
+        permissions=get_user_permission_names(user),
+    )
 
 
 @router.post("/change-pass", response_model=ChangePasswordOut, status_code=status.HTTP_200_OK)

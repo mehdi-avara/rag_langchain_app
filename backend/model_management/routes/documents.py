@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
-from deps import get_current_user
+from deps import require_permission
 from Models import User, Document
 
 from ..models import ModelDocumentLink
@@ -21,7 +21,7 @@ def link_document(
     model_id: int,
     payload: ModelDocLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:documents")),
 ):
     model = get_model_or_404(db, model_id, current_user)
 
@@ -60,7 +60,7 @@ def upload_document_and_link(
     file: UploadFile = File(...),
     link_description: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:documents")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -78,7 +78,7 @@ def unlink_document(
     model_id: int,
     document_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:documents")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -102,10 +102,9 @@ def unlink_document(
 def list_linked_documents(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:documents")),
     search: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
-    # system_tag_id: Optional[int] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -121,8 +120,6 @@ def list_linked_documents(
         query = query.filter(Document.filename.ilike(f"%{search}%"))
     if status_filter:
         query = query.filter(Document.status == status_filter)
-    # if system_tag_id:
-    #     query = query.filter(Document.system_tag_id == system_tag_id)
 
     rows = (
         query
@@ -138,7 +135,6 @@ def list_linked_documents(
             ModelDocumentOut(
                 id=doc.id,
                 filename=doc.filename,
-                # system_tag_id=doc.system_tag_id,
                 n_pages=doc.n_pages,
                 n_chunks=doc.n_chunks,
                 created_at=doc.created_at,

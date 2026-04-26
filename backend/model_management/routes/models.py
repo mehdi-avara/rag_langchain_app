@@ -12,7 +12,7 @@ from db.search_connector import (
     search_comments_text,
     search_comment_hits_semantic,
 )
-from deps import get_current_user
+from deps import require_permission
 from Models import User, CommentType
 
 from ..models import ManagedModel
@@ -33,7 +33,7 @@ from schemas.search import (
     ContentSearchResponse,
     ModelSemanticSearchResponse,
     SemanticCommentSearchRequest,
-    SemanticCommentSearchRequestWithId
+    SemanticCommentSearchRequestWithId,
 )
 
 
@@ -108,7 +108,7 @@ def _semantic_search_model_scope(
 def create_model(
     payload: ModelCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:create")),
 ):
     existing = (
         db.query(ManagedModel)
@@ -149,7 +149,7 @@ def create_model(
 @router.get("/", response_model=List[ModelListOut])
 def list_models(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:read")),
     search: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -185,7 +185,7 @@ def list_models(
 def get_model(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:read")),
 ):
     model = get_model_or_404(db, model_id, current_user)
     doc_ids = get_doc_ids(db, model.id)
@@ -214,7 +214,7 @@ def filter_model_content(
     model_id: int,
     payload: TextSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:search")),
 ):
     model = get_model_or_404(db, model_id, current_user)
     doc_ids = get_doc_ids(db, model.id)
@@ -247,7 +247,7 @@ def semantic_search_all_models_content(
     payload: SemanticCommentSearchRequestWithId,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:search")),
 ):
     query = db.query(ManagedModel.id)
     if not is_admin(current_user):
@@ -275,7 +275,7 @@ def semantic_search_model_content(
     payload: SemanticCommentSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:search")),
 ):
     model = get_model_or_404(db, model_id, current_user)
 
@@ -295,7 +295,7 @@ def update_model(
     model_id: int,
     payload: ModelUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:update")),
 ):
     model = get_model_or_404(db, model_id, current_user)
 
@@ -350,7 +350,7 @@ def update_model(
 def delete_model(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("models:delete")),
 ):
     model = get_model_or_404(db, model_id, current_user)
     db.delete(model)

@@ -38,10 +38,16 @@ def get_current_user(
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     except JWTError:
         raise credentials_exception
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    try:
+        user_id_int = int(user_id)
+    except ValueError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == user_id_int).first()
 
     if user is None:
         raise credentials_exception
@@ -49,16 +55,41 @@ def get_current_user(
     return user
 
 
+def get_user_permissions(current_user: User) -> set[str]:
+    return {
+        permission.name
+        for role in current_user.roles
+        if role.is_active
+        for permission in role.permissions
+    }
+
+
 def require_permission(permission_name: str):
     def checker(current_user: User = Depends(get_current_user)) -> User:
-        permissions = {
-            permission.name
-            for role in current_user.roles
-            if role.is_active
-            for permission in role.permissions
-        }
+        permissions = get_user_permissions(current_user)
 
         if permission_name not in permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied",
+            )
+
+        return current_user
+
+    return checker
+
+
+def require_permissions(*permission_names: str):
+    def checker(current_user: User = Depends(get_current_user)) -> User:
+        permissions = get_user_permissions(current_user)
+
+        missing_permissions = [
+            permission_name
+            for permission_name in permission_names
+            if permission_name not in permissions
+        ]
+
+        if missing_permissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission denied",
