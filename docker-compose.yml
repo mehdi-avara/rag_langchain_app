@@ -21,6 +21,7 @@ services:
       request_log_file: /app/logs/api.log
       STT_URL: http://stt:8010
       postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      TIKTOKEN_CACHE_DIR: /app/.tiktoken-cache
     depends_on:
       - postgres
       # - elastic
