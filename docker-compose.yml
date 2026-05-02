@@ -28,6 +28,7 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
+      - ./backend:/app
       - $files_dir:/app/uploaded_files
       - $request_log_path:/app/logs/
       # - chroma_data:/data/chroma

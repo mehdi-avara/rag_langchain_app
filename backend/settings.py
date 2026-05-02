@@ -2,10 +2,19 @@ from pydantic_settings import BaseSettings
 from typing import Optional, List
 from functools import lru_cache
 from pydantic import computed_field
+from pathlib import Path
+
 
 class Settings(BaseSettings):
 
 
+    BASE_DIR: Path = Path(__file__).resolve().parent
+    
+    @computed_field
+    @property
+    def STATIC_DIR(self) -> Path:
+        return self.BASE_DIR / "static"
+    
     # Database URLs
     
     POSTGRES_DB: str
@@ -18,12 +27,13 @@ class Settings(BaseSettings):
     def postgres_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_IP}:5432/{self.POSTGRES_DB}"
     
+    
     # Default user
     default_username: str
     default_password: str
     default_firstname: str
 
-    cors_allow_origins: List[str] = ["https://porsa.javidanparto.com","http://localhost:5000"]
+    cors_allow_origins: List[str] = ["https://porsa.mahta-tech.com","http://localhost:5000"]
     
 
     
@@ -47,7 +57,7 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
     
-    base_url : str = "https://porsaapi.javidanparto.com"
+    base_url : str = "https://porsaapi.mahta-tech.com"
     
     # Logging
     request_log_file: str = "logs/api.log"
