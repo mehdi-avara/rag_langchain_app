@@ -82,7 +82,10 @@ class Settings(BaseSettings):
     embedding_api_key: str = "None"
     jina_api_key: str
     
-    
+    BACKEND_PORT: int = 8001
+    REDIS_PORT: int = 6379
+    request_log_path: str = "/home/ubuntu/rag_langchain_app/backend/logs/"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

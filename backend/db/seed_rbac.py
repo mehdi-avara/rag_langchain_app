@@ -142,6 +142,14 @@ def seed() -> None:
             ("profile:change_password", "profile", "change_password", "Change own password"),
             ("profile:image", "profile", "image", "Manage own profile image"),
             ("profile:notification", "profile", "notification", "Set own notification token"),
+            ("financial_management:read", "financial_management", "read", "Read financial data"),
+            ("financial_management:create", "financial_management", "create", "Create financial receipts"),
+            ("financial_management:update", "financial_management", "update", "Update financial receipts"),
+            ("financial_management:delete", "financial_management", "delete", "Delete financial receipts"),
+            ("financial_management:search", "financial_management", "search", "Search financial receipts"),
+            ("financial_management:ask", "financial_management", "ask", "Ask financial receipts"),
+            ("financial_management:cards", "financial_management", "cards", "Manage financial cards"),
+            ("financial_management:files", "financial_management", "files", "Manage financial receipt files"),
         ]
 
         permissions = [
@@ -173,6 +181,14 @@ def seed() -> None:
             "profile:change_password",
             "profile:image",
             "profile:notification",
+            "financial_management:read",
+            "financial_management:create",
+            "financial_management:update",
+            "financial_management:delete",
+            "financial_management:search",
+            "financial_management:ask",
+            "financial_management:cards",
+            "financial_management:files",
         }
 
         normal_role.permissions = [

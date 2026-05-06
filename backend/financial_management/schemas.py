@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .models import FinancialDirection
+
+
+class FinancialCardBase(BaseModel):
+    title: str = Field(..., min_length=1)
+    card_number: str = Field(..., min_length=4, max_length=64)
+    bank_name: Optional[str] = None
+    account_owner_name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class FinancialCardCreate(FinancialCardBase):
+    pass
+
+
+class FinancialCardUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1)
+    card_number: Optional[str] = Field(None, min_length=4, max_length=64)
+    bank_name: Optional[str] = None
+    account_owner_name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class FinancialCardSummaryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    card_number: str
+    masked_card_number: str
+    bank_name: Optional[str] = None
+    account_owner_name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool
+
+
+class FinancialCardOut(FinancialCardSummaryOut):
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class FinancialReceiptFileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    file_name: str
+    media_address: str
+    content_type: Optional[str] = None
+    created_at: datetime
+
+
+class FinancialReceiptBase(BaseModel):
+    description: str = Field(..., min_length=1)
+    tracking_number: Optional[str] = None
+    amount: Decimal = Field(..., gt=Decimal("0"))
+    direction: FinancialDirection
+    counterparty_name: str = Field(..., min_length=1)
+    receipt_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    credit_card_id: int
+
+
+class FinancialReceiptCreate(FinancialReceiptBase):
+    pass
+
+
+class FinancialReceiptUpdate(BaseModel):
+    description: Optional[str] = Field(None, min_length=1)
+    tracking_number: Optional[str] = None
+    amount: Optional[Decimal] = Field(None, gt=Decimal("0"))
+    direction: Optional[FinancialDirection] = None
+    counterparty_name: Optional[str] = Field(None, min_length=1)
+    receipt_date: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    credit_card_id: Optional[int] = None
+
+
+class FinancialReceiptOut(BaseModel):
+    id: int
+    owner_id: int
+    description: str
+    tracking_number: Optional[str] = None
+    amount: Decimal
+    direction: FinancialDirection
+    counterparty_name: str
+    receipt_date: str
+    receipt_date_gregorian: str
+    credit_card: FinancialCardSummaryOut
+    embedding_status: Literal["available", "pending"]
+    created_at: datetime
+    updated_at: datetime
+    files: List[FinancialReceiptFileOut] = Field(default_factory=list)
+
+
+class FinancialReceiptTextSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class FinancialReceiptSemanticSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+
+
+class FinancialReceiptSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    limit: int = Field(default=10, ge=1, le=200)
+
+
+class FinancialReceiptSemanticHit(BaseModel):
+    receipt_id: int
+    description: str
+    tracking_number: Optional[str] = None
+    amount: Decimal
+    direction: FinancialDirection
+    counterparty_name: str
+    receipt_date: str
+    receipt_date_gregorian: str
+    card_id: int
+    card_title: str
+    card_masked_number: str
+    owner_id: int
+    createdAt: datetime
+    match_source: Literal["semantic", "text", "text_fallback"]
+
+
+class FinancialReceiptAskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    receipt_ids: List[int] = Field(default_factory=list)
+
+
+class FinancialReceiptAskResponse(BaseModel):
+    answer: str
+    citations: List[int] = Field(default_factory=list)
+    used_receipt_ids: List[int] = Field(default_factory=list)
+    references: List[FinancialReceiptSemanticHit] = Field(default_factory=list)

@@ -16,6 +16,7 @@ from routs.stt import router as stt_router
 from routs.rbac import router as rbac_router
 from model_management.routes import model_router
 from tag_management.routes import tag_router
+from financial_management.routes import financial_router
 
 
 
@@ -73,3 +74,4 @@ app.include_router(chat_router, prefix="/chat", tags=["chat"])
 app.include_router(stt_router, prefix="/audio", tags=["Audio"])
 app.include_router(model_router, tags=["models"])
 app.include_router(tag_router, tags=["system_tags"])
+app.include_router(financial_router, tags=["financial_management"])

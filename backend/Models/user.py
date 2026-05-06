@@ -22,3 +22,11 @@ class User(Base):
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="user")
     files = relationship("CommentFile", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    financial_cards = relationship("FinancialCard", back_populates="owner", cascade="all, delete-orphan")
+    financial_receipts = relationship("FinancialReceipt", back_populates="owner", cascade="all, delete-orphan")
+    financial_receipt_files = relationship(
+        "FinancialReceiptFile",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
