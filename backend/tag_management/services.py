@@ -1,10 +1,12 @@
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from components import generate_embeddings_for_chunks
 from Models import User
 
 from .system_tag import SystemTag
-from .models import TagDocumentLink, TagCommentLink, TagModelLink
+from .models import TagDocumentLink, TagCommentLink, TagModelLink, TagReceiptLink
 from model_management.models import ManagedModel, ModelDocumentLink
 
 
@@ -82,6 +84,15 @@ def get_comment_ids(db: Session, tag_id: int) -> list[int]:
     return [row[0] for row in rows]
 
 
+def get_receipt_ids(db: Session, tag_id: int) -> list[int]:
+    rows = (
+        db.query(TagReceiptLink.receipt_id)
+        .filter(TagReceiptLink.tag_id == tag_id)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
 def get_doc_ids_for_tags(db: Session, tag_ids: list[int]) -> list[int]:
     if not tag_ids:
         return []
@@ -104,6 +115,70 @@ def get_comment_ids_for_tags(db: Session, tag_ids: list[int]) -> list[int]:
         .all()
     )
     return list({row[0] for row in rows})
+
+
+def safe_embed_link_note(text_value: str | None) -> list[float] | None:
+    if not text_value:
+        return None
+    try:
+        embeddings = generate_embeddings_for_chunks([text_value])
+    except Exception:
+        return None
+    return embeddings[0] if embeddings else None
+
+
+def search_tag_receipt_link_ids(
+    db: Session,
+    tag_id: int,
+    query_text: str,
+    mode: str,
+    limit: int,
+) -> list[int]:
+    matched_ids: list[int] = []
+    if mode in {"keyword", "hybrid"}:
+        pattern = f"%{query_text}%"
+        rows = (
+            db.query(TagReceiptLink.receipt_id)
+            .filter(
+                TagReceiptLink.tag_id == tag_id,
+                TagReceiptLink.note.ilike(pattern),
+            )
+            .limit(limit)
+            .all()
+        )
+        matched_ids.extend([row[0] for row in rows])
+
+    if mode in {"vector", "hybrid"}:
+        query_embedding = safe_embed_link_note(query_text)
+        if query_embedding is not None:
+            embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
+            rows = db.execute(
+                text(
+                    """
+                    SELECT receipt_id
+                    FROM tag_receipt_links
+                    WHERE tag_id = :tag_id
+                      AND note_embedding IS NOT NULL
+                    ORDER BY (1 - (note_embedding <=> (:query_vec)::vector)) DESC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "tag_id": tag_id,
+                    "query_vec": embedding_str,
+                    "limit": limit,
+                },
+            ).fetchall()
+            matched_ids.extend([row.receipt_id for row in rows])
+
+    seen: set[int] = set()
+    output: list[int] = []
+    for receipt_id in matched_ids:
+        if receipt_id in seen:
+            continue
+        seen.add(receipt_id)
+        output.append(receipt_id)
+    return output[:limit]
 
 
 def get_descendant_tag_ids(db: Session, root_tag_id: int, user_id: int) -> list[int]:

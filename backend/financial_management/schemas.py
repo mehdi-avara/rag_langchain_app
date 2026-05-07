@@ -6,6 +6,9 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from Models import CommentType
+from schemas.comment import CommentCreate
+
 from .models import FinancialDirection
 
 
@@ -101,6 +104,10 @@ class FinancialReceiptOut(BaseModel):
     files: List[FinancialReceiptFileOut] = Field(default_factory=list)
 
 
+class FinancialReceiptBatchRequest(BaseModel):
+    ids: List[int] = Field(default_factory=list)
+
+
 class FinancialReceiptTextSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     ids: List[int] = Field(default_factory=list)
@@ -147,3 +154,41 @@ class FinancialReceiptAskResponse(BaseModel):
     citations: List[int] = Field(default_factory=list)
     used_receipt_ids: List[int] = Field(default_factory=list)
     references: List[FinancialReceiptSemanticHit] = Field(default_factory=list)
+
+
+class FinancialReceiptCommentLinkCreate(BaseModel):
+    comment_id: int
+    note: Optional[str] = None
+
+
+class FinancialCreateCommentAndLinkRequest(BaseModel):
+    payload: CommentCreate
+    link_description: Optional[str] = None
+
+
+class FinancialReceiptCommentLinkOut(BaseModel):
+    receipt_id: int
+    comment_id: int
+    linked_by_user_id: int
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class FinancialReceiptCommentOut(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    type: CommentType
+    content: str
+    created_at: datetime
+    note: Optional[str] = None
+    linked_at: Optional[datetime] = None
+
+
+class FinancialReceiptLinkSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    limit: int = Field(default=50, ge=1, le=200)

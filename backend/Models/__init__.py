@@ -7,9 +7,9 @@ from .comment_file import CommentFile
 from .chat import Chat, ChatMessage
 from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
-from model_management.models import ManagedModel, ModelDocumentLink, ModelCommentLink
-from tag_management.models import TagModelLink, TagDocumentLink, TagCommentLink
-from financial_management.models import FinancialCard, FinancialReceipt, FinancialReceiptFile, FinancialDirection
+from model_management.models import ManagedModel, ModelDocumentLink, ModelCommentLink, ModelReceiptLink
+from tag_management.models import TagModelLink, TagDocumentLink, TagCommentLink, TagReceiptLink
+from financial_management.models import FinancialCard, FinancialReceipt, FinancialReceiptFile, FinancialReceiptCommentLink, FinancialDirection
 
 __all__ = [
     "User",
@@ -30,11 +30,14 @@ __all__ = [
     "ManagedModel",
     "ModelDocumentLink",
     "ModelCommentLink",
+    "ModelReceiptLink",
     "TagModelLink",
     "TagDocumentLink",
     "TagCommentLink",
+    "TagReceiptLink",
     "FinancialCard",
     "FinancialReceipt",
     "FinancialReceiptFile",
+    "FinancialReceiptCommentLink",
     "FinancialDirection",
 ]

@@ -81,6 +81,12 @@ class FinancialReceipt(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    comment_links = relationship(
+        "FinancialReceiptCommentLink",
+        back_populates="receipt",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class FinancialReceiptFile(Base):
@@ -100,3 +106,22 @@ class FinancialReceiptFile(Base):
 
     receipt = relationship("FinancialReceipt", back_populates="files")
     user = relationship("User", back_populates="financial_receipt_files")
+
+
+class FinancialReceiptCommentLink(Base):
+    __tablename__ = "financial_receipt_comment_links"
+    __table_args__ = (
+        Index("ix_financial_receipt_comment_links_receipt_id", "receipt_id"),
+        Index("ix_financial_receipt_comment_links_comment_id", "comment_id"),
+    )
+
+    receipt_id = Column(Integer, ForeignKey("financial_receipts.id", ondelete="CASCADE"), primary_key=True)
+    comment_id = Column(Integer, ForeignKey("comments.id", ondelete="CASCADE"), primary_key=True)
+    linked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    note = Column(Text, nullable=True)
+    note_embedding = Column(Vector(1024), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    receipt = relationship("FinancialReceipt", back_populates="comment_links")
+    comment = relationship("Comment")
+    linked_by = relationship("User")

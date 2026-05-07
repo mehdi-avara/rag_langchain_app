@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, Integer, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
@@ -59,4 +60,22 @@ class TagCommentLink(Base):
 
     tag = relationship("SystemTag")
     comment = relationship("Comment")
+    linked_by = relationship("User")
+
+
+class TagReceiptLink(Base):
+    __tablename__ = "tag_receipt_links"
+    __table_args__ = (
+        Index("ix_tag_receipt_links_tag_id", "tag_id"),
+        Index("ix_tag_receipt_links_receipt_id", "receipt_id"),
+    )
+
+    tag_id = Column(Integer, ForeignKey("system_tags.id", ondelete="CASCADE"), primary_key=True)
+    receipt_id = Column(Integer, nullable=False, primary_key=True)
+    linked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    note = Column(Text, nullable=True)
+    note_embedding = Column(Vector(1024), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    tag = relationship("SystemTag")
     linked_by = relationship("User")

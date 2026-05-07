@@ -10,7 +10,7 @@ from deps import require_permission
 from Models import User
 
 from ..models import FinancialReceipt
-from ..schemas import FinancialReceiptCreate, FinancialReceiptOut, FinancialReceiptUpdate
+from ..schemas import FinancialReceiptBatchRequest, FinancialReceiptCreate, FinancialReceiptOut, FinancialReceiptUpdate
 from ..services import (
     get_card_or_404,
     get_receipt_or_404,
@@ -112,6 +112,33 @@ def get_receipt(
     if owner_id is not None and receipt.owner_id != owner_id:
         raise HTTPException(status_code=404, detail="Financial receipt not found")
     return receipt_to_out(receipt)
+
+
+@router.post("/batch", response_model=List[FinancialReceiptOut], status_code=status.HTTP_200_OK)
+def get_receipts_by_ids(
+    payload: FinancialReceiptBatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_management:read")),
+):
+    receipt_ids = list(dict.fromkeys(payload.ids))
+    if not receipt_ids:
+        return []
+
+    query = (
+        db.query(FinancialReceipt)
+        .options(
+            joinedload(FinancialReceipt.credit_card),
+            joinedload(FinancialReceipt.files),
+        )
+        .filter(FinancialReceipt.id.in_(receipt_ids))
+    )
+    owner_id = owner_filter_id(current_user)
+    if owner_id is not None:
+        query = query.filter(FinancialReceipt.owner_id == owner_id)
+
+    receipts = query.all()
+    receipts_by_id = {receipt.id: receipt_to_out(receipt) for receipt in receipts}
+    return [receipts_by_id[receipt_id] for receipt_id in receipt_ids if receipt_id in receipts_by_id]
 
 
 @router.put("/{receipt_id}", response_model=FinancialReceiptOut)

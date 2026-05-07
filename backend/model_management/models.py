@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 
@@ -30,6 +31,12 @@ class ManagedModel(Base):
     )
     comment_links = relationship(
         "ModelCommentLink",
+        back_populates="model",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    receipt_links = relationship(
+        "ModelReceiptLink",
         back_populates="model",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -69,4 +76,22 @@ class ModelCommentLink(Base):
 
     model = relationship("ManagedModel", back_populates="comment_links")
     comment = relationship("Comment")
+    linked_by = relationship("User")
+
+
+class ModelReceiptLink(Base):
+    __tablename__ = "model_receipt_links"
+    __table_args__ = (
+        Index("ix_model_receipt_links_model_id", "model_id"),
+        Index("ix_model_receipt_links_receipt_id", "receipt_id"),
+    )
+
+    model_id = Column(Integer, ForeignKey("managed_models.id", ondelete="CASCADE"), primary_key=True)
+    receipt_id = Column(Integer, nullable=False, primary_key=True)
+    linked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    note = Column(Text, nullable=True)
+    note_embedding = Column(Vector(1024), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    model = relationship("ManagedModel", back_populates="receipt_links")
     linked_by = relationship("User")

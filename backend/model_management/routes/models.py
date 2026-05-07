@@ -21,6 +21,7 @@ from ..services import (
     get_model_or_404,
     get_doc_ids,
     get_comment_ids,
+    get_receipt_ids,
     is_admin,
     get_doc_ids_for_models,
     get_comment_ids_for_models,
@@ -143,6 +144,7 @@ def create_model(
         updated_at=new_model.updated_at,
         doc_ids=[],
         comment_ids=[],
+        receipt_ids=[],
     )
 
 
@@ -190,6 +192,7 @@ def get_model(
     model = get_model_or_404(db, model_id, current_user)
     doc_ids = get_doc_ids(db, model.id)
     comment_ids = get_comment_ids(db, model.id)
+    receipt_ids = get_receipt_ids(db, model.id)
 
     return ModelOut(
         id=model.id,
@@ -202,6 +205,7 @@ def get_model(
         updated_at=model.updated_at,
         doc_ids=doc_ids,
         comment_ids=comment_ids,
+        receipt_ids=receipt_ids,
     )
 
 

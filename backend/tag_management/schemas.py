@@ -1,8 +1,10 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field, model_validator
 from Models import CommentType
+from financial_management.schemas import FinancialReceiptCreate, FinancialReceiptOut
 from schemas.comment import CommentCreate
 
 
@@ -125,6 +127,16 @@ class TagCommentLinkCreate(BaseModel):
     note: Optional[str] = None
 
 
+class TagReceiptLinkCreate(BaseModel):
+    receipt_id: int
+    note: Optional[str] = None
+
+
+class TagCreateReceiptAndLinkRequest(BaseModel):
+    payload: FinancialReceiptCreate
+    link_description: Optional[str] = None
+
+
 class TagCreateCommentAndLinkRequest(BaseModel):
     payload: CommentCreate
     link_description: Optional[str] = None
@@ -151,6 +163,37 @@ class TagCommentOut(BaseModel):
     created_at: datetime
     note: Optional[str] = None
     linked_at: Optional[datetime] = None
+
+
+class TagReceiptLinkOut(BaseModel):
+    tag_id: int
+    receipt_id: int
+    linked_by_user_id: int
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class TagReceiptOut(BaseModel):
+    receipt: FinancialReceiptOut
+    note: Optional[str] = None
+    linked_at: Optional[datetime] = None
+
+
+class TagReceiptSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class TagReceiptSummaryOut(BaseModel):
+    total_receipts: int
+    total_input_amount: Decimal
+    total_output_amount: Decimal
+    total_cost_amount: Decimal
+    net_amount: Decimal
 
 
 TagTreeOut.update_forward_refs()

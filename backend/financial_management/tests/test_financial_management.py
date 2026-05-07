@@ -23,12 +23,15 @@ os.environ.setdefault("jina_api_key", "test")
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from financial_management.models import FinancialCard, FinancialDirection, FinancialReceipt
+from financial_management.routes import comments as comment_routes
 from financial_management.routes import ask as ask_routes
 from financial_management.routes import files as file_routes
 from financial_management.routes import receipts as receipt_routes
 from financial_management.search.service import search_receipt_hits
 from financial_management.schemas import (
+    FinancialReceiptCommentLinkCreate,
     FinancialReceiptAskRequest,
+    FinancialReceiptBatchRequest,
     FinancialReceiptCreate,
     FinancialReceiptSemanticHit,
 )
@@ -66,6 +69,33 @@ class DummyDB:
 
     def delete(self, obj):
         self.deleted.append(obj)
+
+    def query(self, _model):
+        return QueryProxy()
+
+
+class QueryProxy:
+    def __init__(self, rows=None, first_row=None):
+        self.rows = rows or []
+        self.first_row = first_row
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def options(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def first(self):
+        return self.first_row
 
 
 class DummyUpload:
@@ -259,3 +289,47 @@ def test_add_receipt_file_writes_under_financial_management(tmp_path, monkeypatc
     assert result.file_name == "receipt.png"
     assert "financial_management/receipts/11" in result.media_address
     assert io.open(result.media_address, "rb").read() == b"binary-image-data"
+
+
+def test_get_receipts_by_ids_preserves_requested_order(monkeypatch):
+    current_user = SimpleNamespace(id=3, role="user")
+    receipt_a = build_receipt()
+    receipt_b = build_receipt()
+    receipt_a.id = 22
+    receipt_b.id = 11
+
+    class ReceiptDB(DummyDB):
+        def query(self, _model):
+            return QueryProxy(rows=[receipt_a, receipt_b])
+
+    result = receipt_routes.get_receipts_by_ids(
+        payload=FinancialReceiptBatchRequest(ids=[11, 22]),
+        db=ReceiptDB(),
+        current_user=current_user,
+    )
+
+    assert [item.id for item in result] == [11, 22]
+
+
+def test_link_receipt_comment_stores_note_embedding(monkeypatch):
+    db = DummyDB()
+    current_user = SimpleNamespace(id=3, role="user")
+    comment = SimpleNamespace(id=91, user_id=3)
+
+    class CommentDB(DummyDB):
+        def query(self, model):
+            if model.__name__ == "Comment":
+                return QueryProxy(first_row=comment)
+            return QueryProxy(first_row=None)
+
+    monkeypatch.setattr(comment_routes, "get_receipt_or_404", lambda *_args, **_kwargs: build_receipt())
+    monkeypatch.setattr(comment_routes, "safe_embed_text", lambda *_args, **_kwargs: [0.1, 0.3])
+
+    link = comment_routes.link_comment(
+        receipt_id=11,
+        payload=FinancialReceiptCommentLinkCreate(comment_id=91, note="repair note"),
+        db=CommentDB(),
+        current_user=current_user,
+    )
+
+    assert link.comment_id == 91

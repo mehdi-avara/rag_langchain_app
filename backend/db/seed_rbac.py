@@ -119,6 +119,7 @@ def seed() -> None:
             ("models:ask", "models", "ask", "Ask models"),
             ("models:documents", "models", "documents", "Manage model documents"),
             ("models:comments", "models", "comments", "Manage model comments"),
+            ("models:receipts", "models", "receipts", "Manage model receipts"),
             ("tags:read", "tags", "read", "Read tags"),
             ("tags:create", "tags", "create", "Create tags"),
             ("tags:update", "tags", "update", "Update tags"),
@@ -128,6 +129,7 @@ def seed() -> None:
             ("tags:documents", "tags", "documents", "Manage tag documents"),
             ("tags:comments", "tags", "comments", "Manage tag comments"),
             ("tags:models", "tags", "models", "Manage tag models"),
+            ("tags:receipts", "tags", "receipts", "Manage tag receipts"),
             ("chat:use", "chat", "use", "Use chat"),
             ("chat:read", "chat", "read", "Read chat history"),
             ("chat:update", "chat", "update", "Update chat"),
@@ -150,6 +152,7 @@ def seed() -> None:
             ("financial_management:ask", "financial_management", "ask", "Ask financial receipts"),
             ("financial_management:cards", "financial_management", "cards", "Manage financial cards"),
             ("financial_management:files", "financial_management", "files", "Manage financial receipt files"),
+            ("financial_management:comments", "financial_management", "comments", "Manage financial receipt comments"),
         ]
 
         permissions = [
@@ -189,6 +192,7 @@ def seed() -> None:
             "financial_management:ask",
             "financial_management:cards",
             "financial_management:files",
+            "financial_management:comments",
         }
 
         normal_role.permissions = [

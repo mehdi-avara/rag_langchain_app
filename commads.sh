@@ -20,3 +20,10 @@ git status
 git add .
 git commit -m "Finish changes"
 git push
+
+
+cd backend
+alembic -c alembic.ini upgrade head
+python db/seed_rbac.py
+cd ..
+pytest backend/financial_management/tests/test_financial_management.py
