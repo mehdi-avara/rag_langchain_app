@@ -47,6 +47,8 @@ class PostgresVectorStore:
         doc_ids: Optional[List[int]] = None
     ) -> List[Tuple[Chunk, float]]:
         query_embedding = self.embeddings.embed_query(query)
+        if not query_embedding:
+            return []
         embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
         filters = ["c.embedding IS NOT NULL"]

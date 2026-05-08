@@ -86,6 +86,8 @@ def search_document_part_hits_semantic(
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     query_embedding = _embedding_client().embed_query(query_text)
+    if not query_embedding:
+        return []
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
     filters = ["d.owner_id = :owner_id", "c.embedding IS NOT NULL"]
@@ -147,6 +149,8 @@ def search_comment_hits_semantic(
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     query_embedding = _embedding_client().embed_query(query_text)
+    if not query_embedding:
+        return []
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
     filters = ["c.user_id = :user_id", "c.embedding IS NOT NULL"]
