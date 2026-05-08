@@ -68,7 +68,6 @@ def _receipt_out(receipt_id: int, amount: str, direction: str) -> FinancialRecei
             id=1,
             title="Main Card",
             card_number="6037991234567890",
-            masked_card_number="************7890",
             bank_name="Melli",
             account_owner_name="Mehdi",
             description=None,

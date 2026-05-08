@@ -151,7 +151,7 @@ def test_solar_date_conversion_round_trip():
 
 
 def test_mask_card_number_and_receipt_citations():
-    assert mask_card_number("6037 9912 3456 7890") == "************7890"
+    assert mask_card_number("6037 9912 3456 7890") == "6037991234567890"
     assert parse_receipt_citations("a [receipt:5] b [receipt:5] [receipt:7]") == [5, 7]
 
 
@@ -212,7 +212,6 @@ def test_create_receipt_keeps_tracking_number_nullable(monkeypatch):
     assert response.embedding_status == "pending"
     assert response.receipt_date == "1405-02-15"
     assert response.receipt_date_gregorian == "2026-05-05"
-    assert response.credit_card.masked_card_number == "************7890"
 
 
 def test_build_receipt_context_contains_key_fields():
@@ -225,7 +224,7 @@ def test_build_receipt_context_contains_key_fields():
         counterparty_name=receipt.counterparty_name,
         tracking_number=receipt.tracking_number,
         card_title=receipt.credit_card.title,
-        card_masked_number=mask_card_number(receipt.credit_card.card_number),
+        card_number=mask_card_number(receipt.credit_card.card_number),
         description=receipt.description,
     )
 
@@ -247,7 +246,7 @@ def test_ask_receipts_returns_receipt_citations(monkeypatch):
         receipt_date_gregorian="2026-05-05",
         card_id=9,
         card_title="Main Card",
-        card_masked_number="************7890",
+        card_number="************7890",
         owner_id=3,
         createdAt=datetime(2026, 5, 5, 10, 30, 0),
         match_source="text_fallback",

@@ -40,7 +40,6 @@ class FinancialCardSummaryOut(BaseModel):
     id: int
     title: str
     card_number: str
-    masked_card_number: str
     bank_name: Optional[str] = None
     account_owner_name: Optional[str] = None
     description: Optional[str] = None
@@ -137,7 +136,7 @@ class FinancialReceiptSemanticHit(BaseModel):
     receipt_date_gregorian: str
     card_id: int
     card_title: str
-    card_masked_number: str
+    card_number: str
     owner_id: int
     createdAt: datetime
     match_source: Literal["semantic", "text", "text_fallback"]

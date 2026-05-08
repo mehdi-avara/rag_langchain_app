@@ -62,9 +62,10 @@ def normalize_card_number(card_number: str) -> str:
 
 def mask_card_number(card_number: str) -> str:
     normalized = normalize_card_number(card_number)
-    if len(normalized) <= 4:
-        return normalized
-    return f"{'*' * max(len(normalized) - 4, 0)}{normalized[-4:]}"
+    # if len(normalized) <= 4:
+    #     return normalized
+    # return f"{'*' * max(len(normalized) - 4, 0)}{normalized[-4:]}"
+    return normalized
 
 
 def _div(a: int, b: int) -> int:
@@ -193,7 +194,6 @@ def card_to_summary(card: FinancialCard) -> FinancialCardSummaryOut:
         id=card.id,
         title=card.title,
         card_number=card.card_number,
-        masked_card_number=mask_card_number(card.card_number),
         bank_name=card.bank_name,
         account_owner_name=card.account_owner_name,
         description=card.description,
@@ -252,7 +252,7 @@ def build_receipt_context(references: Sequence) -> str:
             f"amount={hit.amount} "
             f"counterparty={hit.counterparty_name} "
             f"tracking={tracking_number} "
-            f"card={hit.card_title}({hit.card_masked_number}) "
+            f"card={hit.card_title}({hit.card_number}) "
             f"description={hit.description}"
         )
     return "\n".join(lines)
