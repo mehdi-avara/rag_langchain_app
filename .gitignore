@@ -9,3 +9,6 @@ venv/
 data1/
 backend/uploaded_files/
 backend/logs/
+.DS_Store
+.coverage
+backend/components/embedding_errors.log
