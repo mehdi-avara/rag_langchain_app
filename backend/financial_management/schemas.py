@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Literal, Optional
 
@@ -47,6 +47,7 @@ class FinancialCardSummaryOut(BaseModel):
 
 
 class FinancialCardOut(FinancialCardSummaryOut):
+    company_id: int
     owner_id: int
     created_at: datetime
     updated_at: datetime
@@ -68,7 +69,7 @@ class FinancialReceiptBase(BaseModel):
     amount: Decimal = Field(..., gt=Decimal("0"))
     direction: FinancialDirection
     counterparty_name: str = Field(..., min_length=1)
-    receipt_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    receipt_date: date
     credit_card_id: int
 
 
@@ -82,20 +83,20 @@ class FinancialReceiptUpdate(BaseModel):
     amount: Optional[Decimal] = Field(None, gt=Decimal("0"))
     direction: Optional[FinancialDirection] = None
     counterparty_name: Optional[str] = Field(None, min_length=1)
-    receipt_date: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    receipt_date: Optional[date] = None
     credit_card_id: Optional[int] = None
 
 
 class FinancialReceiptOut(BaseModel):
     id: int
+    company_id: int
     owner_id: int
     description: str
     tracking_number: Optional[str] = None
     amount: Decimal
     direction: FinancialDirection
     counterparty_name: str
-    receipt_date: str
-    receipt_date_gregorian: str
+    receipt_date: date
     credit_card: FinancialCardSummaryOut
     embedding_status: Literal["available", "pending"]
     created_at: datetime
@@ -127,13 +128,13 @@ class FinancialReceiptSearchRequest(BaseModel):
 
 class FinancialReceiptSemanticHit(BaseModel):
     receipt_id: int
+    company_id: int
     description: str
     tracking_number: Optional[str] = None
     amount: Decimal
     direction: FinancialDirection
     counterparty_name: str
-    receipt_date: str
-    receipt_date_gregorian: str
+    receipt_date: date
     card_id: int
     card_title: str
     card_number: str
@@ -166,14 +167,13 @@ class FinancialCreateCommentAndLinkRequest(BaseModel):
 
 
 class FinancialReceiptCommentLinkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     receipt_id: int
     comment_id: int
     linked_by_user_id: int
     note: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        orm_mode = True
 
 
 class FinancialReceiptCommentOut(BaseModel):
@@ -191,3 +191,4 @@ class FinancialReceiptLinkSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     limit: int = Field(default=50, ge=1, le=200)
+

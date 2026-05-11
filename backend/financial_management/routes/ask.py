@@ -38,8 +38,10 @@ async def ask_receipts(
         db=db,
         current_user=current_user,
     )
+
     answer = await generate_receipt_answer(payload.question, references)
     citations = parse_receipt_citations(answer)
+
     return FinancialReceiptAskResponse(
         answer=answer,
         citations=citations,
@@ -56,9 +58,13 @@ async def ask_single_receipt(
     current_user: User = Depends(require_permission("financial_management:ask")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
+
     scoped_payload = FinancialReceiptAskRequest(
         question=payload.question,
         mode=payload.mode,
         receipt_ids=[receipt_id],
     )
+
     return await ask_receipts(scoped_payload, db=db, current_user=current_user)
+
+

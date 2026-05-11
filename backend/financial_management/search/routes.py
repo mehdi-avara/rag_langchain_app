@@ -29,6 +29,7 @@ def filter_receipts(
     current_user: User = Depends(require_permission("financial_management:search")),
 ):
     validated_ids = validate_receipt_scope(db, current_user, payload.ids)
+
     return list_text_receipts(
         db=db,
         current_user=current_user,
@@ -45,6 +46,7 @@ def search_receipts(
     current_user: User = Depends(require_permission("financial_management:search")),
 ):
     validated_ids = validate_receipt_scope(db, current_user, payload.ids)
+
     return search_receipt_hits(
         db=db,
         current_user=current_user,
@@ -68,4 +70,6 @@ def semantic_search_receipts(
         mode="vector",
         limit=top_k,
     )
+
     return search_receipts(payload=delegated_payload, db=db, current_user=current_user)
+

@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from db.init_db import get_db
 from deps import require_permission
 from Models import Comment, User
-from pgvector.sqlalchemy import Vector
 
 from routs.comments.comment import create_comment
 
@@ -21,10 +20,26 @@ from ..schemas import (
     FinancialReceiptCommentOut,
     FinancialReceiptLinkSearchRequest,
 )
-from ..services import get_receipt_or_404, is_admin, safe_embed_text
+from ..services import get_receipt_or_404, safe_embed_text
 
 
 router = APIRouter(prefix="/receipts")
+
+
+def _get_comment_or_404(db: Session, comment_id: int, current_user: User) -> Comment:
+    comment = (
+        db.query(Comment)
+        .filter(
+            Comment.id == comment_id,
+            Comment.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    return comment
 
 
 def _search_receipt_comment_note_ids(
@@ -74,11 +89,13 @@ def _search_receipt_comment_note_ids(
 
     seen: set[int] = set()
     output: list[int] = []
+
     for comment_id in matched_ids:
         if comment_id in seen:
             continue
         seen.add(comment_id)
         output.append(comment_id)
+
     return output[:limit]
 
 
@@ -89,13 +106,8 @@ def link_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:comments")),
 ):
-    _ = get_receipt_or_404(db, receipt_id, current_user)
-
-    comment = db.query(Comment).filter(Comment.id == payload.comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    if not is_admin(current_user) and comment.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not allowed to link this comment")
+    get_receipt_or_404(db, receipt_id, current_user)
+    comment = _get_comment_or_404(db, payload.comment_id, current_user)
 
     link = (
         db.query(FinancialReceiptCommentLink)
@@ -105,7 +117,9 @@ def link_comment(
         )
         .first()
     )
+
     note_embedding = safe_embed_text(payload.note) if payload.note else None
+
     if link:
         link.note = payload.note
         link.note_embedding = note_embedding
@@ -120,9 +134,11 @@ def link_comment(
         note=payload.note,
         note_embedding=note_embedding,
     )
+
     db.add(link)
     db.commit()
     db.refresh(link)
+
     return link
 
 
@@ -133,9 +149,15 @@ async def create_comment_and_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:comments")),
 ):
-    _ = get_receipt_or_404(db, receipt_id, current_user)
+    get_receipt_or_404(db, receipt_id, current_user)
+
     comment = await create_comment(payload=body.payload, db=db, current_user=current_user)
-    payload = FinancialReceiptCommentLinkCreate(comment_id=comment.id, note=body.link_description)
+
+    payload = FinancialReceiptCommentLinkCreate(
+        comment_id=comment.id,
+        note=body.link_description,
+    )
+
     return link_comment(receipt_id=receipt_id, payload=payload, db=db, current_user=current_user)
 
 
@@ -146,7 +168,9 @@ def unlink_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:comments")),
 ):
-    _ = get_receipt_or_404(db, receipt_id, current_user)
+    get_receipt_or_404(db, receipt_id, current_user)
+    _get_comment_or_404(db, comment_id, current_user)
+
     link = (
         db.query(FinancialReceiptCommentLink)
         .filter(
@@ -155,10 +179,13 @@ def unlink_comment(
         )
         .first()
     )
+
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
+
     db.delete(link)
     db.commit()
+
     return None
 
 
@@ -171,12 +198,17 @@ def list_receipt_comments(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    _ = get_receipt_or_404(db, receipt_id, current_user)
+    get_receipt_or_404(db, receipt_id, current_user)
+
     query = (
         db.query(Comment, FinancialReceiptCommentLink)
         .join(FinancialReceiptCommentLink, FinancialReceiptCommentLink.comment_id == Comment.id)
-        .filter(FinancialReceiptCommentLink.receipt_id == receipt_id)
+        .filter(
+            FinancialReceiptCommentLink.receipt_id == receipt_id,
+            Comment.user_id == current_user.id,
+        )
     )
+
     if search:
         pattern = f"%{search}%"
         query = query.filter(
@@ -186,6 +218,7 @@ def list_receipt_comments(
                 FinancialReceiptCommentLink.note.ilike(pattern),
             )
         )
+
     rows = (
         query
         .order_by(FinancialReceiptCommentLink.created_at.desc())
@@ -193,6 +226,7 @@ def list_receipt_comments(
         .limit(limit)
         .all()
     )
+
     return [
         FinancialReceiptCommentOut(
             id=comment.id,
@@ -215,7 +249,8 @@ def search_receipt_comments(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:comments")),
 ):
-    _ = get_receipt_or_404(db, receipt_id, current_user)
+    get_receipt_or_404(db, receipt_id, current_user)
+
     matched_note_ids = _search_receipt_comment_note_ids(
         db=db,
         receipt_id=receipt_id,
@@ -227,7 +262,10 @@ def search_receipt_comments(
     query = (
         db.query(Comment, FinancialReceiptCommentLink)
         .join(FinancialReceiptCommentLink, FinancialReceiptCommentLink.comment_id == Comment.id)
-        .filter(FinancialReceiptCommentLink.receipt_id == receipt_id)
+        .filter(
+            FinancialReceiptCommentLink.receipt_id == receipt_id,
+            Comment.user_id == current_user.id,
+        )
     )
 
     if payload.mode in {"keyword", "hybrid"}:
@@ -243,6 +281,7 @@ def search_receipt_comments(
     else:
         if not matched_note_ids:
             return []
+
         rows = (
             query
             .filter(Comment.id.in_(matched_note_ids))
@@ -264,3 +303,5 @@ def search_receipt_comments(
         )
         for comment, link in rows
     ]
+
+

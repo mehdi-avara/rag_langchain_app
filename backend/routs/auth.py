@@ -16,24 +16,28 @@ router = APIRouter()
 settings = get_settings()
 
 
-def create_access_token(user_id: int) -> str:
+def create_access_token(user: User) -> str:
     expire = datetime.utcnow() + timedelta(hours=settings.jwt_exp_hours)
     payload = {
-        "sub": str(user_id),
+        "sub": str(user.id),
+        "company_id": user.company_id,
         "exp": expire,
         "type": "access",
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
-def create_refresh_token(user_id: int) -> str:
+def create_refresh_token(user: User) -> str:
     expire = datetime.utcnow() + timedelta(days=1)
     payload = {
-        "sub": str(user_id),
+        "sub": str(user.id),
+        "company_id": user.company_id,
         "exp": expire,
         "type": "refresh",
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -53,9 +57,10 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
         )
 
     return LoginResponse(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        access_token=create_access_token(user),
+        refresh_token=create_refresh_token(user),
     )
+
 
 
 @router.post("/refresh", response_model=RefreshResponse)
@@ -96,9 +101,10 @@ async def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db))
         )
 
     return RefreshResponse(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        access_token=create_access_token(user),
+        refresh_token=create_refresh_token(user),
     )
+
 
 
 @router.get("/me", response_model=CurrentUserOut)

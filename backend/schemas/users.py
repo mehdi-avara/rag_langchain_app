@@ -57,6 +57,7 @@ class RoleOut(RoleBase):
 
 class CurrentUserOut(BaseModel):
     id: int
+    company_id: int
     username: str
     role: str
     First_name: str
@@ -66,6 +67,8 @@ class CurrentUserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
 
 
 class UserCreate(BaseModel):

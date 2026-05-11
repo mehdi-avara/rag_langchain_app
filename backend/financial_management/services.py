@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from decimal import Decimal
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -30,29 +30,43 @@ def is_admin(user: User) -> bool:
     return getattr(user, "role", None) == "admin"
 
 
-def owner_filter_id(current_user: User) -> Optional[int]:
-    return None if is_admin(current_user) else current_user.id
+def tenant_filter_id(current_user: User) -> int:
+    return current_user.company_id
+
+
+def owner_filter_id(current_user: User) -> int:
+    return current_user.id
 
 
 def get_card_or_404(db: Session, card_id: int, current_user: User) -> FinancialCard:
-    query = db.query(FinancialCard).filter(FinancialCard.id == card_id)
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None:
-        query = query.filter(FinancialCard.owner_id == owner_id)
-    card = query.first()
+    card = (
+        db.query(FinancialCard)
+        .filter(
+            FinancialCard.id == card_id,
+            FinancialCard.company_id == tenant_filter_id(current_user),
+        )
+        .first()
+    )
+
     if not card:
         raise HTTPException(status_code=404, detail="Financial card not found")
+
     return card
 
 
 def get_receipt_or_404(db: Session, receipt_id: int, current_user: User) -> FinancialReceipt:
-    query = db.query(FinancialReceipt).filter(FinancialReceipt.id == receipt_id)
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None:
-        query = query.filter(FinancialReceipt.owner_id == owner_id)
-    receipt = query.first()
+    receipt = (
+        db.query(FinancialReceipt)
+        .filter(
+            FinancialReceipt.id == receipt_id,
+            FinancialReceipt.company_id == tenant_filter_id(current_user),
+        )
+        .first()
+    )
+
     if not receipt:
         raise HTTPException(status_code=404, detail="Financial receipt not found")
+
     return receipt
 
 
@@ -61,11 +75,7 @@ def normalize_card_number(card_number: str) -> str:
 
 
 def mask_card_number(card_number: str) -> str:
-    normalized = normalize_card_number(card_number)
-    # if len(normalized) <= 4:
-    #     return normalized
-    # return f"{'*' * max(len(normalized) - 4, 0)}{normalized[-4:]}"
-    return normalized
+    return normalize_card_number(card_number)
 
 
 def _div(a: int, b: int) -> int:
@@ -80,12 +90,14 @@ def solar_to_gregorian(value: str) -> date:
 
     if not 1 <= jm <= 12:
         raise HTTPException(status_code=422, detail="Invalid solar month")
-    max_day = 31 if jm <= 6 else 30 if jm <= 11 else 30
+
+    max_day = 31 if jm <= 6 else 30
     if not 1 <= jd <= max_day:
         raise HTTPException(status_code=422, detail="Invalid solar day")
 
     jy += 1595
     days = -355668 + (365 * jy) + (_div(jy, 33) * 8) + _div((jy % 33) + 3, 4) + jd
+
     if jm < 7:
         days += (jm - 1) * 31
     else:
@@ -111,6 +123,7 @@ def solar_to_gregorian(value: str) -> date:
     gd = days + 1
     leap = gy % 4 == 0 and (gy % 100 != 0 or gy % 400 == 0)
     month_lengths = [0, 31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
     gm = 1
     while gm <= 12 and gd > month_lengths[gm]:
         gd -= month_lengths[gm]
@@ -160,6 +173,7 @@ def safe_embed_text(text: str) -> Optional[list[float]]:
         embeddings = generate_embeddings_for_chunks([text])
     except Exception:
         return None
+
     return embeddings[0] if embeddings else None
 
 
@@ -168,16 +182,18 @@ def ensure_receipt_embeddings(
     current_user: User,
     receipt_ids: Optional[Sequence[int]] = None,
 ) -> None:
-    query = db.query(FinancialReceipt).filter(FinancialReceipt.description_embedding.is_(None))
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None:
-        query = query.filter(FinancialReceipt.owner_id == owner_id)
+    query = db.query(FinancialReceipt).filter(
+        FinancialReceipt.company_id == tenant_filter_id(current_user),
+        FinancialReceipt.description_embedding.is_(None),
+    )
+
     if receipt_ids is not None:
         if not receipt_ids:
             return
         query = query.filter(FinancialReceipt.id.in_(receipt_ids))
 
     changed = False
+
     for receipt in query.all():
         embedding = safe_embed_text(receipt.description)
         if embedding is None:
@@ -204,6 +220,7 @@ def card_to_summary(card: FinancialCard) -> FinancialCardSummaryOut:
 def card_to_out(card: FinancialCard) -> FinancialCardOut:
     return FinancialCardOut(
         **card_to_summary(card).model_dump(),
+        company_id=card.company_id,
         owner_id=card.owner_id,
         created_at=card.created_at,
         updated_at=card.updated_at,
@@ -222,27 +239,31 @@ def receipt_file_to_out(file_rec: FinancialReceiptFile) -> FinancialReceiptFileO
 
 def receipt_to_out(receipt: FinancialReceipt) -> FinancialReceiptOut:
     files = [receipt_file_to_out(file_rec) for file_rec in list(receipt.files or [])]
+
     return FinancialReceiptOut(
         id=receipt.id,
+        company_id=receipt.company_id,
         owner_id=receipt.owner_id,
         description=receipt.description,
         tracking_number=receipt.tracking_number,
         amount=Decimal(str(receipt.amount)),
         direction=receipt.direction,
         counterparty_name=receipt.counterparty_name,
-        receipt_date=gregorian_to_solar(receipt.receipt_date),
-        receipt_date_gregorian=receipt.receipt_date.isoformat(),
+        receipt_date=receipt.receipt_date,
         credit_card=card_to_summary(receipt.credit_card),
         embedding_status="available" if receipt.description_embedding is not None else "pending",
         created_at=receipt.created_at,
         updated_at=receipt.updated_at,
         files=files,
     )
+
+
 def build_receipt_context(references: Sequence) -> str:
     if not references:
         return "(no references)"
 
     lines = ["Receipt references:"]
+
     for hit in references:
         tracking_number = hit.tracking_number or "-"
         lines.append(
@@ -255,10 +276,11 @@ def build_receipt_context(references: Sequence) -> str:
             f"card={hit.card_title}({hit.card_number}) "
             f"description={hit.description}"
         )
+
     return "\n".join(lines)
 
 
-async def generate_receipt_answer(question: str, references: Sequence[FinancialReceiptSemanticHit]) -> str:
+async def generate_receipt_answer(question: str, references: Sequence) -> str:
     response = await llm_client.async_openai_client.chat.completions.create(
         model=settings.openai_model,
         temperature=settings.llm_temperature,
@@ -277,16 +299,21 @@ async def generate_receipt_answer(question: str, references: Sequence[FinancialR
             },
         ],
     )
+
     return (response.choices[0].message.content or "").strip()
 
 
 def parse_receipt_citations(answer: str) -> List[int]:
     seen: set[int] = set()
     citations: List[int] = []
+
     for match in _RECEIPT_CITATION_RE.findall(answer or ""):
         receipt_id = int(match)
         if receipt_id in seen:
             continue
         seen.add(receipt_id)
         citations.append(receipt_id)
+
     return citations
+
+

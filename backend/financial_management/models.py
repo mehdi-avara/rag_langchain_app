@@ -30,11 +30,13 @@ class FinancialDirection(str, enum.Enum):
 class FinancialCard(Base):
     __tablename__ = "financial_cards"
     __table_args__ = (
-        UniqueConstraint("owner_id", "card_number"),
+        UniqueConstraint("company_id", "card_number"),
+        Index("ix_financial_cards_company_id", "company_id"),
         Index("ix_financial_cards_owner_id", "owner_id"),
     )
 
     id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String, nullable=False, index=True)
     card_number = Column(String, nullable=False, index=True)
@@ -45,6 +47,7 @@ class FinancialCard(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    company = relationship("Company")
     owner = relationship("User", back_populates="financial_cards")
     receipts = relationship("FinancialReceipt", back_populates="credit_card")
 
@@ -52,6 +55,7 @@ class FinancialCard(Base):
 class FinancialReceipt(Base):
     __tablename__ = "financial_receipts"
     __table_args__ = (
+        Index("ix_financial_receipts_company_id", "company_id"),
         Index("ix_financial_receipts_owner_id", "owner_id"),
         Index("ix_financial_receipts_credit_card_id", "credit_card_id"),
         Index("ix_financial_receipts_tracking_number", "tracking_number"),
@@ -61,6 +65,7 @@ class FinancialReceipt(Base):
     )
 
     id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     credit_card_id = Column(Integer, ForeignKey("financial_cards.id"), nullable=False)
     description = Column(Text, nullable=False)
@@ -73,6 +78,7 @@ class FinancialReceipt(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    company = relationship("Company")
     owner = relationship("User", back_populates="financial_receipts")
     credit_card = relationship("FinancialCard", back_populates="receipts")
     files = relationship(

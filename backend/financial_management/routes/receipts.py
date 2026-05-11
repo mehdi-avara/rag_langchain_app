@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,10 +15,8 @@ from ..schemas import FinancialReceiptBatchRequest, FinancialReceiptCreate, Fina
 from ..services import (
     get_card_or_404,
     get_receipt_or_404,
-    owner_filter_id,
     receipt_to_out,
     safe_embed_text,
-    solar_to_gregorian,
 )
 
 
@@ -34,6 +33,7 @@ def create_receipt(
     embedding = safe_embed_text(payload.description)
 
     receipt = FinancialReceipt(
+        company_id=current_user.company_id,
         owner_id=current_user.id,
         credit_card_id=card.id,
         description=payload.description,
@@ -42,12 +42,15 @@ def create_receipt(
         amount=payload.amount,
         direction=payload.direction,
         counterparty_name=payload.counterparty_name,
-        receipt_date=solar_to_gregorian(payload.receipt_date),
+        receipt_date=payload.receipt_date,
     )
+
     receipt.credit_card = card
+
     db.add(receipt)
     db.commit()
     db.refresh(receipt)
+
     return receipt_to_out(receipt)
 
 
@@ -55,8 +58,8 @@ def create_receipt(
 def list_receipts(
     direction: Optional[str] = Query(None),
     credit_card_id: Optional[int] = Query(None),
-    date_from: Optional[str] = Query(None, description="Solar date, format YYYY-MM-DD"),
-    date_to: Optional[str] = Query(None, description="Solar date, format YYYY-MM-DD"),
+    date_from: Optional[date] = Query(None, description="Gregorian date, format YYYY-MM-DD"),
+    date_to: Optional[date] = Query(None, description="Gregorian date, format YYYY-MM-DD"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -68,18 +71,20 @@ def list_receipts(
             joinedload(FinancialReceipt.credit_card),
             joinedload(FinancialReceipt.files),
         )
+        .filter(FinancialReceipt.company_id == current_user.company_id)
     )
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None:
-        query = query.filter(FinancialReceipt.owner_id == owner_id)
+
     if direction:
         query = query.filter(FinancialReceipt.direction == direction)
+
     if credit_card_id is not None:
         query = query.filter(FinancialReceipt.credit_card_id == credit_card_id)
+
     if date_from:
-        query = query.filter(FinancialReceipt.receipt_date >= solar_to_gregorian(date_from))
+        query = query.filter(FinancialReceipt.receipt_date >= date_from)
+
     if date_to:
-        query = query.filter(FinancialReceipt.receipt_date <= solar_to_gregorian(date_to))
+        query = query.filter(FinancialReceipt.receipt_date <= date_to)
 
     receipts = (
         query
@@ -88,6 +93,7 @@ def list_receipts(
         .limit(limit)
         .all()
     )
+
     return [receipt_to_out(receipt) for receipt in receipts]
 
 
@@ -103,14 +109,16 @@ def get_receipt(
             joinedload(FinancialReceipt.credit_card),
             joinedload(FinancialReceipt.files),
         )
-        .filter(FinancialReceipt.id == receipt_id)
+        .filter(
+            FinancialReceipt.id == receipt_id,
+            FinancialReceipt.company_id == current_user.company_id,
+        )
         .first()
     )
+
     if not receipt:
         raise HTTPException(status_code=404, detail="Financial receipt not found")
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None and receipt.owner_id != owner_id:
-        raise HTTPException(status_code=404, detail="Financial receipt not found")
+
     return receipt_to_out(receipt)
 
 
@@ -121,23 +129,25 @@ def get_receipts_by_ids(
     current_user: User = Depends(require_permission("financial_management:read")),
 ):
     receipt_ids = list(dict.fromkeys(payload.ids))
+
     if not receipt_ids:
         return []
 
-    query = (
+    receipts = (
         db.query(FinancialReceipt)
         .options(
             joinedload(FinancialReceipt.credit_card),
             joinedload(FinancialReceipt.files),
         )
-        .filter(FinancialReceipt.id.in_(receipt_ids))
+        .filter(
+            FinancialReceipt.id.in_(receipt_ids),
+            FinancialReceipt.company_id == current_user.company_id,
+        )
+        .all()
     )
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None:
-        query = query.filter(FinancialReceipt.owner_id == owner_id)
 
-    receipts = query.all()
     receipts_by_id = {receipt.id: receipt_to_out(receipt) for receipt in receipts}
+
     return [receipts_by_id[receipt_id] for receipt_id in receipt_ids if receipt_id in receipts_by_id]
 
 
@@ -157,7 +167,7 @@ def update_receipt(
         receipt.credit_card = card
 
     if "receipt_date" in data and data["receipt_date"] is not None:
-        receipt.receipt_date = solar_to_gregorian(data.pop("receipt_date"))
+        receipt.receipt_date = data.pop("receipt_date")
 
     if "description" in data and data["description"] is not None:
         receipt.description_embedding = safe_embed_text(data["description"])
@@ -169,6 +179,7 @@ def update_receipt(
 
     db.commit()
     db.refresh(receipt)
+
     return receipt_to_out(receipt)
 
 
@@ -179,6 +190,9 @@ def delete_receipt(
     current_user: User = Depends(require_permission("financial_management:delete")),
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
+
     db.delete(receipt)
     db.commit()
+
     return None
+

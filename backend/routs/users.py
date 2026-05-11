@@ -42,6 +42,7 @@ def get_me(
 ) -> CurrentUserOut:
     return CurrentUserOut(
         id=current_user.id,
+        company_id=current_user.company_id,
         username=current_user.username,
         role=current_user.role,
         First_name=current_user.First_name,
@@ -58,7 +59,10 @@ def update_user(
     current_user: User = Depends(require_permission("profile:update")),
     db: Session = Depends(get_db),
 ) -> CurrentUserOut:
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -85,6 +89,7 @@ def update_user(
 
     return CurrentUserOut(
         id=user.id,
+        company_id=user.company_id,
         username=user.username,
         role=user.role,
         First_name=user.First_name,
@@ -101,7 +106,10 @@ def change_password(
     current_user: User = Depends(require_permission("profile:change_password")),
     db: Session = Depends(get_db),
 ) -> ChangePasswordOut:
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -136,7 +144,10 @@ async def upload_profile_image(
             detail="Unsupported file type. Allowed: jpeg, png, gif, webp",
         )
 
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -177,7 +188,10 @@ def download_profile_image(
     current_user: User = Depends(require_permission("profile:image")),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -217,7 +231,10 @@ def set_notification_token(
     current_user: User = Depends(require_permission("profile:notification")),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -228,3 +245,4 @@ def set_notification_token(
     db.refresh(user)
 
     return UserNotificationTokenOut(success=True)
+

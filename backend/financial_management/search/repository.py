@@ -17,18 +17,21 @@ def _embedding_client() -> JinaAPIEmbeddings:
 def search_financial_receipts_text(
     db: Session,
     query_text: str,
-    owner_id: Optional[int],
+    company_id: int,
     receipt_ids: Optional[List[int]] = None,
     limit: int = 50,
 ) -> List[FinancialReceipt]:
     pattern = f"%{query_text}%"
+
     query = (
         db.query(FinancialReceipt)
         .join(FinancialCard, FinancialCard.id == FinancialReceipt.credit_card_id)
+        .filter(
+            FinancialReceipt.company_id == company_id,
+            FinancialCard.company_id == company_id,
+        )
     )
 
-    if owner_id is not None:
-        query = query.filter(FinancialReceipt.owner_id == owner_id)
     if receipt_ids is not None:
         if not receipt_ids:
             return []
@@ -57,38 +60,46 @@ def search_financial_receipts_text(
 def search_financial_receipt_hits_semantic(
     db: Session,
     query_text: str,
-    owner_id: Optional[int],
+    company_id: int,
     receipt_ids: Optional[List[int]] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     query_embedding = _embedding_client().embed_query(query_text)
+
     if not query_embedding:
         return []
+
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-    filters = ["r.description_embedding IS NOT NULL"]
+    filters = [
+        "r.company_id = :company_id",
+        "c.company_id = :company_id",
+        "r.description_embedding IS NOT NULL",
+    ]
+
     params: Dict[str, Any] = {
         "query_vec": embedding_str,
+        "company_id": company_id,
         "limit": limit,
     }
-
-    if owner_id is not None:
-        filters.append("r.owner_id = :owner_id")
-        params["owner_id"] = owner_id
 
     if receipt_ids is not None:
         if not receipt_ids:
             return []
+
         placeholders = ", ".join(f":receipt_id_{i}" for i in range(len(receipt_ids)))
         filters.append(f"r.id IN ({placeholders})")
+
         for i, receipt_id in enumerate(receipt_ids):
             params[f"receipt_id_{i}"] = receipt_id
 
     where_clause = " AND ".join(filters)
+
     sql = text(
         f"""
         SELECT
             r.id AS receipt_id,
+            r.company_id AS company_id,
             r.description AS description,
             r.tracking_number AS tracking_number,
             r.amount AS amount,
@@ -110,9 +121,11 @@ def search_financial_receipt_hits_semantic(
     )
 
     rows = db.execute(sql, params).fetchall()
+
     return [
         {
             "receipt_id": row.receipt_id,
+            "company_id": row.company_id,
             "description": row.description,
             "tracking_number": row.tracking_number,
             "amount": row.amount,
@@ -127,3 +140,4 @@ def search_financial_receipt_hits_semantic(
         }
         for row in rows
     ]
+

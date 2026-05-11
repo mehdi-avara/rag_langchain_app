@@ -1,3 +1,4 @@
+from .company import Company
 from .user import User
 from .rbac import Role, Permission, user_role, role_permission
 from .document import Document, DocumentStatusType
@@ -8,11 +9,31 @@ from .chat import Chat, ChatMessage
 from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
 from .embedding_config import EmbeddingConfig
-from model_management.models import ManagedModel, ModelDocumentLink, ModelCommentLink, ModelReceiptLink
-from tag_management.models import TagModelLink, TagDocumentLink, TagCommentLink, TagReceiptLink
-from financial_management.models import FinancialCard, FinancialReceipt, FinancialReceiptFile, FinancialReceiptCommentLink, FinancialDirection
+
+from model_management.models import (
+    ManagedModel,
+    ModelDocumentLink,
+    ModelCommentLink,
+    ModelReceiptLink,
+)
+
+from tag_management.models import (
+    TagModelLink,
+    TagDocumentLink,
+    TagCommentLink,
+    TagReceiptLink,
+)
+
+from financial_management.models import (
+    FinancialCard,
+    FinancialReceipt,
+    FinancialReceiptFile,
+    FinancialReceiptCommentLink,
+    FinancialDirection,
+)
 
 __all__ = [
+    "Company",
     "User",
     "Role",
     "Permission",
@@ -43,3 +64,4 @@ __all__ = [
     "FinancialReceiptCommentLink",
     "FinancialDirection",
 ]
+

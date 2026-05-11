@@ -13,7 +13,7 @@ from Models import User
 
 from ..models import FinancialCard, FinancialReceipt
 from ..schemas import FinancialCardCreate, FinancialCardOut, FinancialCardUpdate
-from ..services import card_to_out, get_card_or_404, normalize_card_number, owner_filter_id
+from ..services import card_to_out, get_card_or_404, normalize_card_number
 
 
 router = APIRouter(prefix="/cards")
@@ -26,6 +26,7 @@ def create_card(
     current_user: User = Depends(require_permission("financial_management:cards")),
 ):
     card = FinancialCard(
+        company_id=current_user.company_id,
         owner_id=current_user.id,
         title=payload.title,
         card_number=normalize_card_number(payload.card_number),
@@ -34,13 +35,17 @@ def create_card(
         description=payload.description,
         is_active=payload.is_active,
     )
+
     db.add(card)
+
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Financial card already exists") from exc
+
     db.refresh(card)
+
     return card_to_out(card)
 
 
@@ -53,10 +58,8 @@ def list_cards(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:read")),
 ):
-    query = db.query(FinancialCard)
-    owner_id = owner_filter_id(current_user)
-    if owner_id is not None:
-        query = query.filter(FinancialCard.owner_id == owner_id)
+    query = db.query(FinancialCard).filter(FinancialCard.company_id == current_user.company_id)
+
     if search:
         pattern = f"%{search}%"
         query = query.filter(
@@ -68,6 +71,7 @@ def list_cards(
                 FinancialCard.description.ilike(pattern),
             )
         )
+
     if is_active is not None:
         query = query.filter(FinancialCard.is_active == is_active)
 
@@ -78,6 +82,7 @@ def list_cards(
         .limit(limit)
         .all()
     )
+
     return [card_to_out(card) for card in cards]
 
 
@@ -99,6 +104,7 @@ def update_card(
 ):
     card = get_card_or_404(db, card_id, current_user)
     data = payload.model_dump(exclude_unset=True)
+
     if "card_number" in data and data["card_number"] is not None:
         data["card_number"] = normalize_card_number(data["card_number"])
 
@@ -110,7 +116,9 @@ def update_card(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Financial card already exists") from exc
+
     db.refresh(card)
+
     return card_to_out(card)
 
 
@@ -121,14 +129,20 @@ def delete_card(
     current_user: User = Depends(require_permission("financial_management:delete")),
 ):
     card = get_card_or_404(db, card_id, current_user)
+
     linked_receipt = (
         db.query(FinancialReceipt.id)
-        .filter(FinancialReceipt.credit_card_id == card.id)
+        .filter(
+            FinancialReceipt.credit_card_id == card.id,
+            FinancialReceipt.company_id == current_user.company_id,
+        )
         .first()
     )
+
     if linked_receipt:
         raise HTTPException(status_code=409, detail="Cannot delete a card that is linked to receipts")
 
     db.delete(card)
     db.commit()
+
     return None
