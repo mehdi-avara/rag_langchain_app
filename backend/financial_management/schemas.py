@@ -4,12 +4,36 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, validator
 
 from Models import CommentType
 from schemas.comment import CommentCreate
 
 from .models import FinancialDirection
+
+
+def normalize_receipt_date(value):
+    if value is None:
+        return value
+
+    if isinstance(value, date):
+        if value.year < 1700:
+            from .services import solar_to_gregorian
+            return solar_to_gregorian(value.isoformat())
+        return value
+
+    value = str(value).strip()
+
+    try:
+        year = int(value.split("-")[0])
+    except Exception as exc:
+        raise ValueError("Invalid receipt_date format. Use YYYY-MM-DD") from exc
+
+    if year < 1700:
+        from .services import solar_to_gregorian
+        return solar_to_gregorian(value)
+
+    return date.fromisoformat(value)
 
 
 class FinancialCardBase(BaseModel):
@@ -72,6 +96,10 @@ class FinancialReceiptBase(BaseModel):
     receipt_date: date
     credit_card_id: int
 
+    @validator("receipt_date", pre=True)
+    def validate_receipt_date(cls, value):
+        return normalize_receipt_date(value)
+
 
 class FinancialReceiptCreate(FinancialReceiptBase):
     pass
@@ -85,6 +113,10 @@ class FinancialReceiptUpdate(BaseModel):
     counterparty_name: Optional[str] = Field(None, min_length=1)
     receipt_date: Optional[date] = None
     credit_card_id: Optional[int] = None
+
+    @validator("receipt_date", pre=True)
+    def validate_receipt_date(cls, value):
+        return normalize_receipt_date(value)
 
 
 class FinancialReceiptOut(BaseModel):
