@@ -1,19 +1,14 @@
-import os
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from db.init_db import get_db
-from db.search_connector import search_comments_text, search_comments_semantic, search_comment_hits_semantic
-from Models import Comment, User, CommentFile
+from db.search_connector import search_comments_text, search_comment_hits_semantic
+from Models import Comment, User
 from deps import get_current_user
-from schemas.comment import (
-    CommentCreate,
-    CommentOut,
-    CommentUpdate,
-)
+from schemas.comment import CommentCreate, CommentOut, CommentUpdate
 from schemas.search import (
     TextSearchRequest,
     SemanticCommentSearchRequestWithId,
@@ -21,8 +16,6 @@ from schemas.search import (
     CommentAskRequest,
     CommentAskResponse,
 )
-
-
 from components import generate_embeddings_for_chunks
 from .files import router as files_router
 
@@ -34,14 +27,28 @@ router.include_router(
 )
 
 
+def _get_owned_comment(db: Session, comment_id: int, current_user: User) -> Comment:
+    comment = (
+        db.query(Comment)
+        .filter(Comment.id == comment_id, Comment.user_id == current_user.id)
+        .first()
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return comment
+
+
 @router.get("", response_model=List[CommentOut])
 def list_comments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return all comments."""
-    comments = db.query(Comment).order_by(Comment.created_at.desc()).all()
-    return comments
+    return (
+        db.query(Comment)
+        .filter(Comment.user_id == current_user.id)
+        .order_by(Comment.created_at.desc())
+        .all()
+    )
 
 
 @router.post("/filter", response_model=List[CommentOut], status_code=status.HTTP_200_OK)
@@ -113,13 +120,7 @@ def get_comment_by_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return a single comment by id."""
-    comment = db.query(Comment).filter(Comment.id == comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    return comment
-
-
+    return _get_owned_comment(db, comment_id, current_user)
 
 
 @router.post("", response_model=CommentOut, status_code=status.HTTP_201_CREATED)
@@ -128,32 +129,20 @@ async def create_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Create a new comment.
-
-    We also generate an embedding for the comment content and store it.
-    """
-    # generate embedding for this comment's text
-    # your helper returns List[List[float]], so take the first
-    embeddings = generate_embeddings_for_chunks([payload.content])
-    embedding_vec = embeddings[0] if embeddings else None
+    embedding_vec = None
+    try:
+        embeddings = generate_embeddings_for_chunks([payload.content])
+        embedding_vec = embeddings[0] if embeddings else None
+    except Exception:
+        embedding_vec = None
 
     new_comment = Comment(
         user_id=current_user.id,
         title=payload.title,
         content=payload.content,
         type=payload.type,
-        embedding=embedding_vec
+        embedding=embedding_vec,
     )
-    # if payload.media_addresses:
-    #     new_comment.files = [
-    #         CommentFile(
-    #             media_address=addr,
-    #             file_name=os.path.basename(addr),
-    #             user_id=current_user.id,
-    #         )
-    #         for addr in payload.media_addresses
-    #     ]
 
     db.add(new_comment)
     db.commit()
@@ -169,23 +158,19 @@ async def update_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Update comment content (and re-embed).
-    """
-    #TODO upadate access contorl after I added user access control
-    
-    comment = db.query(Comment).filter(Comment.id == comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    comment = _get_owned_comment(db, comment_id, current_user)
 
-    # regenerate embedding for new text
-    embeddings = generate_embeddings_for_chunks([payload.content])
-    embedding_vec = embeddings[0] if embeddings else None
-    
     data = payload.model_dump(exclude_unset=True)
+
+    if "content" in data and data["content"] is not None:
+        try:
+            embeddings = generate_embeddings_for_chunks([data["content"]])
+            comment.embedding = embeddings[0] if embeddings else None
+        except Exception:
+            comment.embedding = None
+
     for key, value in data.items():
         setattr(comment, key, value)
-    comment.embedding = embedding_vec
 
     db.commit()
     db.refresh(comment)
@@ -198,12 +183,7 @@ def delete_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Delete a comment by id.
-    """
-    comment = db.query(Comment).filter(Comment.id == comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    comment = _get_owned_comment(db, comment_id, current_user)
 
     db.delete(comment)
     db.commit()

@@ -9,7 +9,6 @@ from db.init_db import get_db
 from Models import Comment, User, CommentFile
 from deps import get_current_user
 from schemas.comment import CommentFileName, CommentFileOut, CommentFileUpload
-
 from settings import get_settings
 
 settings = get_settings()
@@ -17,8 +16,19 @@ settings = get_settings()
 router = APIRouter(tags=["comments files"])
 
 
-def _parse_file_upload(file: UploadFile = File(...),index: bool = False) -> CommentFileUpload:
-    return CommentFileUpload(file=file,index=index)
+def _parse_file_upload(file: UploadFile = File(...), index: bool = False) -> CommentFileUpload:
+    return CommentFileUpload(file=file, index=index)
+
+
+def _get_owned_comment(db: Session, comment_id: int, current_user: User) -> Comment:
+    comment = (
+        db.query(Comment)
+        .filter(Comment.id == comment_id, Comment.user_id == current_user.id)
+        .first()
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return comment
 
 
 @router.get("/{comment_id}", response_model=List[CommentFileName])
@@ -27,20 +37,14 @@ def list_comment_files(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Return all files attached to a comment.
-    """
-    comment = db.query(Comment).filter(Comment.id == comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    _get_owned_comment(db, comment_id, current_user)
 
-    files = (
+    return (
         db.query(CommentFile)
-        .filter(CommentFile.comment_id == comment_id)
+        .filter(CommentFile.comment_id == comment_id, CommentFile.user_id == current_user.id)
         .order_by(CommentFile.id.desc())
         .all()
     )
-    return files
 
 
 @router.get("/{comment_id}/{file_id}/download")
@@ -50,12 +54,15 @@ def download_comment_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Download a single file attached to a comment.
-    """
+    _get_owned_comment(db, comment_id, current_user)
+
     file_rec = (
         db.query(CommentFile)
-        .filter(CommentFile.id == file_id, CommentFile.comment_id == comment_id)
+        .filter(
+            CommentFile.id == file_id,
+            CommentFile.comment_id == comment_id,
+            CommentFile.user_id == current_user.id,
+        )
         .first()
     )
     if not file_rec:
@@ -82,12 +89,7 @@ async def add_file_to_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Attach a file to a comment and persist it to disk and DB.
-    """
-    comment = db.query(Comment).filter(Comment.id == comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    _get_owned_comment(db, comment_id, current_user)
 
     base_dir = os.path.join(settings.files_dir, "comments", str(comment_id))
     os.makedirs(base_dir, exist_ok=True)
@@ -120,20 +122,23 @@ def delete_comment_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Delete a file record and remove it from disk if present.
-    """
+    _get_owned_comment(db, comment_id, current_user)
+
     file_rec = (
         db.query(CommentFile)
-        .filter(CommentFile.id == file_id, CommentFile.comment_id == comment_id)
+        .filter(
+            CommentFile.id == file_id,
+            CommentFile.comment_id == comment_id,
+            CommentFile.user_id == current_user.id,
+        )
         .first()
     )
     if not file_rec:
         raise HTTPException(status_code=404, detail="File not found for this comment")
 
-
     if os.path.isfile(file_rec.media_address):
         os.remove(file_rec.media_address)
+
     db.delete(file_rec)
     db.commit()
 
