@@ -1,6 +1,6 @@
 from typing import Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from schemas.users import RoleOut
 
@@ -11,6 +11,27 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+    first_name: Optional[str] = Field(default=None, max_length=100)
+    last_name: Optional[str] = Field(default=None, max_length=100)
+    company_name: Optional[str] = Field(default=None, max_length=150)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or "." not in value.split("@")[-1]:
+            raise ValueError("Invalid email")
+        return value
+
+
+class RegisterResponse(BaseModel):
     access_token: str
     refresh_token: str
 
@@ -36,5 +57,3 @@ class CurrentUserOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-
