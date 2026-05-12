@@ -26,6 +26,7 @@ class ModelUpdate(BaseModel):
 
 class ModelOut(BaseModel):
     id: int
+    company_id: int
     manufacturer: str
     model: str
     description: Optional[str] = None
@@ -43,6 +44,7 @@ class ModelOut(BaseModel):
 
 class ModelListOut(BaseModel):
     id: int
+    company_id: int
     manufacturer: str
     model: str
     description: Optional[str] = None

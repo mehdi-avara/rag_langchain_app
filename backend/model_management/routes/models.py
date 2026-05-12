@@ -22,12 +22,12 @@ from ..services import (
     get_doc_ids,
     get_comment_ids,
     get_receipt_ids,
-    is_admin,
     get_doc_ids_for_models,
     get_comment_ids_for_models,
     get_model_info_map,
     get_doc_to_model_map,
     get_comment_to_model_map,
+    require_company,
 )
 from schemas.search import (
     TextSearchRequest,
@@ -50,6 +50,7 @@ def _semantic_search_model_scope(
     comment_top_k: int,
     types: list[CommentType],
 ):
+    company_id = require_company(current_user)
     doc_ids = get_doc_ids_for_models(db, model_ids)
     comment_ids = get_comment_ids_for_models(db, model_ids)
 
@@ -74,7 +75,7 @@ def _semantic_search_model_scope(
             limit=comment_top_k,
         )
 
-    model_map = get_model_info_map(db, model_ids)
+    model_map = get_model_info_map(db, model_ids, company_id)
     doc_to_model = get_doc_to_model_map(db, model_ids)
     comment_to_model = get_comment_to_model_map(db, model_ids)
 
@@ -105,15 +106,34 @@ def _semantic_search_model_scope(
     return {"documents": documents, "comments": comments}
 
 
+def _model_out(db: Session, model: ManagedModel) -> ModelOut:
+    return ModelOut(
+        id=model.id,
+        company_id=model.company_id,
+        manufacturer=model.manufacturer,
+        model=model.model,
+        description=model.description,
+        type=model.type,
+        owner_id=model.owner_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+        doc_ids=get_doc_ids(db, model.id),
+        comment_ids=get_comment_ids(db, model.id),
+        receipt_ids=get_receipt_ids(db, model.id),
+    )
+
+
 @router.post("/", response_model=ModelOut, status_code=status.HTTP_201_CREATED)
 def create_model(
     payload: ModelCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("models:create")),
 ):
+    company_id = require_company(current_user)
     existing = (
         db.query(ManagedModel)
         .filter(
+            ManagedModel.company_id == company_id,
             ManagedModel.manufacturer == payload.manufacturer,
             ManagedModel.model == payload.model,
         )
@@ -123,6 +143,7 @@ def create_model(
         raise HTTPException(status_code=409, detail="Model already exists")
 
     new_model = ManagedModel(
+        company_id=company_id,
         manufacturer=payload.manufacturer,
         model=payload.model,
         description=payload.description,
@@ -133,19 +154,7 @@ def create_model(
     db.commit()
     db.refresh(new_model)
 
-    return ModelOut(
-        id=new_model.id,
-        manufacturer=new_model.manufacturer,
-        model=new_model.model,
-        description=new_model.description,
-        type=new_model.type,
-        owner_id=new_model.owner_id,
-        created_at=new_model.created_at,
-        updated_at=new_model.updated_at,
-        doc_ids=[],
-        comment_ids=[],
-        receipt_ids=[],
-    )
+    return _model_out(db, new_model)
 
 
 @router.get("/", response_model=List[ModelListOut])
@@ -157,9 +166,8 @@ def list_models(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    query = db.query(ManagedModel)
-    if not is_admin(current_user):
-        query = query.filter(ManagedModel.owner_id == current_user.id)
+    company_id = require_company(current_user)
+    query = db.query(ManagedModel).filter(ManagedModel.company_id == company_id)
 
     if search:
         pattern = f"%{search}%"
@@ -190,23 +198,7 @@ def get_model(
     current_user: User = Depends(require_permission("models:read")),
 ):
     model = get_model_or_404(db, model_id, current_user)
-    doc_ids = get_doc_ids(db, model.id)
-    comment_ids = get_comment_ids(db, model.id)
-    receipt_ids = get_receipt_ids(db, model.id)
-
-    return ModelOut(
-        id=model.id,
-        manufacturer=model.manufacturer,
-        model=model.model,
-        description=model.description,
-        type=model.type,
-        owner_id=model.owner_id,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-        doc_ids=doc_ids,
-        comment_ids=comment_ids,
-        receipt_ids=receipt_ids,
-    )
+    return _model_out(db, model)
 
 
 @router.post(
@@ -253,10 +245,15 @@ def semantic_search_all_models_content(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("models:search")),
 ):
-    query = db.query(ManagedModel.id)
-    if not is_admin(current_user):
-        query = query.filter(ManagedModel.owner_id == current_user.id)
-    model_ids = [row[0] for row in query.all()]
+    company_id = require_company(current_user)
+    model_ids = [
+        row[0]
+        for row in (
+            db.query(ManagedModel.id)
+            .filter(ManagedModel.company_id == company_id)
+            .all()
+        )
+    ]
 
     return _semantic_search_model_scope(
         db=db,
@@ -316,6 +313,7 @@ def update_model(
         duplicate = (
             db.query(ManagedModel)
             .filter(
+                ManagedModel.company_id == model.company_id,
                 ManagedModel.manufacturer == model.manufacturer,
                 ManagedModel.model == model.model,
                 ManagedModel.id != model.id,
@@ -332,22 +330,7 @@ def update_model(
         raise HTTPException(status_code=409, detail="Model already exists")
 
     db.refresh(model)
-
-    doc_ids = get_doc_ids(db, model.id)
-    comment_ids = get_comment_ids(db, model.id)
-
-    return ModelOut(
-        id=model.id,
-        manufacturer=model.manufacturer,
-        model=model.model,
-        description=model.description,
-        type=model.type,
-        owner_id=model.owner_id,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-        doc_ids=doc_ids,
-        comment_ids=comment_ids,
-    )
+    return _model_out(db, model)
 
 
 @router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)

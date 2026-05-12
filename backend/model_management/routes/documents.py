@@ -10,7 +10,7 @@ from Models import User, Document
 from ..models import ModelDocumentLink
 from ..schemas import ModelDocLinkCreate, ModelDocLinkOut, ModelDocumentOut
 from routs.documents import upload_pdf_mineru
-from ..services import get_model_or_404, is_admin
+from ..services import get_model_or_404
 
 
 router = APIRouter()
@@ -28,7 +28,7 @@ def link_document(
     doc = db.query(Document).filter(Document.id == payload.document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if not is_admin(current_user) and doc.owner_id != current_user.id:
+    if doc.owner.company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail="Not allowed to link this document")
 
     link = (

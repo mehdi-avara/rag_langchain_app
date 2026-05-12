@@ -7,7 +7,7 @@ from Models.comment import CommentType
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
-from Models import Chunk, Comment, Document
+from Models import Chunk, Comment, Document, User
 from components.embedding import JinaAPIEmbeddings
 from settings import get_settings
 
@@ -22,7 +22,8 @@ def _embedding_client() -> JinaAPIEmbeddings:
 def search_documents_text(
     db: Session,
     query_text: str,
-    owner_id: int,
+    owner_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     doc_ids: Optional[List[int]] = None,
     limit: int = 50,
 ) -> List[Document]:
@@ -33,7 +34,13 @@ def search_documents_text(
         .exists()
     )
 
-    query = db.query(Document).filter(Document.owner_id == owner_id)
+    query = db.query(Document)
+
+    if company_id is not None:
+        query = query.join(User, User.id == Document.owner_id).filter(User.company_id == company_id)
+    elif owner_id is not None:
+        query = query.filter(Document.owner_id == owner_id)
+
     if doc_ids is not None:
         if not doc_ids:
             return []
@@ -54,13 +61,20 @@ def search_documents_text(
 def search_comments_text(
     db: Session,
     query_text: str,
-    user_id: int,
+    user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     comment_ids: Optional[List[int]] = None,
     limit: int = 50,
 ) -> List[Comment]:
     pattern = f"%{query_text}%"
 
-    query = db.query(Comment).filter(Comment.user_id == user_id)
+    query = db.query(Comment)
+
+    if company_id is not None:
+        query = query.join(User, User.id == Comment.user_id).filter(User.company_id == company_id)
+    elif user_id is not None:
+        query = query.filter(Comment.user_id == user_id)
+
     if comment_ids is not None:
         if not comment_ids:
             return []
@@ -76,12 +90,11 @@ def search_comments_text(
     return query.order_by(Comment.created_at.desc()).limit(limit).all()
 
 
-
-
 def search_document_part_hits_semantic(
     db: Session,
     query_text: str,
-    owner_id: int,
+    owner_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     doc_ids: Optional[List[int]] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
@@ -90,12 +103,21 @@ def search_document_part_hits_semantic(
         return []
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-    filters = ["d.owner_id = :owner_id", "c.embedding IS NOT NULL"]
+    filters = ["c.embedding IS NOT NULL"]
     params: Dict[str, Any] = {
-        "owner_id": owner_id,
         "query_vec": embedding_str,
         "limit": limit,
     }
+
+    join_users = False
+
+    if company_id is not None:
+        join_users = True
+        filters.append("u.company_id = :company_id")
+        params["company_id"] = company_id
+    elif owner_id is not None:
+        filters.append("d.owner_id = :owner_id")
+        params["owner_id"] = owner_id
 
     if doc_ids is not None:
         if not doc_ids:
@@ -106,6 +128,8 @@ def search_document_part_hits_semantic(
             params[f"doc_id_{i}"] = doc_id
 
     where_clause = " AND ".join(filters)
+    user_join_sql = "JOIN users u ON u.id = d.owner_id" if join_users else ""
+
     sql = text(
         f"""
         SELECT
@@ -119,6 +143,7 @@ def search_document_part_hits_semantic(
             (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
         FROM documents d
         JOIN chunks c ON c.doc_id = d.id
+        {user_join_sql}
         WHERE {where_clause}
         ORDER BY similarity DESC
         LIMIT :limit
@@ -143,7 +168,8 @@ def search_document_part_hits_semantic(
 def search_comment_hits_semantic(
     db: Session,
     query_text: str,
-    user_id: int,
+    user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     comment_ids: Optional[List[int]] = None,
     types: Optional[List[CommentType]] = None,
     limit: int = 50,
@@ -153,12 +179,21 @@ def search_comment_hits_semantic(
         return []
     embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-    filters = ["c.user_id = :user_id", "c.embedding IS NOT NULL"]
+    filters = ["c.embedding IS NOT NULL"]
     params: Dict[str, Any] = {
-        "user_id": user_id,
         "query_vec": embedding_str,
         "limit": limit,
     }
+
+    join_users = False
+
+    if company_id is not None:
+        join_users = True
+        filters.append("u.company_id = :company_id")
+        params["company_id"] = company_id
+    elif user_id is not None:
+        filters.append("c.user_id = :user_id")
+        params["user_id"] = user_id
 
     if comment_ids is not None:
         if not comment_ids:
@@ -175,6 +210,8 @@ def search_comment_hits_semantic(
             params[f"comment_type_{i}"] = comment_type.value if hasattr(comment_type, "value") else str(comment_type)
 
     where_clause = " AND ".join(filters)
+    user_join_sql = "JOIN users u ON u.id = c.user_id" if join_users else ""
+
     sql = text(
         f"""
         SELECT
@@ -186,6 +223,7 @@ def search_comment_hits_semantic(
             c.user_id AS comment_user_id,
             (1 - (c.embedding <=> (:query_vec)::vector)) AS similarity
         FROM comments c
+        {user_join_sql}
         WHERE {where_clause}
         ORDER BY similarity DESC
         LIMIT :limit
@@ -204,10 +242,13 @@ def search_comment_hits_semantic(
         }
         for row in rows
     ]
+
+
 def search_documents_semantic(
     db: Session,
     query_text: str,
-    owner_id: int,
+    owner_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     doc_ids: Optional[List[int]] = None,
     limit: int = 50,
 ) -> List[Document]:
@@ -215,6 +256,7 @@ def search_documents_semantic(
         db=db,
         query_text=query_text,
         owner_id=owner_id,
+        company_id=company_id,
         doc_ids=doc_ids,
         limit=limit,
     )
@@ -237,7 +279,8 @@ def search_documents_semantic(
 def search_comments_semantic(
     db: Session,
     query_text: str,
-    user_id: int,
+    user_id: Optional[int] = None,
+    company_id: Optional[int] = None,
     comment_ids: Optional[List[int]] = None,
     types: Optional[List[CommentType]] = None,
     limit: int = 50,
@@ -246,6 +289,7 @@ def search_comments_semantic(
         db=db,
         query_text=query_text,
         user_id=user_id,
+        company_id=company_id,
         comment_ids=comment_ids,
         types=types,
         limit=limit,

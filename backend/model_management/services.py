@@ -5,20 +5,27 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from components import generate_embeddings_for_chunks
-from Models import User, Document, Comment
+from Models import User
 
 from .models import ManagedModel, ModelDocumentLink, ModelCommentLink, ModelReceiptLink
 
 
-def is_admin(user: User) -> bool:
-    return user.role == "admin"
+def require_company(current_user: User) -> int:
+    if current_user.company_id is None:
+        raise HTTPException(status_code=403, detail="User has no company")
+    return current_user.company_id
 
 
 def get_model_or_404(db: Session, model_id: int, current_user: User) -> ManagedModel:
-    query = db.query(ManagedModel).filter(ManagedModel.id == model_id)
-    if not is_admin(current_user):
-        query = query.filter(ManagedModel.owner_id == current_user.id)
-    model = query.first()
+    company_id = require_company(current_user)
+    model = (
+        db.query(ManagedModel)
+        .filter(
+            ManagedModel.id == model_id,
+            ManagedModel.company_id == company_id,
+        )
+        .first()
+    )
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     return model
@@ -139,10 +146,17 @@ def search_model_receipt_link_ids(
     return output[:limit]
 
 
-def get_model_info_map(db: Session, model_ids: List[int]) -> dict[int, ManagedModel]:
+def get_model_info_map(db: Session, model_ids: List[int], company_id: int) -> dict[int, ManagedModel]:
     if not model_ids:
         return {}
-    models = db.query(ManagedModel).filter(ManagedModel.id.in_(model_ids)).all()
+    models = (
+        db.query(ManagedModel)
+        .filter(
+            ManagedModel.id.in_(model_ids),
+            ManagedModel.company_id == company_id,
+        )
+        .all()
+    )
     return {model.id: model for model in models}
 
 

@@ -8,10 +8,7 @@ from Models import User
 
 from ..models import ManagedModel
 from ..schemas import ModelAskRequest, ModelAskMultiRequest, ModelAskResponse
-from ..services import (
-    get_model_or_404,
-    is_admin,
-)
+from ..services import get_model_or_404, require_company
 from .models import _semantic_search_model_scope
 
 
@@ -66,12 +63,18 @@ async def ask_models(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("models:ask")),
 ):
+    company_id = require_company(current_user)
     model_ids = list(dict.fromkeys(payload.model_ids))
+
     if not model_ids:
-        query = db.query(ManagedModel.id)
-        if not is_admin(current_user):
-            query = query.filter(ManagedModel.owner_id == current_user.id)
-        model_ids = [row[0] for row in query.all()]
+        model_ids = [
+            row[0]
+            for row in (
+                db.query(ManagedModel.id)
+                .filter(ManagedModel.company_id == company_id)
+                .all()
+            )
+        ]
 
     for provided_model_id in model_ids:
         get_model_or_404(db, provided_model_id, current_user)

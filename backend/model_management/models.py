@@ -10,10 +10,12 @@ from db.base import Base
 class ManagedModel(Base):
     __tablename__ = "managed_models"
     __table_args__ = (
-        UniqueConstraint("manufacturer", "model"),
+        UniqueConstraint("company_id", "manufacturer", "model"),
+        Index("ix_managed_models_company_id", "company_id"),
     )
 
     id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     manufacturer = Column(String, nullable=False, index=True)
     model = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
@@ -22,6 +24,7 @@ class ManagedModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    company = relationship("Company")
     owner = relationship("User")
     document_links = relationship(
         "ModelDocumentLink",
