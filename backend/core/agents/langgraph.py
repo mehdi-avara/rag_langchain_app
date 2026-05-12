@@ -30,6 +30,7 @@ class GraphState(TypedDict):
     db: Session  # SQLAlchemy session for database access
     doc_ids: List[int] | None
     comment_ids: List[int] | None
+    company_id: int | None
     scope: str | None
     
 
@@ -41,14 +42,16 @@ async def retrieve_docs(state: GraphState) -> GraphState:
     keyword_retriever = FullTextRetrieverFromDB(db)
     vector_store = PostgresVectorStore(db)
     vector_retriever = vector_store.as_retriever(
-        search_kwargs={"k": 6},  # Use fewer results for preview
-        doc_ids=state.get("doc_ids", None)
+        search_kwargs={"k": 6},
+        doc_ids=state.get("doc_ids", None),
+        comment_ids=state.get("comment_ids", None),
+        company_id=state.get("company_id", None),
     )
     comments = []
     chunks = []
     # Manual routing logic
     if mode == "keyword":
-        chunks = await keyword_retriever.ainvoke(question)
+        chunks = await keyword_retriever.ainvoke(question, doc_ids=state.get("doc_ids", None), company_id=state.get("company_id", None))
     elif mode == "vector":
         retrieved_content = vector_retriever.invoke(question)
         chunks = retrieved_content["chunks"]  
@@ -57,7 +60,7 @@ async def retrieve_docs(state: GraphState) -> GraphState:
         retrieved_content = vector_retriever.invoke(question)
         chunks = retrieved_content["chunks"]  
         comments = retrieved_content["comments"]
-        holder = await keyword_retriever.ainvoke(question)
+        holder = await keyword_retriever.ainvoke(question, doc_ids=state.get("doc_ids", None), company_id=state.get("company_id", None))
         chunks += holder
 
     comment_ids = state.get("comment_ids")

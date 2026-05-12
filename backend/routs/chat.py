@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List
@@ -142,6 +142,9 @@ async def chat(
 
     route = "search" if request.preview else "full"
 
+    if current_user.company_id is None:
+        raise HTTPException(status_code=403, detail="User has no company")
+
     graph = build_answer_graph()
     state = GraphState(
         question=query,
@@ -149,6 +152,9 @@ async def chat(
         db=db,
         mode="vector",
         doc_ids=request.doc_ids,
+        comment_ids=None,
+        company_id=current_user.company_id,
+        scope="both",
     )
 
     result = await graph.ainvoke(state)
@@ -159,17 +165,20 @@ async def chat(
         comments=result.get("comments", []),
     )
 
-    add_message(
-        db,
-        chat_id=chat_obj.id,
-        role=ChatRole.assistant,
-        content=result["answer"],
-        citations=citations,
-        retrieved_chunks=[c.model_dump() for c in retrieved_data],
-    )
+    answer = result.get("answer") or ""
+
+    if not request.preview:
+        add_message(
+            db,
+            chat_id=chat_obj.id,
+            role=ChatRole.assistant,
+            content=answer,
+            citations=citations,
+            retrieved_chunks=[c.model_dump() for c in retrieved_data],
+        )
 
     return ChatResponse(
-        answer=result["answer"],
+        answer=answer,
         citations=citations,
         retrieved_chunks=retrieved_data,
         chat_id=chat_obj.id,
