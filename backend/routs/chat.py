@@ -21,17 +21,20 @@ def get_or_create_chat(
     chat_id: int | None,
     user: User,
 ) -> tuple[Chat, bool]:
+    if user.company_id is None:
+        raise HTTPException(status_code=403, detail="User has no company")
+
     if chat_id:
         chat = (
             db.query(Chat)
-            .filter(Chat.id == chat_id, Chat.user_id == user.id)
+            .filter(Chat.id == chat_id, Chat.company_id == user.company_id)
             .first()
         )
         if not chat:
             raise chat_not_found_exception()
         return chat, False
 
-    chat = Chat(name="New Chat", user_id=user.id)
+    chat = Chat(name="New Chat", company_id=user.company_id, user_id=user.id)
     db.add(chat)
     db.commit()
     db.refresh(chat)
@@ -194,7 +197,7 @@ async def update_chat_name(
 ):
     chat_obj = (
         db.query(Chat)
-        .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
+        .filter(Chat.id == chat_id, Chat.company_id == current_user.company_id)
         .first()
     )
 
@@ -217,7 +220,7 @@ async def delete_chat(
 ):
     chat_obj = (
         db.query(Chat)
-        .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
+        .filter(Chat.id == chat_id, Chat.company_id == current_user.company_id)
         .first()
     )
 
@@ -236,7 +239,7 @@ async def list_user_chats(
 ):
     chats = (
         db.query(Chat.id, Chat.name)
-        .filter(Chat.user_id == current_user.id)
+        .filter(Chat.company_id == current_user.company_id)
         .order_by(desc(Chat.id))
         .all()
     )
@@ -260,7 +263,7 @@ async def get_chat_history(
 ):
     chat_obj = (
         db.query(Chat)
-        .filter(Chat.id == chat_id, Chat.user_id == current_user.id)
+        .filter(Chat.id == chat_id, Chat.company_id == current_user.company_id)
         .first()
     )
 
