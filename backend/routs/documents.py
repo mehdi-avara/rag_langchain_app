@@ -12,10 +12,10 @@ import posixpath
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from deps import require_permission
-from Models import User, Document, Chunk, DocumentStatusType
+from Models import User, Document, Chunk, DocumentStatusType, UserDocumentAccess
 from db.init_db import get_db
 from db.search_connector import search_documents_text, search_document_part_hits_semantic
-from schemas.document import DocumentOut, ChunkOut
+from schemas.document import DocumentOut, ChunkOut, DocumentAccessGrantIn, DocumentAccessOut
 from schemas.search import (
     TextSearchRequest,
     SemanticSearchRequest,
@@ -85,6 +85,96 @@ def _extract_zip_safely(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfi
         target_path.parent.mkdir(parents=True, exist_ok=True)
         with zip_file.open(info) as src, open(target_path, "wb") as dst:
             shutil.copyfileobj(src, dst)
+
+
+def _is_company_admin(user: User) -> bool:
+    return user.role == "admin" or any(role.name == "admin" and role.is_active for role in user.roles)
+
+
+def _has_document_access(db: Session, doc: Document, current_user: User, action: str) -> bool:
+    if doc.owner_id == current_user.id:
+        return True
+
+    if _is_company_admin(current_user):
+        return True
+
+    access = (
+        db.query(UserDocumentAccess)
+        .filter(
+            UserDocumentAccess.document_id == doc.id,
+            UserDocumentAccess.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not access:
+        return False
+
+    if action == "read":
+        return access.can_read
+    if action == "download":
+        return access.can_download
+    if action == "ask":
+        return access.can_ask
+    if action == "update":
+        return access.can_update
+    if action == "delete":
+        return access.can_delete
+
+    return False
+
+
+def _get_accessible_document(db: Session, doc_id: int, current_user: User, action: str = "read") -> Document:
+    doc = _get_company_document(db, doc_id, current_user)
+
+    if not _has_document_access(db, doc, current_user, action):
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return doc
+
+def _get_accessible_document_ids(db: Session, current_user: User, action: str = "read") -> list[int] | None:
+    if current_user.company_id is None:
+        raise HTTPException(status_code=403, detail="User has no company")
+
+    if _is_company_admin(current_user):
+        return None
+
+    access_column = {
+        "read": UserDocumentAccess.can_read,
+        "download": UserDocumentAccess.can_download,
+        "ask": UserDocumentAccess.can_ask,
+        "update": UserDocumentAccess.can_update,
+        "delete": UserDocumentAccess.can_delete,
+    }.get(action)
+
+    if access_column is None:
+        return []
+
+    owned_ids = [
+        row[0]
+        for row in db.query(Document.id)
+        .join(User, User.id == Document.owner_id)
+        .filter(
+            User.company_id == current_user.company_id,
+            Document.owner_id == current_user.id,
+        )
+        .all()
+    ]
+
+    granted_ids = [
+        row[0]
+        for row in db.query(UserDocumentAccess.document_id)
+        .join(Document, Document.id == UserDocumentAccess.document_id)
+        .join(User, User.id == Document.owner_id)
+        .filter(
+            User.company_id == current_user.company_id,
+            UserDocumentAccess.user_id == current_user.id,
+            access_column.is_(True),
+        )
+        .all()
+    ]
+
+    return list(dict.fromkeys(owned_ids + granted_ids))
 
 
 def _get_company_document(db: Session, doc_id: int, current_user: User) -> Document:
@@ -245,13 +335,27 @@ async def list_documents(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    return (
+    query = (
         db.query(Document)
         .join(User, User.id == Document.owner_id)
         .filter(User.company_id == current_user.company_id)
-        .order_by(Document.created_at.desc())
-        .all()
     )
+
+    if not _is_company_admin(current_user):
+        query = (
+            query
+            .outerjoin(
+                UserDocumentAccess,
+                (UserDocumentAccess.document_id == Document.id)
+                & (UserDocumentAccess.user_id == current_user.id)
+            )
+            .filter(
+                (Document.owner_id == current_user.id)
+                | (UserDocumentAccess.can_read.is_(True))
+            )
+        )
+
+    return query.order_by(Document.created_at.desc()).all()
 
 
 @router.post("/filter", response_model=List[DocumentOut], status_code=status.HTTP_200_OK)
@@ -260,11 +364,22 @@ async def filter_documents(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
+    allowed_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    requested_ids = payload.ids or None
+
+    if allowed_doc_ids is not None:
+        if requested_ids is not None:
+            doc_ids = [doc_id for doc_id in requested_ids if doc_id in set(allowed_doc_ids)]
+        else:
+            doc_ids = allowed_doc_ids
+    else:
+        doc_ids = requested_ids
+
     return search_documents_text(
         db=db,
         query_text=payload.query,
         company_id=current_user.company_id,
-        doc_ids=payload.ids or None,
+        doc_ids=doc_ids,
         limit=payload.limit,
     )
 
@@ -276,11 +391,22 @@ async def semantic_search_documents(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
+    allowed_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    requested_ids = payload.ids or None
+
+    if allowed_doc_ids is not None:
+        if requested_ids is not None:
+            doc_ids = [doc_id for doc_id in requested_ids if doc_id in set(allowed_doc_ids)]
+        else:
+            doc_ids = allowed_doc_ids
+    else:
+        doc_ids = requested_ids
+
     return search_document_part_hits_semantic(
         db=db,
         query_text=payload.query,
         company_id=current_user.company_id,
-        doc_ids=payload.ids or None,
+        doc_ids=doc_ids,
         limit=top_k,
     )
 
@@ -297,14 +423,18 @@ async def ask_documents(
             db=db,
             query_text=payload.question,
             company_id=current_user.company_id,
-            doc_ids=None,
+            doc_ids=_get_accessible_document_ids(db, current_user, "ask"),
             limit=doc_top_k,
         )
         if doc_top_k > 0
         else []
     )
 
-    answer = await generate_answer_from_references(payload.question, references)
+    try:
+        answer = await generate_answer_from_references(payload.question, references)
+    except Exception as exc:
+        raise HTTPException(status_code=504, detail=f"LLM request failed: {exc}") from exc
+
     used_chunk_ids, used_comment_ids, citations = parse_semantic_citations(answer)
 
     return {
@@ -322,7 +452,7 @@ async def download_pdf(
     current_user: User = Depends(require_permission("documents:download")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_company_document(db, doc_id, current_user)
+    doc = _get_accessible_document(db, doc_id, current_user, "download")
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")
@@ -350,7 +480,7 @@ async def get_chunk(
     if not chunk:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
-    doc = _get_company_document(db, chunk.doc_id, current_user)
+    doc = _get_accessible_document(db, chunk.doc_id, current_user, "read")
 
     return {
         "id": chunk.id,
@@ -371,7 +501,7 @@ async def stream_pdf(
     current_user: User = Depends(require_permission("documents:download")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_company_document(db, doc_id, current_user)
+    doc = _get_accessible_document(db, doc_id, current_user, "download")
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")
@@ -425,13 +555,114 @@ async def stream_pdf(
     )
 
 
+
+@router.get("/{doc_id}/access", response_model=List[DocumentAccessOut], status_code=status.HTTP_200_OK)
+async def list_document_access(
+    doc_id: int,
+    current_user: User = Depends(require_permission("documents:read")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_company_document(db, doc_id, current_user)
+
+    if not _is_company_admin(current_user) and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    return (
+        db.query(UserDocumentAccess)
+        .filter(UserDocumentAccess.document_id == doc.id)
+        .order_by(UserDocumentAccess.id.asc())
+        .all()
+    )
+
+
+@router.put("/{doc_id}/access", response_model=DocumentAccessOut, status_code=status.HTTP_200_OK)
+async def grant_document_access(
+    doc_id: int,
+    payload: DocumentAccessGrantIn,
+    current_user: User = Depends(require_permission("documents:update")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_company_document(db, doc_id, current_user)
+
+    if not _is_company_admin(current_user) and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    target_user = (
+        db.query(User)
+        .filter(User.id == payload.user_id, User.company_id == current_user.company_id)
+        .first()
+    )
+
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    access = (
+        db.query(UserDocumentAccess)
+        .filter(
+            UserDocumentAccess.document_id == doc.id,
+            UserDocumentAccess.user_id == target_user.id,
+        )
+        .first()
+    )
+
+    if not access:
+        access = UserDocumentAccess(
+            document_id=doc.id,
+            user_id=target_user.id,
+            granted_by_user_id=current_user.id,
+        )
+        db.add(access)
+
+    access.can_read = payload.can_read
+    access.can_download = payload.can_download
+    access.can_ask = payload.can_ask
+    access.can_update = payload.can_update
+    access.can_delete = payload.can_delete
+
+    db.commit()
+    db.refresh(access)
+
+    return access
+
+
+@router.delete("/{doc_id}/access/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_document_access(
+    doc_id: int,
+    user_id: int,
+    current_user: User = Depends(require_permission("documents:update")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_company_document(db, doc_id, current_user)
+
+    if not _is_company_admin(current_user) and doc.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    access = (
+        db.query(UserDocumentAccess)
+        .filter(
+            UserDocumentAccess.document_id == doc.id,
+            UserDocumentAccess.user_id == user_id,
+        )
+        .first()
+    )
+
+    if not access:
+        raise HTTPException(status_code=404, detail="Access record not found")
+
+    db.delete(access)
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+
 @router.get("/{doc_id}", status_code=status.HTTP_200_OK, response_model=DocumentOut)
 async def get_document(
     doc_id: int,
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    return _get_company_document(db, doc_id, current_user)
+    return _get_accessible_document(db, doc_id, current_user, "read")
 
 
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -440,7 +671,7 @@ async def delete_document(
     current_user: User = Depends(require_permission("documents:delete")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_company_document(db, doc_id, current_user)
+    doc = _get_accessible_document(db, doc_id, current_user, "delete")
 
     db.delete(doc)
     db.commit()
@@ -456,7 +687,7 @@ async def browse_chunks(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    _get_company_document(db, doc_id, current_user)
+    _get_accessible_document(db, doc_id, current_user, "read")
 
     if end_page is None:
         end_page = start_page
@@ -488,7 +719,7 @@ async def get_document_image(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_company_document(db, doc_id, current_user)
+    doc = _get_accessible_document(db, doc_id, current_user, "read")
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")

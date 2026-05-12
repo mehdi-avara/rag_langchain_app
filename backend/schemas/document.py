@@ -29,3 +29,29 @@ class ChunkOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DocumentAccessGrantIn(BaseModel):
+    user_id: int
+    can_read: bool = True
+    can_download: bool = False
+    can_ask: bool = True
+    can_update: bool = False
+    can_delete: bool = False
+
+
+class DocumentAccessOut(BaseModel):
+    id: int
+    user_id: int
+    document_id: int
+    can_read: bool
+    can_download: bool
+    can_ask: bool
+    can_update: bool
+    can_delete: bool
+    granted_by_user_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

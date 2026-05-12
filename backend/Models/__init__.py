@@ -2,6 +2,7 @@ from .company import Company
 from .user import User
 from .rbac import Role, Permission, user_role, role_permission
 from .document import Document, DocumentStatusType
+from .document_access import UserDocumentAccess
 from .chunk import Chunk
 from .comment import Comment, CommentType
 from .comment_file import CommentFile
@@ -40,6 +41,7 @@ __all__ = [
     "user_role",
     "role_permission",
     "Document",
+    "UserDocumentAccess",
     "Chunk",
     "Comment",
     "CommentFile",
