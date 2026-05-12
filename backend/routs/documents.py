@@ -87,11 +87,19 @@ def _extract_zip_safely(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfi
             shutil.copyfileobj(src, dst)
 
 
-def _get_owned_document(db: Session, doc_id: int, current_user: User) -> Document:
-    doc = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.owner_id == current_user.id,
-    ).first()
+def _get_company_document(db: Session, doc_id: int, current_user: User) -> Document:
+    if current_user.company_id is None:
+        raise HTTPException(status_code=403, detail="User has no company")
+
+    doc = (
+        db.query(Document)
+        .join(User, User.id == Document.owner_id)
+        .filter(
+            Document.id == doc_id,
+            User.company_id == current_user.company_id,
+        )
+        .first()
+    )
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
@@ -239,7 +247,8 @@ async def list_documents(
 ):
     return (
         db.query(Document)
-        .filter(Document.owner_id == current_user.id)
+        .join(User, User.id == Document.owner_id)
+        .filter(User.company_id == current_user.company_id)
         .order_by(Document.created_at.desc())
         .all()
     )
@@ -254,7 +263,7 @@ async def filter_documents(
     return search_documents_text(
         db=db,
         query_text=payload.query,
-        owner_id=current_user.id,
+        company_id=current_user.company_id,
         doc_ids=payload.ids or None,
         limit=payload.limit,
     )
@@ -270,7 +279,7 @@ async def semantic_search_documents(
     return search_document_part_hits_semantic(
         db=db,
         query_text=payload.query,
-        owner_id=current_user.id,
+        company_id=current_user.company_id,
         doc_ids=payload.ids or None,
         limit=top_k,
     )
@@ -287,7 +296,7 @@ async def ask_documents(
         search_document_part_hits_semantic(
             db=db,
             query_text=payload.question,
-            owner_id=current_user.id,
+            company_id=current_user.company_id,
             doc_ids=None,
             limit=doc_top_k,
         )
@@ -313,7 +322,7 @@ async def download_pdf(
     current_user: User = Depends(require_permission("documents:download")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_owned_document(db, doc_id, current_user)
+    doc = _get_company_document(db, doc_id, current_user)
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")
@@ -341,7 +350,7 @@ async def get_chunk(
     if not chunk:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
-    doc = _get_owned_document(db, chunk.doc_id, current_user)
+    doc = _get_company_document(db, chunk.doc_id, current_user)
 
     return {
         "id": chunk.id,
@@ -362,7 +371,7 @@ async def stream_pdf(
     current_user: User = Depends(require_permission("documents:download")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_owned_document(db, doc_id, current_user)
+    doc = _get_company_document(db, doc_id, current_user)
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")
@@ -422,7 +431,7 @@ async def get_document(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    return _get_owned_document(db, doc_id, current_user)
+    return _get_company_document(db, doc_id, current_user)
 
 
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -431,7 +440,7 @@ async def delete_document(
     current_user: User = Depends(require_permission("documents:delete")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_owned_document(db, doc_id, current_user)
+    doc = _get_company_document(db, doc_id, current_user)
 
     db.delete(doc)
     db.commit()
@@ -447,7 +456,7 @@ async def browse_chunks(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    _get_owned_document(db, doc_id, current_user)
+    _get_company_document(db, doc_id, current_user)
 
     if end_page is None:
         end_page = start_page
@@ -479,7 +488,7 @@ async def get_document_image(
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    doc = _get_owned_document(db, doc_id, current_user)
+    doc = _get_company_document(db, doc_id, current_user)
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="No file path found for this document")
