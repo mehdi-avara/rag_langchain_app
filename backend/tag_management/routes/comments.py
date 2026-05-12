@@ -16,7 +16,7 @@ from ..schemas import (
     TagCreateCommentAndLinkRequest,
 )
 from routs.comments.comment import create_comment
-from ..services import get_tag_or_404, is_admin
+from ..services import get_tag_or_404
 
 
 router = APIRouter()
@@ -29,12 +29,12 @@ def link_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:comments")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     comment = db.query(Comment).filter(Comment.id == payload.comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if not is_admin(current_user) and comment.user_id != current_user.id:
+    if comment.user.company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail="Not allowed to link this comment")
 
     link = (
@@ -54,7 +54,7 @@ def link_comment(
     link = TagCommentLink(
         tag_id=tag_id,
         comment_id=comment.id,
-        linked_by_user_id=current_user.id,
+        linked_by_company_id=current_user.company_id,
         note=payload.note,
     )
     db.add(link)
@@ -70,7 +70,7 @@ async def create_comment_and_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:comments")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     comment = await create_comment(payload=body.payload, db=db, current_user=current_user)
     payload = TagCommentLinkCreate(comment_id=comment.id, note=body.link_description)
@@ -84,7 +84,7 @@ def unlink_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:comments")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     link = (
         db.query(TagCommentLink)
@@ -112,7 +112,7 @@ def list_tag_comments(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     query = (
         db.query(Comment, TagCommentLink)

@@ -10,14 +10,17 @@ from .models import TagDocumentLink, TagCommentLink, TagModelLink, TagReceiptLin
 from model_management.models import ManagedModel, ModelDocumentLink
 
 
-def is_admin(user: User) -> bool:
-    return user.role == "admin"
+def require_company(current_user: User) -> int:
+    if current_user.company_id is None:
+        raise HTTPException(status_code=403, detail="User has no company")
+    return current_user.company_id
 
 
-def get_tag_or_404(db: Session, tag_id: int, user_id: int) -> SystemTag:
+def get_tag_or_404(db: Session, tag_id: int, current_user: User) -> SystemTag:
+    company_id = require_company(current_user)
     tag = (
         db.query(SystemTag)
-        .filter(SystemTag.id == tag_id, SystemTag.owner_id == user_id)
+        .filter(SystemTag.id == tag_id, SystemTag.company_id == company_id)
         .first()
     )
     if not tag:
@@ -25,13 +28,14 @@ def get_tag_or_404(db: Session, tag_id: int, user_id: int) -> SystemTag:
     return tag
 
 
-def validate_parent_tag(db: Session, parent_id: int | None, user_id: int) -> SystemTag | None:
+def validate_parent_tag(db: Session, parent_id: int | None, current_user: User) -> SystemTag | None:
     if parent_id is None:
         return None
 
+    company_id = require_company(current_user)
     parent = (
         db.query(SystemTag)
-        .filter(SystemTag.id == parent_id, SystemTag.owner_id == user_id)
+        .filter(SystemTag.id == parent_id, SystemTag.company_id == company_id)
         .first()
     )
     if not parent:
@@ -39,16 +43,17 @@ def validate_parent_tag(db: Session, parent_id: int | None, user_id: int) -> Sys
     return parent
 
 
-def check_no_cycle(db: Session, tag: SystemTag, new_parent_id: int | None, user_id: int) -> None:
+def check_no_cycle(db: Session, tag: SystemTag, new_parent_id: int | None, current_user: User) -> None:
     if new_parent_id is None:
         return
 
     if new_parent_id == tag.id:
         raise HTTPException(status_code=400, detail="A tag cannot be its own parent")
 
+    company_id = require_company(current_user)
     current = (
         db.query(SystemTag)
-        .filter(SystemTag.id == new_parent_id, SystemTag.owner_id == user_id)
+        .filter(SystemTag.id == new_parent_id, SystemTag.company_id == company_id)
         .first()
     )
     while current is not None:
@@ -61,7 +66,7 @@ def check_no_cycle(db: Session, tag: SystemTag, new_parent_id: int | None, user_
             break
         current = (
             db.query(SystemTag)
-            .filter(SystemTag.id == current.father_tag_id, SystemTag.owner_id == user_id)
+            .filter(SystemTag.id == current.father_tag_id, SystemTag.company_id == company_id)
             .first()
         )
 
@@ -181,7 +186,8 @@ def search_tag_receipt_link_ids(
     return output[:limit]
 
 
-def get_descendant_tag_ids(db: Session, root_tag_id: int, user_id: int) -> list[int]:
+def get_descendant_tag_ids(db: Session, root_tag_id: int, current_user: User) -> list[int]:
+    company_id = require_company(current_user)
     tag_ids: list[int] = []
     stack = [root_tag_id]
 
@@ -193,7 +199,7 @@ def get_descendant_tag_ids(db: Session, root_tag_id: int, user_id: int) -> list[
 
         children = (
             db.query(SystemTag.id)
-            .filter(SystemTag.father_tag_id == current_id, SystemTag.owner_id == user_id)
+            .filter(SystemTag.father_tag_id == current_id, SystemTag.company_id == company_id)
             .all()
         )
         stack.extend([row[0] for row in children])
@@ -225,17 +231,25 @@ def get_model_document_ids(db: Session, model_ids: list[int]) -> list[int]:
     return list({row[0] for row in rows})
 
 
-def get_tag_info_map(db: Session, tag_ids: list[int]) -> dict[int, SystemTag]:
+def get_tag_info_map(db: Session, tag_ids: list[int], company_id: int) -> dict[int, SystemTag]:
     if not tag_ids:
         return {}
-    tags = db.query(SystemTag).filter(SystemTag.id.in_(tag_ids)).all()
+    tags = (
+        db.query(SystemTag)
+        .filter(SystemTag.id.in_(tag_ids), SystemTag.company_id == company_id)
+        .all()
+    )
     return {tag.id: tag for tag in tags}
 
 
-def get_model_info_map(db: Session, model_ids: list[int]) -> dict[int, ManagedModel]:
+def get_model_info_map(db: Session, model_ids: list[int], company_id: int) -> dict[int, ManagedModel]:
     if not model_ids:
         return {}
-    models = db.query(ManagedModel).filter(ManagedModel.id.in_(model_ids)).all()
+    models = (
+        db.query(ManagedModel)
+        .filter(ManagedModel.id.in_(model_ids), ManagedModel.company_id == company_id)
+        .all()
+    )
     return {model.id: model for model in models}
 
 

@@ -38,8 +38,8 @@ async def ask_tag(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:ask")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
-    tag_ids = get_descendant_tag_ids(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
+    tag_ids = get_descendant_tag_ids(db, tag_id, current_user)
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
 
     references = _semantic_search_tag_scope(
@@ -76,7 +76,7 @@ async def ask_tags_stream(
 ):
     tag_ids = list(dict.fromkeys(payload.tag_ids))
     if not tag_ids:
-        tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
+        tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.company_id == current_user.company_id).all()]
 
     for provided_tag_id in tag_ids:
         get_tag_or_404(db, provided_tag_id, current_user.id)
@@ -137,7 +137,7 @@ async def ask_tags(
 ):
     tag_ids = list(dict.fromkeys(payload.tag_ids))
     if not tag_ids:
-        tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.owner_id == current_user.id).all()]
+        tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.company_id == current_user.company_id).all()]
 
     for provided_tag_id in tag_ids:
         get_tag_or_404(db, provided_tag_id, current_user.id)

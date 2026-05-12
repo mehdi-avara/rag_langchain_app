@@ -10,7 +10,7 @@ from Models import User, Document
 from ..models import TagDocumentLink
 from ..schemas import TagDocumentOut, TagDocLinkCreate, TagDocLinkOut
 from routs.documents import upload_pdf_mineru
-from ..services import get_tag_or_404, is_admin
+from ..services import get_tag_or_404
 
 
 router = APIRouter()
@@ -23,12 +23,12 @@ def link_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:documents")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     doc = db.query(Document).filter(Document.id == payload.document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if not is_admin(current_user) and doc.owner_id != current_user.id:
+    if doc.owner.company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail="Not allowed to link this document")
 
     link = (
@@ -50,7 +50,7 @@ def link_document(
     link = TagDocumentLink(
         tag_id=tag_id,
         document_id=doc.id,
-        linked_by_user_id=current_user.id,
+        linked_by_company_id=current_user.company_id,
         start_page=payload.start_page,
         end_page=payload.end_page,
         note=payload.note,
@@ -69,7 +69,7 @@ def upload_document_and_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:documents")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     upload_result = upload_pdf_mineru(file=file, current_user=current_user, db=db)
     doc_id = upload_result.get("doc_id")
@@ -87,7 +87,7 @@ def unlink_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:documents")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     link = (
         db.query(TagDocumentLink)
@@ -115,7 +115,7 @@ def list_tag_documents(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     query = (
         db.query(Document, TagDocumentLink)

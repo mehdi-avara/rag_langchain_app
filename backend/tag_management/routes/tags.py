@@ -70,7 +70,7 @@ def _semantic_search_tag_scope(
         document_hits = search_document_part_hits_semantic(
             db=db,
             query_text=query,
-            owner_id=current_user.id,
+            company_id=current_user.company_id,
             doc_ids=all_doc_ids,
             limit=doc_top_k,
         )
@@ -80,14 +80,14 @@ def _semantic_search_tag_scope(
         comment_hits = search_comment_hits_semantic(
             db=db,
             query_text=query,
-            user_id=current_user.id,
+            company_id=current_user.company_id,
             comment_ids=comment_ids,
             types=types or None,
             limit=comment_top_k,
         )
 
-    tag_map = get_tag_info_map(db, tag_ids)
-    model_map = get_model_info_map(db, model_ids)
+    tag_map = get_tag_info_map(db, tag_ids, current_user.company_id)
+    model_map = get_model_info_map(db, model_ids, current_user.company_id)
     doc_to_tag = get_doc_to_tag_map(db, tag_ids)
     comment_to_tag = get_comment_to_tag_map(db, tag_ids)
     doc_to_model = get_doc_to_model_map(db, model_ids)
@@ -167,7 +167,7 @@ async def list_tags(
     db: Session = Depends(get_db),
     root_only: bool = Query(False, description="If true, only return root tags"),
 ):
-    query = db.query(SystemTag).filter(SystemTag.owner_id == current_user.id)
+    query = db.query(SystemTag).filter(SystemTag.company_id == current_user.company_id)
     if root_only:
         query = query.filter(SystemTag.father_tag_id.is_(None))
 
@@ -180,7 +180,7 @@ async def get_tag(
     current_user: User = Depends(require_permission("tags:read")),
     db: Session = Depends(get_db),
 ):
-    tag = get_tag_or_404(db, tag_id, current_user.id)
+    tag = get_tag_or_404(db, tag_id, current_user)
     return tag
 
 
@@ -191,7 +191,7 @@ async def filter_tag_content(
     current_user: User = Depends(require_permission("tags:search")),
     db: Session = Depends(get_db),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     doc_ids = get_doc_ids(db, tag_id)
     comment_ids = get_comment_ids(db, tag_id)
 
@@ -199,14 +199,14 @@ async def filter_tag_content(
         "documents": search_documents_text(
             db=db,
             query_text=payload.query,
-            owner_id=current_user.id,
+            company_id=current_user.company_id,
             doc_ids=doc_ids,
             limit=payload.limit,
         ),
         "comments": search_comments_text(
             db=db,
             query_text=payload.query,
-            user_id=current_user.id,
+            company_id=current_user.company_id,
             comment_ids=comment_ids,
             limit=payload.limit,
         ),
@@ -223,7 +223,7 @@ async def semantic_search_all_tags_content(
     all_tag_ids = [
         row[0]
         for row in db.query(SystemTag.id)
-        .filter(SystemTag.owner_id == current_user.id)
+        .filter(SystemTag.company_id == current_user.company_id)
         .all()
     ]
     requested_tag_ids = set(payload.ids)
@@ -248,8 +248,8 @@ async def semantic_search_tag_content(
     current_user: User = Depends(require_permission("tags:search")),
     db: Session = Depends(get_db),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
-    tag_ids = get_descendant_tag_ids(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
+    tag_ids = get_descendant_tag_ids(db, tag_id, current_user)
 
     return _semantic_search_tag_scope(
         db=db,
@@ -268,9 +268,10 @@ async def create_tag(
     current_user: User = Depends(require_permission("tags:create")),
     db: Session = Depends(get_db),
 ):
-    _ = validate_parent_tag(db, payload.father_tag_id, current_user.id)
+    _ = validate_parent_tag(db, payload.father_tag_id, current_user)
 
     tag = SystemTag(
+        company_id=current_user.company_id,
         owner_id=current_user.id,
         father_tag_id=payload.father_tag_id,
         tag_name=payload.tag_name,
@@ -290,14 +291,14 @@ async def update_tag(
     current_user: User = Depends(require_permission("tags:update")),
     db: Session = Depends(get_db),
 ):
-    tag = get_tag_or_404(db, tag_id, current_user.id)
+    tag = get_tag_or_404(db, tag_id, current_user)
 
     if payload.father_tag_id is not None or payload.father_tag_id is None:
         new_parent_id = payload.father_tag_id
         if new_parent_id != tag.father_tag_id:
             if new_parent_id is not None:
-                validate_parent_tag(db, new_parent_id, current_user.id)
-            check_no_cycle(db, tag, new_parent_id, current_user.id)
+                validate_parent_tag(db, new_parent_id, current_user)
+            check_no_cycle(db, tag, new_parent_id, current_user)
             tag.father_tag_id = new_parent_id
 
     if payload.tag_name is not None:
@@ -317,7 +318,7 @@ async def delete_tag(
     current_user: User = Depends(require_permission("tags:delete")),
     db: Session = Depends(get_db),
 ):
-    tag = get_tag_or_404(db, tag_id, current_user.id)
+    tag = get_tag_or_404(db, tag_id, current_user)
 
     db.delete(tag)
     db.commit()
@@ -330,5 +331,5 @@ async def list_child_tags(
     current_user: User = Depends(require_permission("tags:read")),
     db: Session = Depends(get_db),
 ):
-    parent = get_tag_or_404(db, tag_id, current_user.id)
+    parent = get_tag_or_404(db, tag_id, current_user)
     return sorted(parent.children, key=lambda t: t.created_at)

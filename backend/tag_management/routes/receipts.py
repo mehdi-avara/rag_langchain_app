@@ -85,7 +85,7 @@ def link_receipt(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("tags:receipts", "financial_management:read")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     _ = get_receipt(receipt_id=payload.receipt_id, db=db, current_user=current_user)
 
     link = (
@@ -107,7 +107,7 @@ def link_receipt(
     link = TagReceiptLink(
         tag_id=tag_id,
         receipt_id=payload.receipt_id,
-        linked_by_user_id=current_user.id,
+        linked_by_company_id=current_user.company_id,
         note=payload.note,
         note_embedding=note_embedding,
     )
@@ -124,7 +124,7 @@ def create_receipt_and_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("tags:receipts", "financial_management:create", "financial_management:read")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     receipt = create_receipt(payload=body.payload, db=db, current_user=current_user)
     payload = TagReceiptLinkCreate(receipt_id=receipt.id, note=body.link_description)
     return link_receipt(tag_id=tag_id, payload=payload, db=db, current_user=current_user)
@@ -137,7 +137,7 @@ def unlink_receipt(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("tags:receipts")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     link = (
         db.query(TagReceiptLink)
         .filter(
@@ -162,7 +162,7 @@ def list_linked_receipts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     links = db.query(TagReceiptLink).filter(TagReceiptLink.tag_id == tag_id).order_by(TagReceiptLink.created_at.desc()).all()
     receipt_ids = [link.receipt_id for link in links]
     links_by_receipt_id = {link.receipt_id: link for link in links}
@@ -202,7 +202,7 @@ def search_linked_receipts(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("tags:receipts", "financial_management:search", "financial_management:read")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     links = db.query(TagReceiptLink).filter(TagReceiptLink.tag_id == tag_id).order_by(TagReceiptLink.created_at.desc()).all()
     receipt_ids = [link.receipt_id for link in links]
     links_by_receipt_id = {link.receipt_id: link for link in links}
@@ -242,7 +242,7 @@ def get_tag_receipt_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permissions("tags:receipts", "financial_management:read")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
     receipt_ids = get_receipt_ids(db, tag_id)
     links = db.query(TagReceiptLink).filter(TagReceiptLink.tag_id == tag_id).all()
     links_by_receipt_id = {link.receipt_id: link for link in links}

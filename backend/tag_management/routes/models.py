@@ -12,7 +12,7 @@ from model_management.models import ManagedModel
 
 from ..models import TagModelLink
 from ..schemas import TagModelLinkCreate, TagModelLinkOut, TagModelOut
-from ..services import get_tag_or_404, is_admin
+from ..services import get_tag_or_404
 
 
 router = APIRouter()
@@ -25,12 +25,12 @@ def link_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:models")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     model = db.query(ManagedModel).filter(ManagedModel.id == payload.model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    if not is_admin(current_user) and model.owner_id != current_user.id:
+    if model.company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail="Not allowed to link this model")
 
     link = (
@@ -47,7 +47,7 @@ def link_model(
     link = TagModelLink(
         tag_id=tag_id,
         model_id=model.id,
-        linked_by_user_id=current_user.id,
+        linked_by_company_id=current_user.company_id,
         note=payload.note,
     )
     db.add(link)
@@ -63,7 +63,7 @@ def unlink_model(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:models")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     link = (
         db.query(TagModelLink)
@@ -91,7 +91,7 @@ def list_tag_models(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user.id)
+    _ = get_tag_or_404(db, tag_id, current_user)
 
     query = (
         db.query(ManagedModel, TagModelLink)
