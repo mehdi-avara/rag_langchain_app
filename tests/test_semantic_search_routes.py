@@ -73,7 +73,7 @@ def build_client(db):
     app.include_router(tag_router)
     app.include_router(model_router)
 
-    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=7, role="admin")
+    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=7, role="admin", company_id=1)
     app.dependency_overrides[get_db] = lambda: db
     return TestClient(app)
 

@@ -115,7 +115,7 @@ def import_zip_context(tmp_path, monkeypatch):
 
     app = FastAPI()
     app.include_router(document_router, prefix="/documents")
-    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=1, role="user")
+    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=1, role="user", company_id=1)
 
     def override_get_db():
         db = SessionLocal()

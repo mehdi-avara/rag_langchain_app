@@ -69,6 +69,7 @@ class DummyDB:
 def _receipt_out(receipt_id: int, amount: str, direction: str) -> FinancialReceiptOut:
     return FinancialReceiptOut(
         id=receipt_id,
+        company_id=1,
         owner_id=3,
         description=f"Receipt {receipt_id}",
         tracking_number=None,
@@ -95,7 +96,7 @@ def _receipt_out(receipt_id: int, amount: str, direction: str) -> FinancialRecei
 
 def test_create_receipt_and_link_uses_financial_route_callables(monkeypatch):
     db = DummyDB()
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
 
     monkeypatch.setattr(receipt_routes, "get_model_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=8))
     monkeypatch.setattr(receipt_routes, "create_receipt", lambda **_kwargs: SimpleNamespace(id=51))
@@ -128,7 +129,7 @@ def test_model_receipt_summary_aggregates_input_and_output(monkeypatch):
         SimpleNamespace(receipt_id=12, note="b", created_at=datetime(2026, 5, 7, 11, 0, 0)),
     ]
     db = DummyDB(links=links)
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
 
     monkeypatch.setattr(receipt_routes, "get_model_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=8))
     monkeypatch.setattr(receipt_routes, "get_receipt_ids", lambda *_args, **_kwargs: [11, 12])
