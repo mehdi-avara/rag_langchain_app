@@ -17,6 +17,7 @@ from routs.rbac import router as rbac_router
 from model_management.routes import model_router
 from tag_management.routes import tag_router
 from financial_management.routes import financial_router
+from property_management.routes import property_router
 from db.session import SessionLocal
 from components.embedding_service import get_or_create_embedding_config, regenerate_missing_embeddings
 from financial_management.services import safe_embed_text
@@ -75,6 +76,7 @@ app.include_router(stt_router, prefix="/audio", tags=["Audio"])
 app.include_router(model_router, tags=["models"])
 app.include_router(tag_router, tags=["system_tags"])
 app.include_router(financial_router, tags=["financial_management"])
+app.include_router(property_router, tags=["property_management"])
 
 
 @app.on_event("startup")

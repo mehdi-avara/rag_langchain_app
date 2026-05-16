@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, validator
 from Models import CommentType
 from schemas.comment import CommentCreate
 
-from .models import FinancialDirection
+from .models import FinancialAccessMethod, FinancialDirection
 
 
 def normalize_receipt_date(value):
@@ -77,6 +77,47 @@ class FinancialCardOut(FinancialCardSummaryOut):
     updated_at: datetime
 
 
+class FinancialCustomerBase(BaseModel):
+    name: str = Field(..., min_length=1)
+    phone_number1: Optional[str] = None
+    phone_number2: Optional[str] = None
+    access_method: Optional[FinancialAccessMethod] = None
+    email: Optional[str] = None
+    description: Optional[str] = None
+
+
+class FinancialCustomerCreate(FinancialCustomerBase):
+    pass
+
+
+class FinancialCustomerUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1)
+    phone_number1: Optional[str] = None
+    phone_number2: Optional[str] = None
+    access_method: Optional[FinancialAccessMethod] = None
+    email: Optional[str] = None
+    description: Optional[str] = None
+
+
+class FinancialCustomerSummaryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    phone_number1: Optional[str] = None
+    phone_number2: Optional[str] = None
+    access_method: Optional[FinancialAccessMethod] = None
+    email: Optional[str] = None
+    description: Optional[str] = None
+
+
+class FinancialCustomerOut(FinancialCustomerSummaryOut):
+    company_id: int
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class FinancialReceiptFileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -92,9 +133,10 @@ class FinancialReceiptBase(BaseModel):
     tracking_number: Optional[str] = None
     amount: Decimal = Field(..., gt=Decimal("0"))
     direction: FinancialDirection
-    counterparty_name: str = Field(..., min_length=1)
+    counterparty_name: Optional[str] = None
     receipt_date: date
     credit_card_id: int
+    customer_id: Optional[int] = None
 
     @validator("receipt_date", pre=True)
     def validate_receipt_date(cls, value):
@@ -110,9 +152,10 @@ class FinancialReceiptUpdate(BaseModel):
     tracking_number: Optional[str] = None
     amount: Optional[Decimal] = Field(None, gt=Decimal("0"))
     direction: Optional[FinancialDirection] = None
-    counterparty_name: Optional[str] = Field(None, min_length=1)
+    counterparty_name: Optional[str] = None
     receipt_date: Optional[date] = None
     credit_card_id: Optional[int] = None
+    customer_id: Optional[int] = None
 
     @validator("receipt_date", pre=True)
     def validate_receipt_date(cls, value):
@@ -127,9 +170,11 @@ class FinancialReceiptOut(BaseModel):
     tracking_number: Optional[str] = None
     amount: Decimal
     direction: FinancialDirection
-    counterparty_name: str
+    counterparty_name: Optional[str] = None
     receipt_date: date
     credit_card: FinancialCardSummaryOut
+    customer_id: Optional[int] = None
+    customer: Optional[FinancialCustomerSummaryOut] = None
     embedding_status: Literal["available", "pending"]
     created_at: datetime
     updated_at: datetime
@@ -223,4 +268,3 @@ class FinancialReceiptLinkSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
     limit: int = Field(default=50, ge=1, le=200)
-

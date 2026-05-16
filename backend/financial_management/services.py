@@ -13,10 +13,12 @@ from components.llm import llm_client
 from settings import get_settings
 from Models import User
 
-from .models import FinancialCard, FinancialReceipt, FinancialReceiptFile
+from .models import FinancialCard, FinancialCustomer, FinancialReceipt, FinancialReceiptFile
 from .schemas import (
     FinancialCardOut,
     FinancialCardSummaryOut,
+    FinancialCustomerOut,
+    FinancialCustomerSummaryOut,
     FinancialReceiptFileOut,
     FinancialReceiptOut,
 )
@@ -68,6 +70,22 @@ def get_receipt_or_404(db: Session, receipt_id: int, current_user: User) -> Fina
         raise HTTPException(status_code=404, detail="Financial receipt not found")
 
     return receipt
+
+
+def get_customer_or_404(db: Session, customer_id: int, current_user: User) -> FinancialCustomer:
+    customer = (
+        db.query(FinancialCustomer)
+        .filter(
+            FinancialCustomer.id == customer_id,
+            FinancialCustomer.company_id == tenant_filter_id(current_user),
+        )
+        .first()
+    )
+
+    if not customer:
+        raise HTTPException(status_code=404, detail="Financial customer not found")
+
+    return customer
 
 
 def normalize_card_number(card_number: str) -> str:
@@ -227,6 +245,28 @@ def card_to_out(card: FinancialCard) -> FinancialCardOut:
     )
 
 
+def customer_to_summary(customer: FinancialCustomer) -> FinancialCustomerSummaryOut:
+    return FinancialCustomerSummaryOut(
+        id=customer.id,
+        name=customer.name,
+        phone_number1=customer.phone_number1,
+        phone_number2=customer.phone_number2,
+        access_method=customer.access_method,
+        email=customer.email,
+        description=customer.description,
+    )
+
+
+def customer_to_out(customer: FinancialCustomer) -> FinancialCustomerOut:
+    return FinancialCustomerOut(
+        **customer_to_summary(customer).model_dump(),
+        company_id=customer.company_id,
+        owner_id=customer.owner_id,
+        created_at=customer.created_at,
+        updated_at=customer.updated_at,
+    )
+
+
 def receipt_file_to_out(file_rec: FinancialReceiptFile) -> FinancialReceiptFileOut:
     return FinancialReceiptFileOut(
         id=file_rec.id,
@@ -251,6 +291,8 @@ def receipt_to_out(receipt: FinancialReceipt) -> FinancialReceiptOut:
         counterparty_name=receipt.counterparty_name,
         receipt_date=receipt.receipt_date,
         credit_card=card_to_summary(receipt.credit_card),
+        customer_id=receipt.customer_id,
+        customer=customer_to_summary(receipt.customer) if receipt.customer is not None else None,
         embedding_status="available" if receipt.description_embedding is not None else "pending",
         created_at=receipt.created_at,
         updated_at=receipt.updated_at,
@@ -315,5 +357,4 @@ def parse_receipt_citations(answer: str) -> List[int]:
         citations.append(receipt_id)
 
     return citations
-
 

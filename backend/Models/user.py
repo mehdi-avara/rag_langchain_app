@@ -28,7 +28,10 @@ class User(Base):
     comments = relationship("Comment", back_populates="user")
     files = relationship("CommentFile", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     financial_cards = relationship("FinancialCard", back_populates="owner", cascade="all, delete-orphan")
+    financial_customers = relationship("FinancialCustomer", back_populates="owner", cascade="all, delete-orphan")
     financial_receipts = relationship("FinancialReceipt", back_populates="owner", cascade="all, delete-orphan")
+    warehouse_items = relationship("WarehouseItem", back_populates="owner", cascade="all, delete-orphan")
+    owned_properties = relationship("OwnedProperty", back_populates="owner", cascade="all, delete-orphan")
 
     financial_receipt_files = relationship(
         "FinancialReceiptFile",
@@ -36,4 +39,3 @@ class User(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-

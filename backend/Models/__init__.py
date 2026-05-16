@@ -26,11 +26,18 @@ from tag_management.models import (
 )
 
 from financial_management.models import (
+    FinancialAccessMethod,
     FinancialCard,
+    FinancialCustomer,
     FinancialReceipt,
     FinancialReceiptFile,
     FinancialReceiptCommentLink,
     FinancialDirection,
+)
+
+from property_management.models import (
+    OwnedProperty,
+    WarehouseItem,
 )
 
 __all__ = [
@@ -60,10 +67,13 @@ __all__ = [
     "TagDocumentLink",
     "TagCommentLink",
     "TagReceiptLink",
+    "FinancialAccessMethod",
     "FinancialCard",
+    "FinancialCustomer",
     "FinancialReceipt",
     "FinancialReceiptFile",
     "FinancialReceiptCommentLink",
     "FinancialDirection",
+    "WarehouseItem",
+    "OwnedProperty",
 ]
-

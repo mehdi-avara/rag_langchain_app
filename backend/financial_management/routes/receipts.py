@@ -14,6 +14,7 @@ from ..models import FinancialReceipt
 from ..schemas import FinancialReceiptBatchRequest, FinancialReceiptCreate, FinancialReceiptOut, FinancialReceiptUpdate
 from ..services import (
     get_card_or_404,
+    get_customer_or_404,
     get_receipt_or_404,
     receipt_to_out,
     safe_embed_text,
@@ -23,6 +24,18 @@ from ..services import (
 router = APIRouter(prefix="/receipts")
 
 
+def _resolve_counterparty_name(counterparty_name: Optional[str], customer_name: Optional[str]) -> str:
+    normalized = (counterparty_name or "").strip()
+    if normalized:
+        return normalized
+
+    customer_normalized = (customer_name or "").strip()
+    if customer_normalized:
+        return customer_normalized
+
+    raise HTTPException(status_code=422, detail="counterparty_name is required when customer is not provided")
+
+
 @router.post("", response_model=FinancialReceiptOut, status_code=status.HTTP_201_CREATED)
 def create_receipt(
     payload: FinancialReceiptCreate,
@@ -30,22 +43,26 @@ def create_receipt(
     current_user: User = Depends(require_permission("financial_management:create")),
 ):
     card = get_card_or_404(db, payload.credit_card_id, current_user)
+    customer = get_customer_or_404(db, payload.customer_id, current_user) if payload.customer_id is not None else None
     embedding = safe_embed_text(payload.description)
+    counterparty_name = _resolve_counterparty_name(payload.counterparty_name, customer.name if customer else None)
 
     receipt = FinancialReceipt(
         company_id=current_user.company_id,
         owner_id=current_user.id,
         credit_card_id=card.id,
+        customer_id=customer.id if customer else None,
         description=payload.description,
         description_embedding=embedding,
         tracking_number=payload.tracking_number,
         amount=payload.amount,
         direction=payload.direction,
-        counterparty_name=payload.counterparty_name,
+        counterparty_name=counterparty_name,
         receipt_date=payload.receipt_date,
     )
 
     receipt.credit_card = card
+    receipt.customer = customer
 
     db.add(receipt)
     db.commit()
@@ -69,6 +86,7 @@ def list_receipts(
         db.query(FinancialReceipt)
         .options(
             joinedload(FinancialReceipt.credit_card),
+            joinedload(FinancialReceipt.customer),
             joinedload(FinancialReceipt.files),
         )
         .filter(FinancialReceipt.company_id == current_user.company_id)
@@ -107,6 +125,7 @@ def get_receipt(
         db.query(FinancialReceipt)
         .options(
             joinedload(FinancialReceipt.credit_card),
+            joinedload(FinancialReceipt.customer),
             joinedload(FinancialReceipt.files),
         )
         .filter(
@@ -137,6 +156,7 @@ def get_receipts_by_ids(
         db.query(FinancialReceipt)
         .options(
             joinedload(FinancialReceipt.credit_card),
+            joinedload(FinancialReceipt.customer),
             joinedload(FinancialReceipt.files),
         )
         .filter(
@@ -160,11 +180,22 @@ def update_receipt(
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
     data = payload.model_dump(exclude_unset=True)
+    customer = receipt.customer
 
     if "credit_card_id" in data and data["credit_card_id"] is not None:
         card = get_card_or_404(db, data["credit_card_id"], current_user)
         receipt.credit_card_id = card.id
         receipt.credit_card = card
+
+    if "customer_id" in data:
+        if data["customer_id"] is None:
+            receipt.customer_id = None
+            receipt.customer = None
+            customer = None
+        else:
+            customer = get_customer_or_404(db, data["customer_id"], current_user)
+            receipt.customer_id = customer.id
+            receipt.customer = customer
 
     if "receipt_date" in data and data["receipt_date"] is not None:
         receipt.receipt_date = data.pop("receipt_date")
@@ -172,8 +203,14 @@ def update_receipt(
     if "description" in data and data["description"] is not None:
         receipt.description_embedding = safe_embed_text(data["description"])
 
+    if "counterparty_name" in data or "customer_id" in data:
+        data["counterparty_name"] = _resolve_counterparty_name(
+            data.get("counterparty_name", receipt.counterparty_name),
+            customer.name if customer else None,
+        )
+
     for key, value in data.items():
-        if key == "credit_card_id":
+        if key in {"credit_card_id", "customer_id"}:
             continue
         setattr(receipt, key, value)
 
@@ -195,4 +232,3 @@ def delete_receipt(
     db.commit()
 
     return None
-
