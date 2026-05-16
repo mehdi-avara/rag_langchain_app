@@ -11,7 +11,8 @@ from db.search_connector import (
     search_comment_hits_semantic,
 )
 from deps import require_permission
-from Models import User, Document, CommentType
+from Models import User, Document, Comment, CommentType
+from routs.documents import _get_accessible_document_ids
 
 from ..system_tag import SystemTag
 
@@ -65,12 +66,25 @@ def _semantic_search_tag_scope(
 
     all_doc_ids = list({*doc_ids, *model_doc_ids})
 
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        accessible_set = set(accessible_doc_ids)
+        all_doc_ids = [doc_id for doc_id in all_doc_ids if doc_id in accessible_set]
+
+    owned_comment_ids = [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
+    owned_comment_set = set(owned_comment_ids)
+    comment_ids = [comment_id for comment_id in comment_ids if comment_id in owned_comment_set]
+
     document_hits = []
     if doc_top_k > 0:
         document_hits = search_document_part_hits_semantic(
             db=db,
             query_text=query,
-            company_id=current_user.company_id,
             doc_ids=all_doc_ids,
             limit=doc_top_k,
         )
@@ -80,7 +94,7 @@ def _semantic_search_tag_scope(
         comment_hits = search_comment_hits_semantic(
             db=db,
             query_text=query,
-            company_id=current_user.company_id,
+            user_id=current_user.id,
             comment_ids=comment_ids,
             types=types or None,
             limit=comment_top_k,
@@ -195,18 +209,31 @@ async def filter_tag_content(
     doc_ids = get_doc_ids(db, tag_id)
     comment_ids = get_comment_ids(db, tag_id)
 
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        accessible_set = set(accessible_doc_ids)
+        doc_ids = [doc_id for doc_id in doc_ids if doc_id in accessible_set]
+
+    owned_comment_ids = [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
+    owned_comment_set = set(owned_comment_ids)
+    comment_ids = [comment_id for comment_id in comment_ids if comment_id in owned_comment_set]
+
     return {
         "documents": search_documents_text(
             db=db,
             query_text=payload.query,
-            company_id=current_user.company_id,
             doc_ids=doc_ids,
             limit=payload.limit,
         ),
         "comments": search_comments_text(
             db=db,
             query_text=payload.query,
-            company_id=current_user.company_id,
+            user_id=current_user.id,
             comment_ids=comment_ids,
             limit=payload.limit,
         ),
