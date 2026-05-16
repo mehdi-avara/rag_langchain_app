@@ -12,9 +12,11 @@ os.environ.setdefault("jwt_secret", "test-secret")
 os.environ.setdefault("openai_api_key", "test")
 os.environ.setdefault("jina_api_key", "test")
 
-from model_management.routes import models as model_routes
-from tag_management.routes import tags as tag_routes
-from tag_management.routes import ask as tag_ask_routes
+import importlib
+
+model_routes = importlib.import_module("model_management.routes.models")
+tag_routes = importlib.import_module("tag_management.routes.tags")
+tag_ask_routes = importlib.import_module("tag_management.routes.ask")
 from model_management.schemas import ModelAskRequest
 from tag_management.schemas import TagAskMultiRequest
 from schemas.search import TextSearchRequest
@@ -200,11 +202,15 @@ def test_tag_filter_intersects_documents_and_owned_comments(monkeypatch):
     monkeypatch.setattr(tag_routes, "search_documents_text", fake_document_search)
     monkeypatch.setattr(tag_routes, "search_comments_text", fake_comment_search)
 
-    result = tag_routes.filter_tag_content(
-        tag_id=200,
-        payload=TextSearchRequest(query="pump"),
-        db=db,
-        current_user=current_user,
+    import asyncio
+
+    result = asyncio.run(
+        tag_routes.filter_tag_content(
+            tag_id=200,
+            payload=TextSearchRequest(query="pump"),
+            db=db,
+            current_user=current_user,
+        )
     )
 
     assert result == {"documents": [], "comments": []}
