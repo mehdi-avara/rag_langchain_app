@@ -15,7 +15,7 @@ from ..schemas import (
     TagCommentLinkOut,
     TagCreateCommentAndLinkRequest,
 )
-from routs.comments.comment import create_comment
+from routs.comments.comment import create_comment, _get_owned_comment
 from ..services import get_tag_or_404
 
 
@@ -31,11 +31,7 @@ def link_comment(
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
-    comment = db.query(Comment).filter(Comment.id == payload.comment_id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    if comment.user.company_id != current_user.company_id:
-        raise HTTPException(status_code=403, detail="Not allowed to link this comment")
+    comment = _get_owned_comment(db, payload.comment_id, current_user)
 
     link = (
         db.query(TagCommentLink)
@@ -54,7 +50,7 @@ def link_comment(
     link = TagCommentLink(
         tag_id=tag_id,
         comment_id=comment.id,
-        linked_by_company_id=current_user.company_id,
+        linked_by_user_id=current_user.id,
         note=payload.note,
     )
     db.add(link)
@@ -85,6 +81,7 @@ def unlink_comment(
     current_user: User = Depends(require_permission("tags:comments")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
+    _get_owned_comment(db, comment_id, current_user)
 
     link = (
         db.query(TagCommentLink)
@@ -117,7 +114,10 @@ def list_tag_comments(
     query = (
         db.query(Comment, TagCommentLink)
         .join(TagCommentLink, TagCommentLink.comment_id == Comment.id)
-        .filter(TagCommentLink.tag_id == tag_id)
+        .filter(
+            TagCommentLink.tag_id == tag_id,
+            Comment.user_id == current_user.id,
+        )
     )
 
     if search:

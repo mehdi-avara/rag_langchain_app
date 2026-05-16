@@ -7,10 +7,11 @@ from core.exceptions import chat_not_found_exception
 from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem, ChatHistoryResponse, ChatMessageItem
 from db.init_db import get_db
 from deps import require_permission
-from Models import Chat, ChatMessage, User, Document
+from Models import Chat, ChatMessage, User, Document, Comment
 from core.agents import build_answer_graph, GraphState, call_llm_to_rewrite
 from Models.chat import ChatRole
 from core.celery.tasks import chat_generate_title
+from routs.documents import _get_accessible_document_ids
 
 router = APIRouter()
 
@@ -27,7 +28,11 @@ def get_or_create_chat(
     if chat_id:
         chat = (
             db.query(Chat)
-            .filter(Chat.id == chat_id, Chat.company_id == user.company_id)
+            .filter(
+                Chat.id == chat_id,
+                Chat.company_id == user.company_id,
+                Chat.user_id == user.id,
+            )
             .first()
         )
         if not chat:
@@ -62,6 +67,29 @@ def add_message(
     db.commit()
     db.refresh(message)
     return message
+
+
+def _intersect_requested_ids(
+    allowed_ids: list[int] | None,
+    requested_ids: list[int] | None,
+) -> list[int] | None:
+    if allowed_ids is None:
+        return requested_ids
+
+    if requested_ids is None:
+        return allowed_ids
+
+    allowed_set = set(allowed_ids)
+    return [item_id for item_id in requested_ids if item_id in allowed_set]
+
+
+def _get_current_user_comment_ids(db: Session, current_user: User) -> list[int]:
+    return [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
 
 
 def build_retrieved_data(
@@ -148,14 +176,18 @@ async def chat(
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User has no company")
 
+    allowed_doc_ids = _get_accessible_document_ids(db, current_user, "ask")
+    safe_doc_ids = _intersect_requested_ids(allowed_doc_ids, request.doc_ids)
+    safe_comment_ids = _get_current_user_comment_ids(db, current_user)
+
     graph = build_answer_graph()
     state = GraphState(
         question=query,
         route=route,
         db=db,
         mode="vector",
-        doc_ids=request.doc_ids,
-        comment_ids=None,
+        doc_ids=safe_doc_ids,
+        comment_ids=safe_comment_ids,
         company_id=current_user.company_id,
         scope="both",
     )
@@ -197,7 +229,11 @@ async def update_chat_name(
 ):
     chat_obj = (
         db.query(Chat)
-        .filter(Chat.id == chat_id, Chat.company_id == current_user.company_id)
+        .filter(
+            Chat.id == chat_id,
+            Chat.company_id == current_user.company_id,
+            Chat.user_id == current_user.id,
+        )
         .first()
     )
 
@@ -220,7 +256,11 @@ async def delete_chat(
 ):
     chat_obj = (
         db.query(Chat)
-        .filter(Chat.id == chat_id, Chat.company_id == current_user.company_id)
+        .filter(
+            Chat.id == chat_id,
+            Chat.company_id == current_user.company_id,
+            Chat.user_id == current_user.id,
+        )
         .first()
     )
 
@@ -239,7 +279,10 @@ async def list_user_chats(
 ):
     chats = (
         db.query(Chat.id, Chat.name)
-        .filter(Chat.company_id == current_user.company_id)
+        .filter(
+            Chat.company_id == current_user.company_id,
+            Chat.user_id == current_user.id,
+        )
         .order_by(desc(Chat.id))
         .all()
     )
@@ -263,7 +306,11 @@ async def get_chat_history(
 ):
     chat_obj = (
         db.query(Chat)
-        .filter(Chat.id == chat_id, Chat.company_id == current_user.company_id)
+        .filter(
+            Chat.id == chat_id,
+            Chat.company_id == current_user.company_id,
+            Chat.user_id == current_user.id,
+        )
         .first()
     )
 

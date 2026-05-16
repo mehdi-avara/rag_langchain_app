@@ -107,7 +107,7 @@ def link_receipt(
     link = TagReceiptLink(
         tag_id=tag_id,
         receipt_id=payload.receipt_id,
-        linked_by_company_id=current_user.company_id,
+        linked_by_user_id=current_user.id,
         note=payload.note,
         note_embedding=note_embedding,
     )
@@ -138,6 +138,7 @@ def unlink_receipt(
     current_user: User = Depends(require_permissions("tags:receipts")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
+    _ = get_receipt(receipt_id=receipt_id, db=db, current_user=current_user)
     link = (
         db.query(TagReceiptLink)
         .filter(

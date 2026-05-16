@@ -79,7 +79,7 @@ async def ask_tags_stream(
         tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.company_id == current_user.company_id).all()]
 
     for provided_tag_id in tag_ids:
-        get_tag_or_404(db, provided_tag_id, current_user.id)
+        get_tag_or_404(db, provided_tag_id, current_user)
 
     async def event_generator():
         try:
@@ -140,7 +140,7 @@ async def ask_tags(
         tag_ids = [row[0] for row in db.query(SystemTag.id).filter(SystemTag.company_id == current_user.company_id).all()]
 
     for provided_tag_id in tag_ids:
-        get_tag_or_404(db, provided_tag_id, current_user.id)
+        get_tag_or_404(db, provided_tag_id, current_user)
 
     doc_top_k, comment_top_k = _ask_limits(payload.scope)
 

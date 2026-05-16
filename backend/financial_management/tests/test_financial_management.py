@@ -112,6 +112,7 @@ def build_card() -> FinancialCard:
     card = FinancialCard(
         id=9,
         owner_id=3,
+        company_id=1,
         title="Main Card",
         card_number="6037991234567890",
         bank_name="Melli",
@@ -129,6 +130,7 @@ def build_receipt() -> FinancialReceipt:
     receipt = FinancialReceipt(
         id=11,
         owner_id=3,
+        company_id=1,
         credit_card_id=card.id,
         description="Paid for machine repair",
         description_embedding=[0.1, 0.2],
@@ -162,7 +164,7 @@ def test_safe_embed_text_returns_none_when_embedding_fails(monkeypatch):
 
 def test_search_receipt_hits_falls_back_to_text(monkeypatch):
     receipt = build_receipt()
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
 
     monkeypatch.setattr("financial_management.search.service.ensure_receipt_embeddings", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -190,7 +192,7 @@ def test_search_receipt_hits_falls_back_to_text(monkeypatch):
 
 def test_create_receipt_keeps_tracking_number_nullable(monkeypatch):
     db = DummyDB()
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
     card = build_card()
 
     monkeypatch.setattr(receipt_routes, "get_card_or_404", lambda *_args, **_kwargs: card)
@@ -210,8 +212,7 @@ def test_create_receipt_keeps_tracking_number_nullable(monkeypatch):
 
     assert response.tracking_number is None
     assert response.embedding_status == "pending"
-    assert response.receipt_date == "1405-02-15"
-    assert response.receipt_date_gregorian == "2026-05-05"
+    assert response.receipt_date.isoformat() == "2026-05-05"
 
 
 def test_build_receipt_context_contains_key_fields():
@@ -248,6 +249,7 @@ def test_ask_receipts_returns_receipt_citations(monkeypatch):
         card_title="Main Card",
         card_number="************7890",
         owner_id=3,
+        company_id=1,
         createdAt=datetime(2026, 5, 5, 10, 30, 0),
         match_source="text_fallback",
     )
@@ -260,7 +262,7 @@ def test_ask_receipts_returns_receipt_citations(monkeypatch):
         ask_routes.ask_receipts(
             payload=FinancialReceiptAskRequest(question="What did I pay for?", mode="vector", receipt_ids=[11]),
             db=object(),
-            current_user=SimpleNamespace(id=3, role="user"),
+            current_user=SimpleNamespace(id=3, role="user", company_id=1),
         )
     )
 
@@ -271,7 +273,7 @@ def test_ask_receipts_returns_receipt_citations(monkeypatch):
 
 def test_add_receipt_file_writes_under_financial_management(tmp_path, monkeypatch):
     db = DummyDB()
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
 
     monkeypatch.setattr(file_routes, "get_receipt_or_404", lambda *_args, **_kwargs: build_receipt())
     monkeypatch.setattr(file_routes.settings, "files_dir", str(tmp_path))
@@ -291,7 +293,7 @@ def test_add_receipt_file_writes_under_financial_management(tmp_path, monkeypatc
 
 
 def test_get_receipts_by_ids_preserves_requested_order(monkeypatch):
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
     receipt_a = build_receipt()
     receipt_b = build_receipt()
     receipt_a.id = 22
@@ -312,7 +314,7 @@ def test_get_receipts_by_ids_preserves_requested_order(monkeypatch):
 
 def test_link_receipt_comment_stores_note_embedding(monkeypatch):
     db = DummyDB()
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
     comment = SimpleNamespace(id=91, user_id=3)
 
     class CommentDB(DummyDB):
@@ -332,3 +334,85 @@ def test_link_receipt_comment_stores_note_embedding(monkeypatch):
     )
 
     assert link.comment_id == 91
+
+
+def test_get_receipt_or_404_allows_same_company_receipt_owned_by_another_user():
+    from financial_management.services import get_receipt_or_404
+
+    receipt = build_receipt()
+    receipt.owner_id = 99
+    receipt.company_id = 1
+
+    class ReceiptDB(DummyDB):
+        def query(self, _model):
+            return QueryProxy(first_row=receipt)
+
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
+
+    result = get_receipt_or_404(ReceiptDB(), receipt.id, current_user)
+
+    assert result is receipt
+
+
+def test_get_receipts_by_ids_filters_by_company_not_owner():
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
+
+    receipt_a = build_receipt()
+    receipt_a.id = 11
+    receipt_a.owner_id = 99
+    receipt_a.company_id = 1
+
+    receipt_b = build_receipt()
+    receipt_b.id = 22
+    receipt_b.owner_id = 3
+    receipt_b.company_id = 1
+
+    class ReceiptDB(DummyDB):
+        def query(self, _model):
+            return QueryProxy(rows=[receipt_a, receipt_b])
+
+    result = receipt_routes.get_receipts_by_ids(
+        payload=FinancialReceiptBatchRequest(ids=[11, 22]),
+        db=ReceiptDB(),
+        current_user=current_user,
+    )
+
+    assert [item.id for item in result] == [11, 22]
+    assert [item.owner_id for item in result] == [99, 3]
+
+
+def test_search_receipt_hits_passes_company_scope_to_repositories(monkeypatch):
+    receipt = build_receipt()
+    current_user = SimpleNamespace(id=3, role="user", company_id=77)
+    calls = []
+
+    monkeypatch.setattr(
+        "financial_management.search.service.ensure_receipt_embeddings",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "financial_management.search.service.search_financial_receipt_hits_semantic",
+        lambda *_args, **_kwargs: [],
+    )
+
+    def fake_text_search(**kwargs):
+        calls.append(kwargs)
+        return [receipt]
+
+    monkeypatch.setattr(
+        "financial_management.search.service.search_financial_receipts_text",
+        fake_text_search,
+    )
+
+    hits = search_receipt_hits(
+        db=object(),
+        current_user=current_user,
+        query_text="repair",
+        mode="keyword",
+        receipt_ids=[11, 11, 22],
+        limit=5,
+    )
+
+    assert len(hits) == 1
+    assert calls[0]["company_id"] == 77
+    assert calls[0]["receipt_ids"] == [11, 22]

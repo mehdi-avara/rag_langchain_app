@@ -56,6 +56,7 @@ class DummyDB:
 def _receipt_out(receipt_id: int, amount: str, direction: str) -> FinancialReceiptOut:
     return FinancialReceiptOut(
         id=receipt_id,
+        company_id=1,
         owner_id=3,
         description=f"Receipt {receipt_id}",
         tracking_number=None,
@@ -86,7 +87,7 @@ def test_tag_receipt_summary_aggregates_costs(monkeypatch):
         SimpleNamespace(receipt_id=22, note="b", created_at=datetime(2026, 5, 7, 11, 0, 0)),
     ]
     db = DummyDB(links=links)
-    current_user = SimpleNamespace(id=3, role="user")
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
 
     monkeypatch.setattr(receipt_routes, "get_tag_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=5))
     monkeypatch.setattr(receipt_routes, "get_receipt_ids", lambda *_args, **_kwargs: [21, 22])

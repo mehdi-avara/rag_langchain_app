@@ -9,7 +9,7 @@ from Models import User, Document
 
 from ..models import ModelDocumentLink
 from ..schemas import ModelDocLinkCreate, ModelDocLinkOut, ModelDocumentOut
-from routs.documents import upload_pdf_mineru
+from routs.documents import upload_pdf_mineru, _get_accessible_document, _get_accessible_document_ids
 from ..services import get_model_or_404
 
 
@@ -25,11 +25,7 @@ def link_document(
 ):
     model = get_model_or_404(db, model_id, current_user)
 
-    doc = db.query(Document).filter(Document.id == payload.document_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    if doc.owner.company_id != current_user.company_id:
-        raise HTTPException(status_code=403, detail="Not allowed to link this document")
+    doc = _get_accessible_document(db, payload.document_id, current_user, "read")
 
     link = (
         db.query(ModelDocumentLink)
@@ -81,6 +77,7 @@ def unlink_document(
     current_user: User = Depends(require_permission("models:documents")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
+    _get_accessible_document(db, document_id, current_user, "read")
 
     link = (
         db.query(ModelDocumentLink)
@@ -115,6 +112,12 @@ def list_linked_documents(
         .join(ModelDocumentLink, ModelDocumentLink.document_id == Document.id)
         .filter(ModelDocumentLink.model_id == model_id)
     )
+
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        if not accessible_doc_ids:
+            return []
+        query = query.filter(Document.id.in_(accessible_doc_ids))
 
     if search:
         query = query.filter(Document.filename.ilike(f"%{search}%"))

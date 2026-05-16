@@ -13,7 +13,8 @@ from db.search_connector import (
     search_comment_hits_semantic,
 )
 from deps import require_permission
-from Models import User, CommentType
+from Models import User, CommentType, Comment
+from routs.documents import _get_accessible_document_ids
 
 from ..models import ManagedModel
 from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut
@@ -54,12 +55,25 @@ def _semantic_search_model_scope(
     doc_ids = get_doc_ids_for_models(db, model_ids)
     comment_ids = get_comment_ids_for_models(db, model_ids)
 
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        accessible_set = set(accessible_doc_ids)
+        doc_ids = [doc_id for doc_id in doc_ids if doc_id in accessible_set]
+
+    owned_comment_ids = [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
+    owned_comment_set = set(owned_comment_ids)
+    comment_ids = [comment_id for comment_id in comment_ids if comment_id in owned_comment_set]
+
     document_hits = []
     if doc_top_k > 0:
         document_hits = search_document_part_hits_semantic(
             db=db,
             query_text=query,
-            owner_id=current_user.id,
             doc_ids=doc_ids,
             limit=doc_top_k,
         )
@@ -216,11 +230,24 @@ def filter_model_content(
     doc_ids = get_doc_ids(db, model.id)
     comment_ids = get_comment_ids(db, model.id)
 
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        accessible_set = set(accessible_doc_ids)
+        doc_ids = [doc_id for doc_id in doc_ids if doc_id in accessible_set]
+
+    owned_comment_ids = [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
+    owned_comment_set = set(owned_comment_ids)
+    comment_ids = [comment_id for comment_id in comment_ids if comment_id in owned_comment_set]
+
     return {
         "documents": search_documents_text(
             db=db,
             query_text=payload.query,
-            owner_id=current_user.id,
             doc_ids=doc_ids,
             limit=payload.limit,
         ),

@@ -9,7 +9,7 @@ from Models import User, Document
 
 from ..models import TagDocumentLink
 from ..schemas import TagDocumentOut, TagDocLinkCreate, TagDocLinkOut
-from routs.documents import upload_pdf_mineru
+from routs.documents import upload_pdf_mineru, _get_accessible_document, _get_accessible_document_ids
 from ..services import get_tag_or_404
 
 
@@ -25,11 +25,7 @@ def link_document(
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
-    doc = db.query(Document).filter(Document.id == payload.document_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    if doc.owner.company_id != current_user.company_id:
-        raise HTTPException(status_code=403, detail="Not allowed to link this document")
+    doc = _get_accessible_document(db, payload.document_id, current_user, "read")
 
     link = (
         db.query(TagDocumentLink)
@@ -50,7 +46,7 @@ def link_document(
     link = TagDocumentLink(
         tag_id=tag_id,
         document_id=doc.id,
-        linked_by_company_id=current_user.company_id,
+        linked_by_user_id=current_user.id,
         start_page=payload.start_page,
         end_page=payload.end_page,
         note=payload.note,
@@ -88,6 +84,7 @@ def unlink_document(
     current_user: User = Depends(require_permission("tags:documents")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
+    _get_accessible_document(db, document_id, current_user, "read")
 
     link = (
         db.query(TagDocumentLink)
@@ -122,6 +119,12 @@ def list_tag_documents(
         .join(TagDocumentLink, TagDocumentLink.document_id == Document.id)
         .filter(TagDocumentLink.tag_id == tag_id)
     )
+
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        if not accessible_doc_ids:
+            return []
+        query = query.filter(Document.id.in_(accessible_doc_ids))
 
     if search:
         query = query.filter(Document.filename.ilike(f"%{search}%"))

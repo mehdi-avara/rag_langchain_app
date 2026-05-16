@@ -138,6 +138,7 @@ def unlink_receipt(
     current_user: User = Depends(require_permissions("models:receipts")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
+    _ = get_receipt(receipt_id=receipt_id, db=db, current_user=current_user)
     link = (
         db.query(ModelReceiptLink)
         .filter(
