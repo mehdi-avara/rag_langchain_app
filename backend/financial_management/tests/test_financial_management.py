@@ -334,3 +334,85 @@ def test_link_receipt_comment_stores_note_embedding(monkeypatch):
     )
 
     assert link.comment_id == 91
+
+
+def test_get_receipt_or_404_allows_same_company_receipt_owned_by_another_user():
+    from financial_management.services import get_receipt_or_404
+
+    receipt = build_receipt()
+    receipt.owner_id = 99
+    receipt.company_id = 1
+
+    class ReceiptDB(DummyDB):
+        def query(self, _model):
+            return QueryProxy(first_row=receipt)
+
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
+
+    result = get_receipt_or_404(ReceiptDB(), receipt.id, current_user)
+
+    assert result is receipt
+
+
+def test_get_receipts_by_ids_filters_by_company_not_owner():
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
+
+    receipt_a = build_receipt()
+    receipt_a.id = 11
+    receipt_a.owner_id = 99
+    receipt_a.company_id = 1
+
+    receipt_b = build_receipt()
+    receipt_b.id = 22
+    receipt_b.owner_id = 3
+    receipt_b.company_id = 1
+
+    class ReceiptDB(DummyDB):
+        def query(self, _model):
+            return QueryProxy(rows=[receipt_a, receipt_b])
+
+    result = receipt_routes.get_receipts_by_ids(
+        payload=FinancialReceiptBatchRequest(ids=[11, 22]),
+        db=ReceiptDB(),
+        current_user=current_user,
+    )
+
+    assert [item.id for item in result] == [11, 22]
+    assert [item.owner_id for item in result] == [99, 3]
+
+
+def test_search_receipt_hits_passes_company_scope_to_repositories(monkeypatch):
+    receipt = build_receipt()
+    current_user = SimpleNamespace(id=3, role="user", company_id=77)
+    calls = []
+
+    monkeypatch.setattr(
+        "financial_management.search.service.ensure_receipt_embeddings",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "financial_management.search.service.search_financial_receipt_hits_semantic",
+        lambda *_args, **_kwargs: [],
+    )
+
+    def fake_text_search(**kwargs):
+        calls.append(kwargs)
+        return [receipt]
+
+    monkeypatch.setattr(
+        "financial_management.search.service.search_financial_receipts_text",
+        fake_text_search,
+    )
+
+    hits = search_receipt_hits(
+        db=object(),
+        current_user=current_user,
+        query_text="repair",
+        mode="keyword",
+        receipt_ids=[11, 11, 22],
+        limit=5,
+    )
+
+    assert len(hits) == 1
+    assert calls[0]["company_id"] == 77
+    assert calls[0]["receipt_ids"] == [11, 22]
