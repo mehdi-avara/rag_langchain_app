@@ -151,8 +151,14 @@ def seed() -> None:
             ("financial_management:search", "financial_management", "search", "Search financial receipts"),
             ("financial_management:ask", "financial_management", "ask", "Ask financial receipts"),
             ("financial_management:cards", "financial_management", "cards", "Manage financial cards"),
+            ("financial_management:customers", "financial_management", "customers", "Manage financial customers"),
             ("financial_management:files", "financial_management", "files", "Manage financial receipt files"),
             ("financial_management:comments", "financial_management", "comments", "Manage financial receipt comments"),
+            ("property_management:read", "property_management", "read", "Read warehouse and property data"),
+            ("property_management:create", "property_management", "create", "Create warehouse and property data"),
+            ("property_management:update", "property_management", "update", "Update warehouse and property data"),
+            ("property_management:delete", "property_management", "delete", "Delete warehouse and property data"),
+            ("property_management:summary", "property_management", "summary", "Read net worth summary"),
         ]
 
         permissions = [
@@ -191,8 +197,14 @@ def seed() -> None:
             "financial_management:search",
             "financial_management:ask",
             "financial_management:cards",
+            "financial_management:customers",
             "financial_management:files",
             "financial_management:comments",
+            "property_management:read",
+            "property_management:create",
+            "property_management:update",
+            "property_management:delete",
+            "property_management:summary",
         }
 
         normal_role.permissions = [

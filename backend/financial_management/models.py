@@ -27,6 +27,13 @@ class FinancialDirection(str, enum.Enum):
     OUTPUT = "output"
 
 
+class FinancialAccessMethod(str, enum.Enum):
+    WHATSAPP = "whatsapp"
+    TELEGRAM = "telegram"
+    EMAIL = "email"
+    WECHAT = "we-chat"
+
+
 class FinancialCard(Base):
     __tablename__ = "financial_cards"
     __table_args__ = (
@@ -52,12 +59,38 @@ class FinancialCard(Base):
     receipts = relationship("FinancialReceipt", back_populates="credit_card")
 
 
+class FinancialCustomer(Base):
+    __tablename__ = "financial_customers"
+    __table_args__ = (
+        Index("ix_financial_customers_company_id", "company_id"),
+        Index("ix_financial_customers_owner_id", "owner_id"),
+        Index("ix_financial_customers_name", "name"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False, index=True)
+    phone_number1 = Column(String, nullable=True, index=True)
+    phone_number2 = Column(String, nullable=True, index=True)
+    access_method = Column(String, nullable=True, index=True)
+    email = Column(String, nullable=True, index=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    company = relationship("Company")
+    owner = relationship("User", back_populates="financial_customers")
+    receipts = relationship("FinancialReceipt", back_populates="customer")
+
+
 class FinancialReceipt(Base):
     __tablename__ = "financial_receipts"
     __table_args__ = (
         Index("ix_financial_receipts_company_id", "company_id"),
         Index("ix_financial_receipts_owner_id", "owner_id"),
         Index("ix_financial_receipts_credit_card_id", "credit_card_id"),
+        Index("ix_financial_receipts_customer_id", "customer_id"),
         Index("ix_financial_receipts_tracking_number", "tracking_number"),
         Index("ix_financial_receipts_counterparty_name", "counterparty_name"),
         Index("ix_financial_receipts_direction", "direction"),
@@ -68,6 +101,7 @@ class FinancialReceipt(Base):
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     credit_card_id = Column(Integer, ForeignKey("financial_cards.id"), nullable=False)
+    customer_id = Column(Integer, ForeignKey("financial_customers.id"), nullable=True)
     description = Column(Text, nullable=False)
     description_embedding = Column(Vector(1024), nullable=True)
     tracking_number = Column(String, nullable=True)
@@ -81,6 +115,7 @@ class FinancialReceipt(Base):
     company = relationship("Company")
     owner = relationship("User", back_populates="financial_receipts")
     credit_card = relationship("FinancialCard", back_populates="receipts")
+    customer = relationship("FinancialCustomer", back_populates="receipts")
     files = relationship(
         "FinancialReceiptFile",
         back_populates="receipt",
