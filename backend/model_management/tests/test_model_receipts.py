@@ -76,8 +76,7 @@ def _receipt_out(receipt_id: int, amount: str, direction: str) -> FinancialRecei
         amount=Decimal(amount),
         direction=direction,
         counterparty_name="Counterparty",
-        receipt_date="1405-02-17",
-        receipt_date_gregorian="2026-05-07",
+        receipt_date=datetime(2026, 5, 7, 12, 0, 0),
         credit_card=FinancialCardSummaryOut(
             id=1,
             title="Main Card",
@@ -110,7 +109,7 @@ def test_create_receipt_and_link_uses_financial_route_callables(monkeypatch):
             amount=Decimal("150.00"),
             direction=FinancialDirection.OUTPUT,
             counterparty_name="Fuel Station",
-            receipt_date="1405-02-17",
+            receipt_date="2026-05-07T09:15:00",
             credit_card_id=1,
         ),
         link_description="model-specific fuel cost",

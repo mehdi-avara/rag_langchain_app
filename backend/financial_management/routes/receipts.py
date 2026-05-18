@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -99,10 +99,10 @@ def list_receipts(
         query = query.filter(FinancialReceipt.credit_card_id == credit_card_id)
 
     if date_from:
-        query = query.filter(FinancialReceipt.receipt_date >= date_from)
+        query = query.filter(FinancialReceipt.receipt_date >= datetime.combine(date_from, time.min))
 
     if date_to:
-        query = query.filter(FinancialReceipt.receipt_date <= date_to)
+        query = query.filter(FinancialReceipt.receipt_date <= datetime.combine(date_to, time.max))
 
     receipts = (
         query

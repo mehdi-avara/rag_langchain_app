@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -126,7 +126,7 @@ def test_create_receipt_falls_back_to_customer_name(monkeypatch):
         amount=Decimal("200.00"),
         direction=FinancialDirection.INPUT,
         counterparty_name=None,
-        receipt_date=date(2026, 5, 16),
+        receipt_date=datetime(2026, 5, 16, 15, 45, 0),
         credit_card_id=card.id,
         customer_id=customer.id,
     )
@@ -136,6 +136,7 @@ def test_create_receipt_falls_back_to_customer_name(monkeypatch):
     assert result.counterparty_name == "Acme Buyer"
     assert result.customer_id == 5
     assert result.customer.name == "Acme Buyer"
+    assert result.receipt_date == datetime(2026, 5, 16, 15, 45, 0)
 
 
 def test_delete_customer_blocks_when_receipt_exists(monkeypatch):

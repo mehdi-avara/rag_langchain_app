@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import List, Literal, Optional
 
@@ -16,24 +16,48 @@ def normalize_receipt_date(value):
     if value is None:
         return value
 
+    if isinstance(value, datetime):
+        if value.year < 1700:
+            from .services import solar_to_gregorian
+
+            converted_date = solar_to_gregorian(value.date().isoformat())
+            return datetime.combine(converted_date, value.timetz())
+        return value
+
     if isinstance(value, date):
         if value.year < 1700:
             from .services import solar_to_gregorian
-            return solar_to_gregorian(value.isoformat())
-        return value
+
+            converted_date = solar_to_gregorian(value.isoformat())
+            return datetime.combine(converted_date, time.min)
+        return datetime.combine(value, time.min)
 
     value = str(value).strip()
+    date_part, separator, time_part = value.partition("T")
+
+    if not separator:
+        date_part, separator, time_part = value.partition(" ")
 
     try:
-        year = int(value.split("-")[0])
+        year = int(date_part.split("-")[0])
     except Exception as exc:
-        raise ValueError("Invalid receipt_date format. Use YYYY-MM-DD") from exc
+        raise ValueError("Invalid receipt_date format. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS]") from exc
 
     if year < 1700:
         from .services import solar_to_gregorian
-        return solar_to_gregorian(value)
 
-    return date.fromisoformat(value)
+        converted_date = solar_to_gregorian(date_part)
+        if not separator:
+            return datetime.combine(converted_date, time.min)
+        try:
+            return datetime.combine(converted_date, time.fromisoformat(time_part.replace("Z", "+00:00")))
+        except ValueError as exc:
+            raise ValueError("Invalid receipt_date format. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS]") from exc
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Invalid receipt_date format. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS]") from exc
 
 
 class FinancialCardBase(BaseModel):
@@ -134,7 +158,7 @@ class FinancialReceiptBase(BaseModel):
     amount: Decimal = Field(..., gt=Decimal("0"))
     direction: FinancialDirection
     counterparty_name: Optional[str] = None
-    receipt_date: date
+    receipt_date: datetime
     credit_card_id: int
     customer_id: Optional[int] = None
 
@@ -153,7 +177,7 @@ class FinancialReceiptUpdate(BaseModel):
     amount: Optional[Decimal] = Field(None, gt=Decimal("0"))
     direction: Optional[FinancialDirection] = None
     counterparty_name: Optional[str] = None
-    receipt_date: Optional[date] = None
+    receipt_date: Optional[datetime] = None
     credit_card_id: Optional[int] = None
     customer_id: Optional[int] = None
 
@@ -171,7 +195,7 @@ class FinancialReceiptOut(BaseModel):
     amount: Decimal
     direction: FinancialDirection
     counterparty_name: Optional[str] = None
-    receipt_date: date
+    receipt_date: datetime
     credit_card: FinancialCardSummaryOut
     customer_id: Optional[int] = None
     customer: Optional[FinancialCustomerSummaryOut] = None
@@ -211,7 +235,7 @@ class FinancialReceiptSemanticHit(BaseModel):
     amount: Decimal
     direction: FinancialDirection
     counterparty_name: str
-    receipt_date: date
+    receipt_date: datetime
     card_id: int
     card_title: str
     card_number: str

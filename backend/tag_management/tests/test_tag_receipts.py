@@ -63,8 +63,7 @@ def _receipt_out(receipt_id: int, amount: str, direction: str) -> FinancialRecei
         amount=Decimal(amount),
         direction=direction,
         counterparty_name="Counterparty",
-        receipt_date="1405-02-17",
-        receipt_date_gregorian="2026-05-07",
+        receipt_date=datetime(2026, 5, 7, 12, 0, 0),
         credit_card=FinancialCardSummaryOut(
             id=1,
             title="Main Card",

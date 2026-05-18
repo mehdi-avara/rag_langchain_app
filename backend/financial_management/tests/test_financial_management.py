@@ -33,6 +33,7 @@ from financial_management.schemas import (
     FinancialReceiptAskRequest,
     FinancialReceiptBatchRequest,
     FinancialReceiptCreate,
+    FinancialReceiptUpdate,
     FinancialReceiptSemanticHit,
 )
 from financial_management.services import (
@@ -138,7 +139,7 @@ def build_receipt() -> FinancialReceipt:
         amount=Decimal("1250000.00"),
         direction=FinancialDirection.OUTPUT,
         counterparty_name="Repair Center",
-        receipt_date=solar_to_gregorian("1405-02-15"),
+        receipt_date=datetime(2026, 5, 5, 8, 15, 0),
     )
     receipt.created_at = datetime(2026, 5, 5, 10, 30, 0)
     receipt.updated_at = datetime(2026, 5, 5, 10, 30, 0)
@@ -204,7 +205,7 @@ def test_create_receipt_keeps_tracking_number_nullable(monkeypatch):
         amount=Decimal("450000.50"),
         direction=FinancialDirection.OUTPUT,
         counterparty_name="Power Company",
-        receipt_date="1405-02-15",
+        receipt_date="1405-02-15T14:45:30",
         credit_card_id=card.id,
     )
 
@@ -212,7 +213,13 @@ def test_create_receipt_keeps_tracking_number_nullable(monkeypatch):
 
     assert response.tracking_number is None
     assert response.embedding_status == "pending"
-    assert response.receipt_date.isoformat() == "2026-05-05"
+    assert response.receipt_date.isoformat() == "2026-05-05T14:45:30"
+
+
+def test_receipt_update_accepts_datetime_local_string():
+    payload = FinancialReceiptUpdate(receipt_date="2026-05-16T09:30")
+
+    assert payload.receipt_date == datetime(2026, 5, 16, 9, 30, 0)
 
 
 def test_build_receipt_context_contains_key_fields():
@@ -243,8 +250,7 @@ def test_ask_receipts_returns_receipt_citations(monkeypatch):
         amount=Decimal("1250000.00"),
         direction=FinancialDirection.OUTPUT,
         counterparty_name="Repair Center",
-        receipt_date="1405-02-15",
-        receipt_date_gregorian="2026-05-05",
+        receipt_date=datetime(2026, 5, 5, 8, 15, 0),
         card_id=9,
         card_title="Main Card",
         card_number="************7890",

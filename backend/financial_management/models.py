@@ -108,7 +108,7 @@ class FinancialReceipt(Base):
     amount = Column(Numeric(14, 2), nullable=False)
     direction = Column(String, nullable=False, index=True)
     counterparty_name = Column(String, nullable=False, index=True)
-    receipt_date = Column(Date, nullable=False, default=date.today)
+    receipt_date = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
