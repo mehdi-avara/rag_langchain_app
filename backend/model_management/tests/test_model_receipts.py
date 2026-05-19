@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import importlib
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -22,9 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from financial_management.schemas import FinancialCardSummaryOut, FinancialReceiptCreate, FinancialReceiptOut
 from financial_management.models import FinancialDirection
-from model_management.models import ModelReceiptLink
+from model_management.models import ManagedModel, ModelReceiptLink
 from model_management.routes import receipts as receipt_routes
 from model_management.schemas import ModelCreateReceiptAndLinkRequest
+
+model_routes = importlib.import_module("model_management.routes.models")
 
 
 class QueryStub:
@@ -35,7 +38,16 @@ class QueryStub:
     def filter(self, *args, **kwargs):
         return self
 
+    def join(self, *args, **kwargs):
+        return self
+
     def order_by(self, *args, **kwargs):
+        return self
+
+    def offset(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
         return self
 
     def all(self):
@@ -46,14 +58,17 @@ class QueryStub:
 
 
 class DummyDB:
-    def __init__(self, links=None, existing_link=None):
+    def __init__(self, links=None, existing_link=None, models=None):
         self.links = links or []
         self.existing_link = existing_link
+        self.models = models or []
         self.added = []
 
     def query(self, model):
         if model is ModelReceiptLink:
             return QueryStub(rows=self.links, first_row=self.existing_link)
+        if model is ManagedModel:
+            return QueryStub(rows=self.models)
         return QueryStub()
 
     def add(self, obj):
@@ -148,3 +163,24 @@ def test_model_receipt_summary_aggregates_input_and_output(monkeypatch):
     assert summary.total_output_amount == Decimal("50.00")
     assert summary.total_cost_amount == Decimal("50.00")
     assert summary.net_amount == Decimal("150.00")
+
+
+def test_list_models_by_receipt_checks_receipt_access_and_returns_models(monkeypatch):
+    models = [
+        SimpleNamespace(id=8, company_id=1, model="M-8"),
+        SimpleNamespace(id=9, company_id=1, model="M-9"),
+    ]
+    db = DummyDB(models=models)
+    current_user = SimpleNamespace(id=3, role="user", company_id=1)
+    calls = []
+
+    def fake_get_receipt(receipt_id, db, current_user):
+        calls.append((receipt_id, current_user))
+        return SimpleNamespace(id=receipt_id)
+
+    monkeypatch.setattr(model_routes, "get_receipt", fake_get_receipt)
+
+    result = model_routes.list_models_by_receipt(receipt_id=51, db=db, current_user=current_user)
+
+    assert calls == [(51, current_user)]
+    assert result == models

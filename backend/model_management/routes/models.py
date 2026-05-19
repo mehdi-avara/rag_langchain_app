@@ -12,11 +12,12 @@ from db.search_connector import (
     search_comments_text,
     search_comment_hits_semantic,
 )
-from deps import require_permission
+from deps import require_permission, require_permissions
 from Models import User, CommentType, Comment
+from financial_management.routes.receipts import get_receipt
 from routs.documents import _get_accessible_document_ids
 
-from ..models import ManagedModel
+from ..models import ManagedModel, ModelReceiptLink
 from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut
 from ..services import (
     get_model_or_404,
@@ -203,6 +204,31 @@ def list_models(
         .all()
     )
     return models
+
+
+@router.get("/by-receipt/{receipt_id}", response_model=List[ModelListOut])
+def list_models_by_receipt(
+    receipt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("models:read", "financial_management:read")),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    _ = get_receipt(receipt_id=receipt_id, db=db, current_user=current_user)
+    company_id = require_company(current_user)
+
+    return (
+        db.query(ManagedModel)
+        .join(ModelReceiptLink, ModelReceiptLink.model_id == ManagedModel.id)
+        .filter(
+            ManagedModel.company_id == company_id,
+            ModelReceiptLink.receipt_id == receipt_id,
+        )
+        .order_by(ModelReceiptLink.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/{model_id}", response_model=ModelOut)

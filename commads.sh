@@ -27,3 +27,8 @@ alembic -c alembic.ini upgrade head
 python db/seed_rbac.py
 cd ..
 pytest backend/financial_management/tests/test_financial_management.py
+
+
+docker compose exec backend python -m pytest -q -x --tb=short
+
+docker compose exec backend  pip install -i https://package-mirror.liara.ir/repository/pypi/simple pytest
