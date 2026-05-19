@@ -135,11 +135,13 @@ class FinancialReceiptFile(Base):
     __table_args__ = (
         Index("ix_financial_receipt_files_receipt_id", "receipt_id"),
         Index("ix_financial_receipt_files_user_id", "user_id"),
+        Index("ix_financial_receipt_files_asset_id", "asset_id"),
     )
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     receipt_id = Column(Integer, ForeignKey("financial_receipts.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(Integer, ForeignKey("file_assets.id", ondelete="SET NULL"), nullable=True)
     file_name = Column(String, nullable=False)
     media_address = Column(String, nullable=False)
     content_type = Column(String, nullable=True)
@@ -147,6 +149,7 @@ class FinancialReceiptFile(Base):
 
     receipt = relationship("FinancialReceipt", back_populates="files")
     user = relationship("User", back_populates="financial_receipt_files")
+    asset = relationship("FileAsset")
 
 
 class FinancialReceiptCommentLink(Base):

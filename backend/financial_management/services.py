@@ -273,6 +273,7 @@ def receipt_file_to_out(file_rec: FinancialReceiptFile) -> FinancialReceiptFileO
         file_name=file_rec.file_name,
         media_address=file_rec.media_address,
         content_type=file_rec.content_type,
+        asset_id=file_rec.asset_id,
         created_at=file_rec.created_at,
     )
 

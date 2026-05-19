@@ -149,6 +149,7 @@ class FinancialReceiptFileOut(BaseModel):
     file_name: str
     media_address: str
     content_type: Optional[str] = None
+    asset_id: Optional[int] = None
     created_at: datetime
 
 
