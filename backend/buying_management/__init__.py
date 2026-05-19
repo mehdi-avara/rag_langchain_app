@@ -1,0 +1,2 @@
+"""Buying management module."""
+

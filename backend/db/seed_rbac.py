@@ -159,6 +159,12 @@ def seed() -> None:
             ("property_management:update", "property_management", "update", "Update warehouse and property data"),
             ("property_management:delete", "property_management", "delete", "Delete warehouse and property data"),
             ("property_management:summary", "property_management", "summary", "Read net worth summary"),
+            ("buying_management:create", "buying_management", "create", "Create buying processes"),
+            ("buying_management:read", "buying_management", "read", "Read buying processes"),
+            ("buying_management:update", "buying_management", "update", "Update buying processes"),
+            ("buying_management:delete", "buying_management", "delete", "Delete buying processes"),
+            ("buying_management:summary", "buying_management", "summary", "Read buying summaries"),
+            ("buying_management:apply_warehouse", "buying_management", "apply_warehouse", "Apply buying processes to warehouse"),
         ]
 
         permissions = [
@@ -205,6 +211,12 @@ def seed() -> None:
             "property_management:update",
             "property_management:delete",
             "property_management:summary",
+            "buying_management:create",
+            "buying_management:read",
+            "buying_management:update",
+            "buying_management:delete",
+            "buying_management:summary",
+            "buying_management:apply_warehouse",
         }
 
         normal_role.permissions = [

@@ -40,6 +40,17 @@ from property_management.models import (
     WarehouseItem,
 )
 
+from buying_management.models import (
+    BuyingCostAllocationMethod,
+    BuyingCostType,
+    BuyingProcess,
+    BuyingProcessCost,
+    BuyingProcessItem,
+    BuyingProcessReceiptLink,
+    BuyingProcessStatus,
+    BuyingReceiptPurpose,
+)
+
 __all__ = [
     "Company",
     "User",
@@ -76,4 +87,12 @@ __all__ = [
     "FinancialDirection",
     "WarehouseItem",
     "OwnedProperty",
+    "BuyingCostAllocationMethod",
+    "BuyingCostType",
+    "BuyingProcess",
+    "BuyingProcessCost",
+    "BuyingProcessItem",
+    "BuyingProcessReceiptLink",
+    "BuyingProcessStatus",
+    "BuyingReceiptPurpose",
 ]
