@@ -151,18 +151,19 @@ def create_comment_file_download_url(
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
 
-    if not file_rec.asset_id:
+    asset_id = getattr(file_rec, "asset_id", None)
+    if not asset_id:
         raise HTTPException(status_code=409, detail="This comment file is stored locally and has no asset download URL")
 
     manager = StorageManager(db)
     download_url = manager.create_download_url(
-        asset_id=file_rec.asset_id,
+        asset_id=asset_id,
         user=current_user,
         disposition="attachment",
     )
 
     return {
-        "asset_id": file_rec.asset_id,
+        "asset_id": asset_id,
         "download_url": download_url,
         "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
     }
@@ -178,10 +179,11 @@ def download_comment_file(
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
 
-    if file_rec.asset_id:
+    asset_id = getattr(file_rec, "asset_id", None)
+    if asset_id:
         manager = StorageManager(db)
         download_url = manager.create_download_url(
-            asset_id=file_rec.asset_id,
+            asset_id=asset_id,
             user=current_user,
             disposition="attachment",
         )
@@ -244,10 +246,11 @@ def delete_comment_file(
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
 
-    if file_rec.asset_id:
+    asset_id = getattr(file_rec, "asset_id", None)
+    if asset_id:
         manager = StorageManager(db)
         manager.delete_file(
-            asset_id=file_rec.asset_id,
+            asset_id=asset_id,
             user=current_user,
             hard_delete=False,
         )
