@@ -86,6 +86,18 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     request_log_path: str = "/home/ubuntu/rag_langchain_app/backend/logs/"
 
+    S3_ENDPOINT_URL: str = "http://minio:9000"
+    S3_PUBLIC_ENDPOINT_URL: str | None = None
+    S3_ACCESS_KEY_ID: str = "minioadmin"
+    S3_SECRET_ACCESS_KEY: str = "minioadmin"
+    S3_BUCKET_NAME: str = "porsa-assets"
+    S3_REGION_NAME: str = "us-east-1"
+    S3_USE_SSL: bool = False
+    S3_UPLOAD_EXPIRES_SECONDS: int = 900
+    S3_DOWNLOAD_EXPIRES_SECONDS: int = 300
+    MAX_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024
+    ALLOWED_UPLOAD_CONTENT_TYPES: str = "application/pdf,image/png,image/jpeg,image/webp,text/plain,application/zip,audio/mpeg,audio/wav,video/mp4"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

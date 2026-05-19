@@ -10,6 +10,7 @@ from .chat import Chat, ChatMessage
 from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
 from .embedding_config import EmbeddingConfig
+from .file_asset import FileAsset, FileAssetStatus
 
 from model_management.models import (
     ManagedModel,
@@ -66,6 +67,8 @@ __all__ = [
     "ImageChunk",
     "ChatAIModels",
     "EmbeddingConfig",
+    "FileAsset",
+    "FileAssetStatus",
     "CommentType",
     "DocumentStatusType",
     "Chat",
