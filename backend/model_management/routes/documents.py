@@ -9,7 +9,14 @@ from Models import User, Document
 
 from ..models import ModelDocumentLink
 from ..schemas import ModelDocLinkCreate, ModelDocLinkOut, ModelDocumentOut
-from routs.documents import upload_pdf_mineru, _get_accessible_document, _get_accessible_document_ids
+from schemas.asset import AssetCompleteUploadIn, AssetUploadUrlCreate, AssetUploadUrlOut
+from routs.documents import (
+    upload_pdf_mineru,
+    create_document_upload_url,
+    complete_document_upload,
+    _get_accessible_document,
+    _get_accessible_document_ids,
+)
 from ..services import get_model_or_404
 
 
@@ -48,6 +55,49 @@ def link_document(
     db.commit()
     db.refresh(link)
     return link
+
+
+@router.post("/{model_id}/documents/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
+def create_model_document_upload_url(
+    model_id: int,
+    payload: AssetUploadUrlCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("models:documents")),
+):
+    _ = get_model_or_404(db, model_id, current_user)
+
+    return create_document_upload_url(
+        payload=payload,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{model_id}/documents/complete-upload/{asset_id}", response_model=ModelDocLinkOut, status_code=status.HTTP_201_CREATED)
+def complete_model_document_upload_and_link(
+    model_id: int,
+    asset_id: int,
+    payload: AssetCompleteUploadIn,
+    link_description: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("models:documents")),
+):
+    _ = get_model_or_404(db, model_id, current_user)
+
+    upload_result = complete_document_upload(
+        asset_id=asset_id,
+        payload=payload,
+        db=db,
+        current_user=current_user,
+    )
+
+    doc_id = upload_result.get("doc_id") if isinstance(upload_result, dict) else getattr(upload_result, "doc_id", None)
+
+    if doc_id is None:
+        raise HTTPException(status_code=500, detail="Document upload did not return doc_id")
+
+    payload = ModelDocLinkCreate(document_id=doc_id, note=link_description)
+    return link_document(model_id=model_id, payload=payload, db=db, current_user=current_user)
 
 
 @router.post("/{model_id}/documents/upload", response_model=ModelDocLinkOut, status_code=status.HTTP_201_CREATED)
