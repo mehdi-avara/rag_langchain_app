@@ -16,6 +16,7 @@ from Models import User, Document, Chunk, DocumentStatusType, UserDocumentAccess
 from db.init_db import get_db
 from db.search_connector import search_documents_text, search_document_part_hits_semantic
 from schemas.document import DocumentOut, ChunkOut, DocumentAccessGrantIn, DocumentAccessOut
+from schemas.asset import AssetUploadUrlCreate, AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
 from schemas.search import (
     TextSearchRequest,
     SemanticSearchRequest,
@@ -24,6 +25,7 @@ from schemas.search import (
     DocumentAskResponse,
 )
 from settings import get_settings
+from storage.manager import StorageManager
 
 
 settings = get_settings()
@@ -193,6 +195,112 @@ def _get_company_document(db: Session, doc_id: int, current_user: User) -> Docum
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
+
+
+@router.post("/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
+def create_document_upload_url(
+    payload: AssetUploadUrlCreate,
+    current_user: User = Depends(require_permission("documents:create")),
+    db: Session = Depends(get_db),
+):
+    if payload.content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="Only PDF documents are supported")
+
+    manager = StorageManager(db)
+    return manager.create_upload_url(
+        filename=payload.filename,
+        content_type=payload.content_type,
+        size_bytes=payload.size_bytes,
+        owner=current_user,
+        purpose="document_original_pdf",
+        checksum=payload.checksum,
+    )
+
+
+@router.post("/complete-upload/{asset_id}", status_code=status.HTTP_201_CREATED)
+def complete_document_upload(
+    asset_id: int,
+    payload: AssetCompleteUploadIn,
+    current_user: User = Depends(require_permission("documents:create")),
+    db: Session = Depends(get_db),
+):
+    manager = StorageManager(db)
+    asset = manager.complete_upload(
+        asset_id=asset_id,
+        user=current_user,
+        checksum=payload.checksum,
+    )
+
+    if asset.content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="Only PDF documents are supported")
+
+    doc = Document(
+        owner_id=current_user.id,
+        original_asset_id=asset.id,
+        filename=asset.original_filename,
+        n_pages=0,
+        n_chunks=0,
+        file_path=None,
+        status=DocumentStatusType.QUEUED.value,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    doc_dir = Path(settings.files_dir) / str(doc.id)
+    original_pdf = doc_dir / "original.pdf"
+
+    manager.download_asset_to_path(
+        asset_id=asset.id,
+        user=current_user,
+        target_path=original_pdf,
+    )
+
+    with original_pdf.open("rb") as f:
+        header = f.read(4)
+
+    if header != b"%PDF":
+        doc.status = DocumentStatusType.FAIELED.value
+        db.commit()
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF")
+
+    from core.celery.tasks import mineru_process_pdf
+
+    mineru_process_pdf.delay(
+        pdf_path=os.path.join(f"{doc.id}", "original.pdf"),
+        doc_id=doc.id,
+    )
+
+    return {
+        "doc_id": doc.id,
+        "asset_id": asset.id,
+        "status": DocumentStatusType.QUEUED.value,
+    }
+
+
+@router.get("/download-url/{doc_id}", response_model=AssetDownloadUrlOut)
+async def create_document_download_url(
+    doc_id: int,
+    current_user: User = Depends(require_permission("documents:download")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_accessible_document(db, doc_id, current_user, "download")
+
+    if not doc.original_asset_id:
+        raise HTTPException(status_code=409, detail="This document has no asset download URL")
+
+    manager = StorageManager(db)
+    download_url = manager.create_download_url(
+        asset_id=doc.original_asset_id,
+        user=current_user,
+        disposition="attachment",
+    )
+
+    return {
+        "asset_id": doc.original_asset_id,
+        "download_url": download_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
 
 
 @router.post("/upload")
@@ -454,10 +562,18 @@ async def download_pdf(
 ):
     doc = _get_accessible_document(db, doc_id, current_user, "download")
 
-    if not doc.file_path:
-        raise HTTPException(status_code=404, detail="No file path found for this document")
+    if doc.file_path:
+        file_path = Path(settings.files_dir) / doc.file_path / "original.pdf"
+    else:
+        file_path = Path(settings.files_dir) / str(doc.id) / "original.pdf"
 
-    file_path = Path(settings.files_dir) / doc.file_path / "original.pdf"
+    if not file_path.exists() and doc.original_asset_id:
+        manager = StorageManager(db)
+        manager.download_asset_to_path(
+            asset_id=doc.original_asset_id,
+            user=current_user,
+            target_path=file_path,
+        )
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")

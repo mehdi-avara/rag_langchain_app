@@ -8,6 +8,21 @@ from components.stand_alone_functions.page_find_logic.mineru_main_file_creator i
 )
 
 
+_TOKEN_ENCODER = None
+
+
+def _get_token_encoder():
+    global _TOKEN_ENCODER
+    if _TOKEN_ENCODER is not None:
+        return _TOKEN_ENCODER
+
+    try:
+        _TOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        _TOKEN_ENCODER = None
+
+    return _TOKEN_ENCODER
+
 
 class ChunkingMode(str, Enum):
     sentence_3 = "sentence-3"
@@ -39,9 +54,14 @@ def chunk_by_paragraph(text: str) -> List[str]:
     return paragraphs
 
 def token_len(s: str) -> int:
-    model = "gpt-4o-mini"
-    enc = tiktoken.encoding_for_model(model)
-    return len(enc.encode(s))
+    if not s:
+        return 0
+
+    encoder = _get_token_encoder()
+    if encoder is None:
+        return max(1, len(s) // 4)
+
+    return len(encoder.encode(s))
 
 
 def chunk_by_tokens(text: str, max_tokens: int = 800, overlap: int = 100, ) -> List[str]:

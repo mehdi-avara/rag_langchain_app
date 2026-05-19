@@ -12,6 +12,7 @@ class DocumentOut(BaseModel):
     status: str
     abstract: str | None
     file_path: str | None
+    original_asset_id: int | None = None
     
 
     class Config:

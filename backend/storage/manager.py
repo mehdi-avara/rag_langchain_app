@@ -235,3 +235,20 @@ class StorageManager:
         asset = self._get_asset_or_404(asset_id)
         self._check_company_access(asset, user)
         return asset
+
+    def download_asset_to_path(self, *, asset_id: int, user: User, target_path: str | Path) -> FileAsset:
+        asset = self._get_asset_or_404(asset_id)
+        self._check_company_access(asset, user)
+
+        if asset.status != FileAssetStatus.READY.value:
+            raise HTTPException(status_code=409, detail="Asset is not ready")
+
+        target = Path(target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.client.download_file(asset.bucket, asset.storage_key, str(target))
+        except ClientError as exc:
+            raise HTTPException(status_code=500, detail="Failed to download asset from storage") from exc
+
+        return asset

@@ -9,7 +9,20 @@ from mineru.utils.language import detect_lang
 import tiktoken
 
 
-_TOKEN_ENCODER = tiktoken.encoding_for_model("gpt-4o-mini")
+_TOKEN_ENCODER = None
+
+
+def _get_token_encoder():
+    global _TOKEN_ENCODER
+    if _TOKEN_ENCODER is not None:
+        return _TOKEN_ENCODER
+
+    try:
+        _TOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        _TOKEN_ENCODER = None
+
+    return _TOKEN_ENCODER
 
 
 def __is_hyphen_at_line_end(line):
@@ -148,7 +161,12 @@ def _rewrite_image_urls(text: str, base_url: str, doc_id: int) -> str:
 def token_len(text: str) -> int:
     if not text:
         return 0
-    return len(_TOKEN_ENCODER.encode(text))
+
+    encoder = _get_token_encoder()
+    if encoder is None:
+        return max(1, len(text) // 4)
+
+    return len(encoder.encode(text))
 
 
 def _is_low_signal_embedding_text(text: str, min_tokens: int) -> bool:

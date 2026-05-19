@@ -17,6 +17,7 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    original_asset_id = Column(Integer, ForeignKey("file_assets.id", ondelete="SET NULL"), nullable=True, index=True)
     filename = Column(String, nullable=False)
     n_pages = Column(Integer, nullable=False)
     n_chunks = Column(Integer, nullable=False)
@@ -27,11 +28,10 @@ class Document(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="documents")
+    original_asset = relationship("FileAsset")
     chunks = relationship(
         "Chunk",
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-
-    
