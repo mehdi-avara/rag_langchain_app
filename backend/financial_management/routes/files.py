@@ -181,18 +181,19 @@ def create_receipt_file_download_url(
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
 
-    if not file_rec.asset_id:
+    asset_id = getattr(file_rec, "asset_id", None)
+    if not asset_id:
         raise HTTPException(status_code=409, detail="This receipt file is stored locally and has no asset download URL")
 
     manager = StorageManager(db)
     download_url = manager.create_download_url(
-        asset_id=file_rec.asset_id,
+        asset_id=asset_id,
         user=current_user,
         disposition="attachment",
     )
 
     return {
-        "asset_id": file_rec.asset_id,
+        "asset_id": asset_id,
         "download_url": download_url,
         "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
     }
@@ -208,14 +209,15 @@ def download_receipt_file(
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
 
-    if file_rec.asset_id:
+    asset_id = getattr(file_rec, "asset_id", None)
+    if asset_id:
         manager = StorageManager(db)
         download_url = manager.create_download_url(
-            asset_id=file_rec.asset_id,
+            asset_id=asset_id,
             user=current_user,
             disposition="attachment",
         )
-        return {"asset_id": file_rec.asset_id, "download_url": download_url}
+        return {"asset_id": asset_id, "download_url": download_url}
 
     file_path = Path(file_rec.media_address).resolve()
     allowed_base = (Path(settings.files_dir) / "companies" / str(current_user.company_id)).resolve()
@@ -243,10 +245,11 @@ def delete_receipt_file(
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
 
-    if file_rec.asset_id:
+    asset_id = getattr(file_rec, "asset_id", None)
+    if asset_id:
         manager = StorageManager(db)
         manager.delete_file(
-            asset_id=file_rec.asset_id,
+            asset_id=asset_id,
             user=current_user,
             hard_delete=False,
         )
