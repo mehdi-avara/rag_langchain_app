@@ -48,5 +48,5 @@ class FileAsset(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at = Column(DateTime, nullable=True)
 
-    owner = relationship("User")
-    company = relationship("Company")
+    owner = relationship("User", foreign_keys="FileAsset.owner_id")
+    company = relationship("Company", foreign_keys="FileAsset.company_id")

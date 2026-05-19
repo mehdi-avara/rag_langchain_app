@@ -63,6 +63,7 @@ class CurrentUserOut(BaseModel):
     First_name: str
     Last_name: Optional[str] = None
     image_path: Optional[str] = None
+    profile_asset_id: Optional[int] = None
     roles: List[RoleOut] = Field(default_factory=list)
 
     class Config:
@@ -86,6 +87,7 @@ class UserUpdate(BaseModel):
     Last_name: Optional[str] = None
     notification_token: Optional[str] = None
     image_path: Optional[str] = None
+    profile_asset_id: Optional[int] = None
     role_ids: Optional[List[int]] = None
 
 
@@ -104,6 +106,7 @@ class UserOut(BaseModel):
     created_at: datetime
     notification_token: Optional[str] = None
     image_path: Optional[str] = None
+    profile_asset_id: Optional[int] = None
     roles: List[RoleOut] = Field(default_factory=list)
 
     class Config:
@@ -120,4 +123,6 @@ class ChangePasswordOut(BaseModel):
 
 
 class ProfileImageOut(BaseModel):
-    image_path: str
+    image_path: Optional[str] = None
+    profile_asset_id: Optional[int] = None
+    download_url: Optional[str] = None

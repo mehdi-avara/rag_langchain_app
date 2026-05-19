@@ -19,8 +19,10 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     notification_token = Column(String, nullable=True)
     image_path = Column(String, nullable=True)
+    profile_asset_id = Column(Integer, ForeignKey("file_assets.id", ondelete="SET NULL"), nullable=True, index=True)
 
     company = relationship("Company", back_populates="users")
+    profile_asset = relationship("FileAsset", foreign_keys=[profile_asset_id])
 
     roles = relationship("Role", secondary="user_role", back_populates="users", lazy="selectin")
     system_tags = relationship("SystemTag", back_populates="owner", cascade="all, delete-orphan")

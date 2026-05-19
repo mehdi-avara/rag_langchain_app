@@ -2,11 +2,11 @@ from pathlib import Path
 import shutil
 
 from fastapi import Depends, APIRouter, status, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from passlib.hash import bcrypt
 from sqlalchemy.orm import Session
 
-from Models import User
+from Models import User, FileAssetStatus
 from db.init_db import get_db
 from deps import require_permission
 from schemas.users import (
@@ -18,7 +18,9 @@ from schemas.users import (
     UserUpdateIn,
     ProfileImageOut,
 )
+from schemas.asset import AssetUploadUrlCreate, AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
 from settings import get_settings
+from storage.manager import StorageManager
 
 
 router = APIRouter()
@@ -48,6 +50,7 @@ def get_me(
         First_name=current_user.First_name,
         Last_name=current_user.Last_name,
         image_path=current_user.image_path,
+        profile_asset_id=current_user.profile_asset_id,
         roles=current_user.roles,
         permissions=get_user_permission_names(current_user),
     )
@@ -95,6 +98,7 @@ def update_user(
         First_name=user.First_name,
         Last_name=user.Last_name,
         image_path=user.image_path,
+        profile_asset_id=user.profile_asset_id,
         roles=user.roles,
         permissions=get_user_permission_names(user),
     )
@@ -176,7 +180,134 @@ async def upload_profile_image(
     db.commit()
     db.refresh(user)
 
-    return ProfileImageOut(image_path=user.image_path)
+    return ProfileImageOut(image_path=user.image_path, profile_asset_id=getattr(user, "profile_asset_id", None))
+
+
+@router.post(
+    "/profile-image/upload-url",
+    response_model=AssetUploadUrlOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_profile_image_upload_url(
+    payload: AssetUploadUrlCreate,
+    current_user: User = Depends(require_permission("profile:image")),
+    db: Session = Depends(get_db),
+):
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+    if payload.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file type. Allowed: jpeg, png, gif, webp",
+        )
+
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    manager = StorageManager(db)
+    return manager.create_upload_url(
+        filename=payload.filename,
+        content_type=payload.content_type,
+        size_bytes=payload.size_bytes,
+        owner=current_user,
+        purpose=f"profile_image:{user.id}",
+        checksum=payload.checksum,
+    )
+
+
+@router.post(
+    "/profile-image/complete-upload/{asset_id}",
+    response_model=ProfileImageOut,
+    status_code=status.HTTP_200_OK,
+)
+def complete_profile_image_upload(
+    asset_id: int,
+    payload: AssetCompleteUploadIn,
+    current_user: User = Depends(require_permission("profile:image")),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    manager = StorageManager(db)
+    asset = manager.complete_upload(
+        asset_id=asset_id,
+        user=current_user,
+        checksum=payload.checksum,
+    )
+
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+    if asset.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file type. Allowed: jpeg, png, gif, webp",
+        )
+
+    if asset.status != FileAssetStatus.READY.value:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Asset is not ready")
+
+    user.profile_asset_id = asset.id
+    user.image_path = asset.storage_key
+
+    db.commit()
+    db.refresh(user)
+
+    download_url = manager.create_download_url(
+        asset_id=asset.id,
+        user=current_user,
+        disposition="inline",
+    )
+
+    return ProfileImageOut(
+        image_path=user.image_path,
+        profile_asset_id=user.profile_asset_id,
+        download_url=download_url,
+    )
+
+
+@router.get(
+    "/profile-image/download-url",
+    response_model=AssetDownloadUrlOut,
+    status_code=status.HTTP_200_OK,
+)
+def create_profile_image_download_url(
+    current_user: User = Depends(require_permission("profile:image")),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if not user.profile_asset_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No profile image asset set")
+
+    manager = StorageManager(db)
+    download_url = manager.create_download_url(
+        asset_id=user.profile_asset_id,
+        user=current_user,
+        disposition="inline",
+    )
+
+    return {
+        "asset_id": user.profile_asset_id,
+        "download_url": download_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
 
 
 @router.get(
@@ -195,6 +326,15 @@ def download_profile_image(
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.profile_asset_id:
+        manager = StorageManager(db)
+        download_url = manager.create_download_url(
+            asset_id=user.profile_asset_id,
+            user=current_user,
+            disposition="inline",
+        )
+        return RedirectResponse(download_url)
 
     if not user.image_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No profile image set")
