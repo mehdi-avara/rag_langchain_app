@@ -28,6 +28,7 @@ class CommentFileOut(BaseModel):
     id: int
     file_name: str
     media_address: str
+    asset_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -43,6 +44,7 @@ class CommentFileUpload(BaseModel):
 class CommentFileName(BaseModel):
     id: int
     file_name: str
+    asset_id: Optional[int] = None
 
     class Config:
         from_attributes = True

@@ -2,14 +2,18 @@ import os
 from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
 from Models import Comment, User, CommentFile
+from Models.file_asset import FileAssetStatus
 from deps import get_current_user
+from schemas.asset import AssetUploadUrlCreate, AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
 from schemas.comment import CommentFileName, CommentFileOut, CommentFileUpload
 from settings import get_settings
+from storage.manager import StorageManager
+
 
 settings = get_settings()
 
@@ -31,6 +35,28 @@ def _get_owned_comment(db: Session, comment_id: int, current_user: User) -> Comm
     return comment
 
 
+def _get_comment_file_or_404(
+    db: Session,
+    comment_id: int,
+    file_id: int,
+    current_user: User,
+) -> CommentFile:
+    file_rec = (
+        db.query(CommentFile)
+        .filter(
+            CommentFile.id == file_id,
+            CommentFile.comment_id == comment_id,
+            CommentFile.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not file_rec:
+        raise HTTPException(status_code=404, detail="File not found for this comment")
+
+    return file_rec
+
+
 @router.get("/{comment_id}", response_model=List[CommentFileName])
 def list_comment_files(
     comment_id: int,
@@ -47,6 +73,101 @@ def list_comment_files(
     )
 
 
+@router.post("/{comment_id}/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
+def create_comment_file_upload_url(
+    comment_id: int,
+    payload: AssetUploadUrlCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_owned_comment(db, comment_id, current_user)
+
+    manager = StorageManager(db)
+    return manager.create_upload_url(
+        filename=payload.filename,
+        content_type=payload.content_type,
+        size_bytes=payload.size_bytes,
+        owner=current_user,
+        purpose=f"comment:{comment_id}",
+        checksum=payload.checksum,
+    )
+
+
+@router.post("/{comment_id}/complete-upload/{asset_id}", response_model=CommentFileOut, status_code=status.HTTP_201_CREATED)
+def complete_comment_file_upload(
+    comment_id: int,
+    asset_id: int,
+    payload: AssetCompleteUploadIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_owned_comment(db, comment_id, current_user)
+
+    manager = StorageManager(db)
+    asset = manager.complete_upload(
+        asset_id=asset_id,
+        user=current_user,
+        checksum=payload.checksum,
+    )
+
+    if asset.status != FileAssetStatus.READY.value:
+        raise HTTPException(status_code=409, detail="Asset is not ready")
+
+    existing = (
+        db.query(CommentFile)
+        .filter(
+            CommentFile.comment_id == comment_id,
+            CommentFile.user_id == current_user.id,
+            CommentFile.asset_id == asset.id,
+        )
+        .first()
+    )
+
+    if existing:
+        return existing
+
+    new_file = CommentFile(
+        user_id=current_user.id,
+        comment_id=comment_id,
+        asset_id=asset.id,
+        file_name=asset.original_filename,
+        media_address=asset.storage_key,
+    )
+
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+
+    return new_file
+
+
+@router.get("/{comment_id}/{file_id}/download-url", response_model=AssetDownloadUrlOut)
+def create_comment_file_download_url(
+    comment_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_owned_comment(db, comment_id, current_user)
+    file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
+
+    if not file_rec.asset_id:
+        raise HTTPException(status_code=409, detail="This comment file is stored locally and has no asset download URL")
+
+    manager = StorageManager(db)
+    download_url = manager.create_download_url(
+        asset_id=file_rec.asset_id,
+        user=current_user,
+        disposition="attachment",
+    )
+
+    return {
+        "asset_id": file_rec.asset_id,
+        "download_url": download_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
+
+
 @router.get("/{comment_id}/{file_id}/download")
 def download_comment_file(
     comment_id: int,
@@ -55,18 +176,16 @@ def download_comment_file(
     current_user: User = Depends(get_current_user),
 ):
     _get_owned_comment(db, comment_id, current_user)
+    file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
 
-    file_rec = (
-        db.query(CommentFile)
-        .filter(
-            CommentFile.id == file_id,
-            CommentFile.comment_id == comment_id,
-            CommentFile.user_id == current_user.id,
+    if file_rec.asset_id:
+        manager = StorageManager(db)
+        download_url = manager.create_download_url(
+            asset_id=file_rec.asset_id,
+            user=current_user,
+            disposition="attachment",
         )
-        .first()
-    )
-    if not file_rec:
-        raise HTTPException(status_code=404, detail="File not found for this comment")
+        return RedirectResponse(download_url)
 
     if not os.path.isfile(file_rec.media_address):
         raise HTTPException(status_code=404, detail="Stored file is missing")
@@ -123,18 +242,18 @@ def delete_comment_file(
     current_user: User = Depends(get_current_user),
 ):
     _get_owned_comment(db, comment_id, current_user)
+    file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
 
-    file_rec = (
-        db.query(CommentFile)
-        .filter(
-            CommentFile.id == file_id,
-            CommentFile.comment_id == comment_id,
-            CommentFile.user_id == current_user.id,
+    if file_rec.asset_id:
+        manager = StorageManager(db)
+        manager.delete_file(
+            asset_id=file_rec.asset_id,
+            user=current_user,
+            hard_delete=False,
         )
-        .first()
-    )
-    if not file_rec:
-        raise HTTPException(status_code=404, detail="File not found for this comment")
+        db.delete(file_rec)
+        db.commit()
+        return None
 
     if os.path.isfile(file_rec.media_address):
         os.remove(file_rec.media_address)
