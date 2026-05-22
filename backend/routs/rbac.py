@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from passlib.hash import bcrypt
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from Models.user import User
@@ -119,12 +120,34 @@ def delete_permission(
     return {"message": "Permission deleted"}
 
 
+def _role_scope_query(db: Session, company_id: int):
+    return db.query(Role).filter(
+        or_(
+            Role.is_system.is_(True),
+            Role.company_id == company_id,
+        )
+    )
+
+
+def _get_visible_role_or_404(db: Session, role_id: int, company_id: int) -> Role:
+    role = _role_scope_query(db, company_id).filter(Role.id == role_id).first()
+
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found",
+        )
+
+    return role
+
+
 @router.get("/roles", response_model=list[RoleOut])
 def list_roles(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("roles:read")),
 ):
-    return db.query(Role).order_by(Role.id.asc()).all()
+    company_id = _require_company_id(current_user)
+    return _role_scope_query(db, company_id).order_by(Role.is_system.desc(), Role.id.asc()).all()
 
 
 @router.post("/roles", response_model=RoleOut, status_code=status.HTTP_201_CREATED)
@@ -133,7 +156,10 @@ def create_role(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("roles:create")),
 ):
-    existing = db.query(Role).filter(Role.name == data.name).first()
+    company_id = _require_company_id(current_user)
+    name = data.name.strip()
+
+    existing = _role_scope_query(db, company_id).filter(Role.name == name).first()
 
     if existing:
         raise HTTPException(
@@ -142,9 +168,11 @@ def create_role(
         )
 
     role = Role(
-        name=data.name,
+        company_id=company_id,
+        name=name,
         description=data.description,
         is_active=data.is_active,
+        is_system=False,
     )
 
     if data.permission_ids:
@@ -165,16 +193,17 @@ def update_role(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("roles:update")),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
+    company_id = _require_company_id(current_user)
+    role = _get_visible_role_or_404(db, role_id, company_id)
 
-    if not role:
+    if role.is_system:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System roles cannot be updated",
         )
 
     if data.name is not None:
-        existing = db.query(Role).filter(Role.name == data.name, Role.id != role_id).first()
+        existing = _role_scope_query(db, company_id).filter(Role.name == data.name, Role.id != role_id).first()
 
         if existing:
             raise HTTPException(
@@ -206,12 +235,13 @@ def delete_role(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("roles:delete")),
 ):
-    role = db.query(Role).filter(Role.id == role_id).first()
+    company_id = _require_company_id(current_user)
+    role = _get_visible_role_or_404(db, role_id, company_id)
 
-    if not role:
+    if role.is_system:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System roles cannot be deleted",
         )
 
     db.delete(role)
@@ -268,13 +298,17 @@ def _get_company_user_or_404(db: Session, user_id: int, company_id: int) -> User
     return user
 
 
-def _load_roles_or_400(db: Session, role_ids: list[int]) -> list[Role]:
+def _load_roles_or_400(db: Session, role_ids: list[int], company_id: int) -> list[Role]:
     if not role_ids:
-        role = db.query(Role).filter(Role.name == "user", Role.is_active.is_(True)).first()
+        role = db.query(Role).filter(
+            Role.name == "user",
+            Role.is_system.is_(True),
+            Role.is_active.is_(True),
+        ).first()
         return [role] if role else []
 
     unique_role_ids = sorted(set(role_ids))
-    roles = db.query(Role).filter(
+    roles = _role_scope_query(db, company_id).filter(
         Role.id.in_(unique_role_ids),
         Role.is_active.is_(True),
     ).all()
@@ -346,7 +380,7 @@ def create_company_user(
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
 
-    roles = _load_roles_or_400(db, payload.role_ids)
+    roles = _load_roles_or_400(db, payload.role_ids, company_id)
 
     user = User(
         company_id=company_id,
@@ -408,7 +442,7 @@ def update_company_user(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own roles")
 
         _ensure_not_last_active_admin(db, user)
-        roles = _load_roles_or_400(db, payload.role_ids)
+        roles = _load_roles_or_400(db, payload.role_ids, company_id)
         user.roles = roles
         user.role = _legacy_role_from_roles(roles)
 
@@ -433,7 +467,7 @@ def update_company_user_roles(
 
     _ensure_not_last_active_admin(db, user)
 
-    roles = _load_roles_or_400(db, payload.role_ids)
+    roles = _load_roles_or_400(db, payload.role_ids, company_id)
     user.roles = roles
     user.role = _legacy_role_from_roles(roles)
 

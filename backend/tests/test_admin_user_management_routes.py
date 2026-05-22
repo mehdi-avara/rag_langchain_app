@@ -77,8 +77,8 @@ class FakeDB:
             obj.created_at = datetime.utcnow()
 
 
-def make_role(role_id=1, name="user", active=True, permissions=None):
-    role = Role(id=role_id, name=name, is_active=active)
+def make_role(role_id=1, name="user", active=True, permissions=None, company_id=None, is_system=True):
+    role = Role(id=role_id, name=name, is_active=active, company_id=company_id, is_system=is_system)
     role.permissions = [
         Permission(id=i + 1, name=permission, resource="test", action="read")
         for i, permission in enumerate(permissions or [])

@@ -44,12 +44,16 @@ def get_or_create_role(
     if role:
         role.description = description
         role.is_active = True
+        role.is_system = True
+        role.company_id = None
         return role
 
     role = Role(
         name=name,
         description=description,
         is_active=True,
+        is_system=True,
+        company_id=None,
     )
 
     db.add(role)

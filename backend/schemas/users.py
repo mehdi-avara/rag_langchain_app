@@ -49,6 +49,8 @@ class RoleUpdate(BaseModel):
 
 class RoleOut(RoleBase):
     id: int
+    company_id: Optional[int] = None
+    is_system: bool = False
     permissions: List[PermissionOut] = Field(default_factory=list)
 
     class Config:
