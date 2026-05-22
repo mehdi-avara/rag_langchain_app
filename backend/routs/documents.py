@@ -620,10 +620,18 @@ async def stream_pdf(
 ):
     doc = _get_accessible_document(db, doc_id, current_user, "download")
 
-    if not doc.file_path:
-        raise HTTPException(status_code=404, detail="No file path found for this document")
+    if doc.file_path:
+        file_path = Path(settings.files_dir) / doc.file_path / "original.pdf"
+    else:
+        file_path = Path(settings.files_dir) / str(doc.id) / "original.pdf"
 
-    file_path = Path(settings.files_dir) / doc.file_path / "original.pdf"
+    if not file_path.exists() and doc.original_asset_id:
+        manager = StorageManager(db)
+        manager.download_asset_to_path(
+            asset_id=doc.original_asset_id,
+            user=current_user,
+            target_path=file_path,
+        )
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -645,11 +653,23 @@ async def stream_pdf(
                 yield data
 
     if range_header:
-        _, range_val = range_header.split("=")
-        start_str, end_str = range_val.split("-")
+        try:
+            unit, range_val = range_header.split("=", 1)
+            if unit.strip().lower() != "bytes":
+                raise ValueError
+            start_str, end_str = range_val.split("-", 1)
+            if not start_str:
+                raise ValueError
 
-        start = int(start_str)
-        end = int(end_str) if end_str else file_size - 1
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+
+            if start < 0 or end < start or start >= file_size:
+                raise ValueError
+
+            end = min(end, file_size - 1)
+        except ValueError:
+            raise HTTPException(status_code=416, detail="Invalid range header")
 
         return StreamingResponse(
             iter_file(start, end),
