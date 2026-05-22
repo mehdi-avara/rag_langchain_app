@@ -7,6 +7,7 @@ from passlib.hash import bcrypt
 from sqlalchemy.orm import Session
 
 from Models import User, Company, Role
+from core.exceptions.error_codes import AUTH_REQUIRED, INVALID_TOKEN, USER_NOT_FOUND
 from db.init_db import get_db
 from deps import require_permission
 from schemas.auth import (
@@ -25,11 +26,17 @@ router = APIRouter()
 settings = get_settings()
 
 
+def _token_iat() -> datetime:
+    return datetime.utcnow()
+
+
 def create_access_token(user: User) -> str:
-    expire = datetime.utcnow() + timedelta(hours=settings.jwt_exp_hours)
+    issued_at = _token_iat()
+    expire = issued_at + timedelta(hours=settings.jwt_exp_hours)
     payload = {
         "sub": str(user.id),
         "company_id": user.company_id,
+        "iat": int(issued_at.timestamp()),
         "exp": expire,
         "type": "access",
     }
@@ -37,14 +44,54 @@ def create_access_token(user: User) -> str:
 
 
 def create_refresh_token(user: User) -> str:
-    expire = datetime.utcnow() + timedelta(days=1)
+    issued_at = _token_iat()
+    expire = issued_at + timedelta(days=1)
     payload = {
         "sub": str(user.id),
         "company_id": user.company_id,
+        "iat": int(issued_at.timestamp()),
         "exp": expire,
         "type": "refresh",
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def _error_detail(code: str, message: str):
+    return {
+        "code": code,
+        "message": message,
+    }
+
+
+def _is_token_stale_for_user(token_data: dict, user: User) -> bool:
+    password_changed_at = getattr(user, "password_changed_at", None)
+    if password_changed_at is None:
+        return False
+
+    token_iat = token_data.get("iat")
+    if token_iat is None:
+        return True
+
+    try:
+        token_iat = int(token_iat)
+    except (TypeError, ValueError):
+        return True
+
+    return token_iat < int(password_changed_at.timestamp())
+
+
+def _ensure_user_can_authenticate(user: User, token_data: dict | None = None) -> None:
+    if getattr(user, "is_active", True) is False:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_error_detail(AUTH_REQUIRED, "User is inactive"),
+        )
+
+    if token_data is not None and _is_token_stale_for_user(token_data, user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_error_detail(INVALID_TOKEN, "Token is no longer valid"),
+        )
 
 
 def _slugify(value: str) -> str:
@@ -119,14 +166,16 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail=_error_detail(AUTH_REQUIRED, "Incorrect username or password"),
         )
 
     if not bcrypt.verify(payload.password, user.pw_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail=_error_detail(AUTH_REQUIRED, "Incorrect username or password"),
         )
+
+    _ensure_user_can_authenticate(user)
 
     return LoginResponse(
         access_token=create_access_token(user),
@@ -146,7 +195,7 @@ async def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db))
         if token_data.get("type") != "refresh":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token type",
+                detail=_error_detail(INVALID_TOKEN, "Invalid refresh token type"),
             )
 
         user_id = token_data.get("sub")
@@ -154,13 +203,13 @@ async def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db))
         if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token",
+                detail=_error_detail(INVALID_TOKEN, "Invalid refresh token"),
             )
 
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail=_error_detail(INVALID_TOKEN, "Invalid refresh token"),
         )
 
     user = db.query(User).filter(User.id == int(user_id)).first()
@@ -168,8 +217,10 @@ async def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db))
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail=_error_detail(USER_NOT_FOUND, "User not found"),
         )
+
+    _ensure_user_can_authenticate(user, token_data)
 
     return RefreshResponse(
         access_token=create_access_token(user),

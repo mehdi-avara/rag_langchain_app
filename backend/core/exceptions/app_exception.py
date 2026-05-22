@@ -33,6 +33,7 @@ DEFAULT_USER_MESSAGES = {
     "EMBEDDING_BAD_RESPONSE": "پاسخ سرویس پردازش برداری متن معتبر نبود.",
     "USER_HAS_NO_COMPANY": "کاربر به هیچ شرکت یا سازمانی متصل نیست.",
     "USER_NOT_FOUND": "کاربر پیدا نشد.",
+    "USER_INACTIVE": "حساب کاربری شما غیرفعال شده است.",
     "PROFILE_IMAGE_NOT_FOUND": "تصویر پروفایل پیدا نشد.",
     "COMMENT_NOT_FOUND": "یادداشت پیدا نشد.",
     "COMMENT_FILE_NOT_FOUND": "فایل یادداشت پیدا نشد.",

@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 import shutil
 
@@ -125,6 +126,7 @@ def change_password(
         )
 
     user.pw_hash = bcrypt.hash(payload.new_password)
+    user.password_changed_at = datetime.utcnow()
     db.commit()
 
     return ChangePasswordOut(success=True)

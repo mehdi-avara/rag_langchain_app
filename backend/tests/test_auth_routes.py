@@ -241,7 +241,8 @@ async def test_login_rejects_wrong_password():
         )
 
     assert exc.value.status_code == 401
-    assert exc.value.detail == "Incorrect username or password"
+    assert exc.value.detail["code"] == "AUTH_REQUIRED"
+    assert exc.value.detail["message"] == "Incorrect username or password"
 
 
 @pytest.mark.asyncio
@@ -255,7 +256,8 @@ async def test_login_rejects_unknown_user():
         )
 
     assert exc.value.status_code == 401
-    assert exc.value.detail == "Incorrect username or password"
+    assert exc.value.detail["code"] == "AUTH_REQUIRED"
+    assert exc.value.detail["message"] == "Incorrect username or password"
 
 
 @pytest.mark.asyncio
@@ -294,7 +296,7 @@ async def test_refresh_rejects_access_token():
         )
 
     assert exc.value.status_code == 401
-    assert exc.value.detail == "Invalid refresh token type"
+    assert exc.value.detail["code"] == "INVALID_TOKEN"
 
 
 @pytest.mark.asyncio
@@ -308,7 +310,7 @@ async def test_refresh_rejects_invalid_token():
         )
 
     assert exc.value.status_code == 401
-    assert exc.value.detail == "Invalid refresh token"
+    assert exc.value.detail["code"] == "INVALID_TOKEN"
 
 
 def test_require_permission_allows_user_with_permission():

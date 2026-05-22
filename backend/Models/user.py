@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from db.base import Base
@@ -16,7 +16,10 @@ class User(Base):
     Last_name = Column(String, nullable=True)
     pw_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    deactivated_at = Column(DateTime, nullable=True)
+    password_changed_at = Column(DateTime, nullable=True)
     notification_token = Column(String, nullable=True)
     image_path = Column(String, nullable=True)
     profile_asset_id = Column(Integer, ForeignKey("file_assets.id", ondelete="SET NULL"), nullable=True, index=True)

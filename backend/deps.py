@@ -5,6 +5,7 @@ from jose.exceptions import ExpiredSignatureError
 from sqlalchemy.orm import Session
 
 from Models import User
+from core.exceptions.error_codes import AUTH_REQUIRED, INVALID_TOKEN
 from db.init_db import get_db
 from settings import get_settings
 
@@ -51,6 +52,37 @@ def get_current_user(
 
     if user is None:
         raise credentials_exception
+
+    if getattr(user, "is_active", True) is False:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": AUTH_REQUIRED,
+                "message": "User is inactive",
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    password_changed_at = getattr(user, "password_changed_at", None)
+    token_iat = payload.get("iat")
+
+    if password_changed_at is not None:
+        stale = True
+        if token_iat is not None:
+            try:
+                stale = int(token_iat) < int(password_changed_at.timestamp())
+            except (TypeError, ValueError):
+                stale = True
+
+        if stale:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": INVALID_TOKEN,
+                    "message": "Token is no longer valid",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return user
 
