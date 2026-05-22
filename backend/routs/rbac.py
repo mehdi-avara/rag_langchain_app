@@ -23,7 +23,33 @@ from schemas.users import (
 )
 
 
+from core.exceptions.error_codes import (
+    COMPANY_REQUIRED,
+    INVALID_ROLE_IDS,
+    LAST_ADMIN_PROTECTED,
+    PERMISSION_ALREADY_EXISTS,
+    PERMISSION_NOT_FOUND,
+    ROLE_ALREADY_EXISTS,
+    ROLE_IN_USE,
+    ROLE_NOT_FOUND,
+    SELF_ACTION_FORBIDDEN,
+    SYSTEM_ROLE_PROTECTED,
+    USER_NOT_FOUND,
+    USERNAME_ALREADY_EXISTS,
+)
+
 router = APIRouter()
+
+
+def _error(status_code: int, code: str, message: str, details=None) -> None:
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "code": code,
+            "message": message,
+            "details": details,
+        },
+    )
 
 
 @router.get("/permissions", response_model=list[PermissionOut])
@@ -43,9 +69,10 @@ def create_permission(
     existing = db.query(Permission).filter(Permission.name == data.name).first()
 
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Permission already exists",
+        _error(
+            status.HTTP_400_BAD_REQUEST,
+            PERMISSION_ALREADY_EXISTS,
+            "Permission already exists",
         )
 
     permission = Permission(
@@ -72,9 +99,10 @@ def update_permission(
     permission = db.query(Permission).filter(Permission.id == permission_id).first()
 
     if not permission:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Permission not found",
+        _error(
+            status.HTTP_404_NOT_FOUND,
+            PERMISSION_NOT_FOUND,
+            "Permission not found",
         )
 
     existing = (
@@ -84,9 +112,10 @@ def update_permission(
     )
 
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Permission already exists",
+        _error(
+            status.HTTP_400_BAD_REQUEST,
+            PERMISSION_ALREADY_EXISTS,
+            "Permission already exists",
         )
 
     permission.name = data.name
@@ -109,9 +138,10 @@ def delete_permission(
     permission = db.query(Permission).filter(Permission.id == permission_id).first()
 
     if not permission:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Permission not found",
+        _error(
+            status.HTTP_404_NOT_FOUND,
+            PERMISSION_NOT_FOUND,
+            "Permission not found",
         )
 
     db.delete(permission)
@@ -133,10 +163,7 @@ def _get_visible_role_or_404(db: Session, role_id: int, company_id: int) -> Role
     role = _role_scope_query(db, company_id).filter(Role.id == role_id).first()
 
     if not role:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
-        )
+        _error(status.HTTP_404_NOT_FOUND, ROLE_NOT_FOUND, "Role not found")
 
     return role
 
@@ -153,9 +180,10 @@ def _ensure_role_has_no_active_users(role: Role) -> None:
     active_users = _active_users_with_role(role)
 
     if active_users:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot modify a role assigned to active users",
+        _error(
+            status.HTTP_409_CONFLICT,
+            ROLE_IN_USE,
+            "Cannot modify a role assigned to active users",
         )
 
 
@@ -180,10 +208,7 @@ def create_role(
     existing = _role_scope_query(db, company_id).filter(Role.name == name).first()
 
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role already exists",
-        )
+        _error(status.HTTP_400_BAD_REQUEST, ROLE_ALREADY_EXISTS, "Role already exists")
 
     role = Role(
         company_id=company_id,
@@ -224,10 +249,7 @@ def update_role(
         existing = _role_scope_query(db, company_id).filter(Role.name == data.name, Role.id != role_id).first()
 
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Role already exists",
-            )
+            _error(status.HTTP_400_BAD_REQUEST, ROLE_ALREADY_EXISTS, "Role already exists")
 
         role.name = data.name
 
@@ -273,7 +295,7 @@ def delete_role(
 
 def _require_company_id(current_user: User) -> int:
     if current_user.company_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no company")
+        _error(status.HTTP_403_FORBIDDEN, COMPANY_REQUIRED, "User has no company")
     return current_user.company_id
 
 
@@ -315,7 +337,7 @@ def _get_company_user_or_404(db: Session, user_id: int, company_id: int) -> User
     ).first()
 
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        _error(status.HTTP_404_NOT_FOUND, USER_NOT_FOUND, "User not found")
 
     return user
 
@@ -336,7 +358,7 @@ def _load_roles_or_400(db: Session, role_ids: list[int], company_id: int) -> lis
     ).all()
 
     if len(roles) != len(unique_role_ids):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role_ids")
+        _error(status.HTTP_400_BAD_REQUEST, INVALID_ROLE_IDS, "Invalid role_ids")
 
     return roles
 
@@ -368,9 +390,10 @@ def _ensure_not_last_active_admin(db: Session, user: User) -> None:
         return
 
     if _active_admin_count(db, user.company_id) <= 1:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot modify the last active admin of the company",
+        _error(
+            status.HTTP_409_CONFLICT,
+            LAST_ADMIN_PROTECTED,
+            "Cannot modify the last active admin of the company",
         )
 
 
@@ -400,7 +423,7 @@ def create_company_user(
 
     existing = db.query(User).filter(User.username == username).first()
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
+        _error(status.HTTP_409_CONFLICT, USERNAME_ALREADY_EXISTS, "Username already exists")
 
     roles = _load_roles_or_400(db, payload.role_ids, company_id)
 
@@ -447,7 +470,7 @@ def update_company_user(
         username = payload.username.strip().lower()
         existing = db.query(User).filter(User.username == username, User.id != user.id).first()
         if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
+            _error(status.HTTP_409_CONFLICT, USERNAME_ALREADY_EXISTS, "Username already exists")
         user.username = username
 
     if payload.First_name is not None:
@@ -461,7 +484,11 @@ def update_company_user(
 
     if payload.role_ids is not None:
         if user.id == current_user.id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own roles")
+            _error(
+                status.HTTP_400_BAD_REQUEST,
+                SELF_ACTION_FORBIDDEN,
+                "Cannot change your own roles",
+            )
 
         _ensure_not_last_active_admin(db, user)
         roles = _load_roles_or_400(db, payload.role_ids, company_id)
@@ -485,7 +512,11 @@ def update_company_user_roles(
     user = _get_company_user_or_404(db, user_id, company_id)
 
     if user.id == current_user.id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own roles")
+        _error(
+            status.HTTP_400_BAD_REQUEST,
+            SELF_ACTION_FORBIDDEN,
+            "Cannot change your own roles",
+        )
 
     _ensure_not_last_active_admin(db, user)
 
@@ -527,7 +558,11 @@ def deactivate_company_user(
     user = _get_company_user_or_404(db, user_id, company_id)
 
     if user.id == current_user.id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
+        _error(
+            status.HTTP_400_BAD_REQUEST,
+            SELF_ACTION_FORBIDDEN,
+            "Cannot deactivate your own account",
+        )
 
     _ensure_not_last_active_admin(db, user)
 

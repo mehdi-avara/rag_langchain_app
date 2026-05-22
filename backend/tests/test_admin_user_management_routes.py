@@ -140,7 +140,8 @@ def test_deactivate_self_is_rejected():
         rbac.deactivate_company_user(user_id=5, db=db, current_user=user)
 
     assert exc.value.status_code == 400
-    assert exc.value.detail == "Cannot deactivate your own account"
+    assert exc.value.detail["code"] == "SELF_ACTION_FORBIDDEN"
+    assert exc.value.detail["message"] == "Cannot deactivate your own account"
 
 
 def test_deactivate_last_active_admin_is_rejected():
@@ -152,7 +153,8 @@ def test_deactivate_last_active_admin_is_rejected():
         rbac.deactivate_company_user(user_id=2, db=db, current_user=current_user)
 
     assert exc.value.status_code == 409
-    assert exc.value.detail == "Cannot modify the last active admin of the company"
+    assert exc.value.detail["code"] == "LAST_ADMIN_PROTECTED"
+    assert exc.value.detail["message"] == "Cannot modify the last active admin of the company"
 
 
 def test_reset_password_updates_password_changed_at():
@@ -186,7 +188,8 @@ def test_change_own_roles_is_rejected():
         )
 
     assert exc.value.status_code == 400
-    assert exc.value.detail == "Cannot change your own roles"
+    assert exc.value.detail["code"] == "SELF_ACTION_FORBIDDEN"
+    assert exc.value.detail["message"] == "Cannot change your own roles"
 
 
 def test_delete_role_assigned_to_active_user_is_rejected():
@@ -201,7 +204,8 @@ def test_delete_role_assigned_to_active_user_is_rejected():
         rbac.delete_role(role_id=9, db=db, current_user=current_user)
 
     assert exc.value.status_code == 409
-    assert exc.value.detail == "Cannot modify a role assigned to active users"
+    assert exc.value.detail["code"] == "ROLE_IN_USE"
+    assert exc.value.detail["message"] == "Cannot modify a role assigned to active users"
 
 
 def test_delete_role_assigned_only_to_inactive_user_is_allowed():
@@ -242,7 +246,8 @@ def test_inactivate_role_assigned_to_active_user_is_rejected():
         )
 
     assert exc.value.status_code == 409
-    assert exc.value.detail == "Cannot modify a role assigned to active users"
+    assert exc.value.detail["code"] == "ROLE_IN_USE"
+    assert exc.value.detail["message"] == "Cannot modify a role assigned to active users"
 
 
 def test_inactivate_role_assigned_only_to_inactive_user_is_allowed():
@@ -263,3 +268,38 @@ def test_inactivate_role_assigned_only_to_inactive_user_is_allowed():
     assert result.is_active is False
     assert custom_role.is_active is False
     assert db.committed is True
+
+
+def test_get_missing_role_returns_standard_error():
+    current_user = make_user(user_id=1, company_id=1, role_name="admin")
+    db = FakeDB(roles=[], first_role=None)
+
+    with pytest.raises(HTTPException) as exc:
+        rbac.update_role(
+            role_id=404,
+            data=rbac.RoleUpdate(description="x"),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail["code"] == "ROLE_NOT_FOUND"
+    assert exc.value.detail["message"] == "Role not found"
+
+
+def test_invalid_role_ids_returns_standard_error():
+    current_user = make_user(user_id=1, company_id=1, role_name="admin")
+    target = make_user(user_id=2, company_id=1, role_name="user")
+    db = FakeDB(users=[target], roles=[], first_user=target)
+
+    with pytest.raises(HTTPException) as exc:
+        rbac.update_company_user_roles(
+            user_id=2,
+            payload=AdminUserRolesUpdate(role_ids=[999]),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "INVALID_ROLE_IDS"
+    assert exc.value.detail["message"] == "Invalid role_ids"
