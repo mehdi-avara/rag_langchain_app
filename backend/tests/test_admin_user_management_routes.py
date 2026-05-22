@@ -351,3 +351,44 @@ def test_current_user_access_ignores_inactive_roles_permissions():
     assert result.roles == ["operator"]
     assert result.permissions == ["documents:read"]
     assert result.is_admin is False
+
+
+def test_list_company_users_returns_lightweight_roles():
+    admin_role = make_role(
+        role_id=1,
+        name="admin",
+        permissions=["users:read", "users:create"],
+    )
+    user = make_user(user_id=1, company_id=1, username="admin@example.com", role_name="admin")
+    user.roles = [admin_role]
+
+    db = FakeDB(users=[user])
+    current_user = make_user(user_id=2, company_id=1, role_name="admin")
+
+    result = rbac.list_company_users(db=db, current_user=current_user)
+
+    assert len(result) == 1
+    assert result[0].id == 1
+    assert result[0].roles == ["admin"]
+    assert result[0].permissions == ["users:create", "users:read"]
+    assert all(not hasattr(role, "permissions") for role in result[0].roles)
+
+
+def test_get_company_user_still_returns_full_role_objects():
+    admin_role = make_role(
+        role_id=1,
+        name="admin",
+        permissions=["users:read", "users:create"],
+    )
+    user = make_user(user_id=1, company_id=1, username="admin@example.com", role_name="admin")
+    user.roles = [admin_role]
+
+    db = FakeDB(users=[user], first_user=user)
+    current_user = make_user(user_id=2, company_id=1, role_name="admin")
+
+    result = rbac.get_company_user(user_id=1, db=db, current_user=current_user)
+
+    assert result.id == 1
+    assert result.roles[0].name == "admin"
+    assert len(result.roles[0].permissions) == 2
+    assert result.permissions == ["users:create", "users:read"]

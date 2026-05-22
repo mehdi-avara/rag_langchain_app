@@ -150,6 +150,27 @@ class AdminUserPasswordReset(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
+class AdminUserListOut(BaseModel):
+    id: int
+    company_id: int
+    username: str
+    First_name: str
+    Last_name: Optional[str] = None
+    role: str
+    is_active: bool
+    created_at: datetime
+    deactivated_at: Optional[datetime] = None
+    password_changed_at: Optional[datetime] = None
+    notification_token: Optional[str] = None
+    image_path: Optional[str] = None
+    profile_asset_id: Optional[int] = None
+    roles: List[str] = Field(default_factory=list)
+    permissions: List[str] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
 class AdminUserOut(BaseModel):
     id: int
     company_id: int

@@ -11,6 +11,7 @@ from db.init_db import get_db
 from deps import get_current_user, require_permission
 from schemas.users import (
     AdminUserCreate,
+    AdminUserListOut,
     AdminUserOut,
     AdminUserPasswordReset,
     AdminUserRolesUpdate,
@@ -300,6 +301,20 @@ def _require_company_id(current_user: User) -> int:
     return current_user.company_id
 
 
+def _user_role_names(user: User) -> list[str]:
+    names = {
+        role.name
+        for role in getattr(user, "roles", []) or []
+        if getattr(role, "is_active", True) is not False
+    }
+
+    legacy_role = getattr(user, "role", None)
+    if legacy_role:
+        names.add(legacy_role)
+
+    return sorted(names)
+
+
 def _user_permission_names(user: User) -> list[str]:
     return sorted(
         {
@@ -327,6 +342,26 @@ def _admin_user_out(user: User) -> AdminUserOut:
         image_path=user.image_path,
         profile_asset_id=user.profile_asset_id,
         roles=user.roles,
+        permissions=_user_permission_names(user),
+    )
+
+
+def _admin_user_list_out(user: User) -> AdminUserListOut:
+    return AdminUserListOut(
+        id=user.id,
+        company_id=user.company_id,
+        username=user.username,
+        First_name=user.First_name,
+        Last_name=user.Last_name,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        deactivated_at=user.deactivated_at,
+        password_changed_at=user.password_changed_at,
+        notification_token=user.notification_token,
+        image_path=user.image_path,
+        profile_asset_id=user.profile_asset_id,
+        roles=_user_role_names(user),
         permissions=_user_permission_names(user),
     )
 
@@ -398,7 +433,7 @@ def _ensure_not_last_active_admin(db: Session, user: User) -> None:
         )
 
 
-@router.get("/users", response_model=list[AdminUserOut])
+@router.get("/users", response_model=list[AdminUserListOut])
 def list_company_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("users:read")),
@@ -410,7 +445,7 @@ def list_company_users(
         .order_by(User.id.asc())
         .all()
     )
-    return [_admin_user_out(user) for user in users]
+    return [_admin_user_list_out(user) for user in users]
 
 
 @router.post("/users", response_model=AdminUserOut, status_code=status.HTTP_201_CREATED)
@@ -615,7 +650,7 @@ def _current_user_role_names(user: User) -> list[str]:
 def get_current_user_access(
     current_user: User = Depends(get_current_user),
 ):
-    roles = _current_user_role_names(current_user)
+    roles = _user_role_names(current_user)
     permissions = _user_permission_names(current_user)
 
     return CurrentUserAccessOut(
