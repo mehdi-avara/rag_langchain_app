@@ -9,7 +9,14 @@ from Models import User, Document
 
 from ..models import TagDocumentLink
 from ..schemas import TagDocumentOut, TagDocLinkCreate, TagDocLinkOut
-from routs.documents import upload_pdf_mineru, _get_accessible_document, _get_accessible_document_ids
+from schemas.asset import AssetCompleteUploadIn, AssetUploadUrlCreate, AssetUploadUrlOut
+from routs.documents import (
+    upload_pdf_mineru,
+    create_document_upload_url,
+    complete_document_upload,
+    _get_accessible_document,
+    _get_accessible_document_ids,
+)
 from ..services import get_tag_or_404
 
 
@@ -55,6 +62,56 @@ def link_document(
     db.commit()
     db.refresh(link)
     return link
+
+
+@router.post("/{tag_id}/documents/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
+def create_tag_document_upload_url(
+    tag_id: int,
+    payload: AssetUploadUrlCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("tags:documents")),
+):
+    _ = get_tag_or_404(db, tag_id, current_user)
+
+    return create_document_upload_url(
+        payload=payload,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{tag_id}/documents/complete-upload/{asset_id}", response_model=TagDocLinkOut, status_code=status.HTTP_201_CREATED)
+def complete_tag_document_upload_and_link(
+    tag_id: int,
+    asset_id: int,
+    payload: AssetCompleteUploadIn,
+    link_description: Optional[str] = Query(None),
+    start_page: Optional[int] = Query(None, ge=1),
+    end_page: Optional[int] = Query(None, ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("tags:documents")),
+):
+    _ = get_tag_or_404(db, tag_id, current_user)
+
+    upload_result = complete_document_upload(
+        asset_id=asset_id,
+        payload=payload,
+        db=db,
+        current_user=current_user,
+    )
+
+    doc_id = upload_result.get("doc_id") if isinstance(upload_result, dict) else getattr(upload_result, "doc_id", None)
+
+    if doc_id is None:
+        raise HTTPException(status_code=500, detail="Document upload did not return doc_id")
+
+    payload = TagDocLinkCreate(
+        document_id=doc_id,
+        start_page=start_page,
+        end_page=end_page,
+        note=link_description,
+    )
+    return link_document(tag_id=tag_id, payload=payload, db=db, current_user=current_user)
 
 
 @router.post("/{tag_id}/documents/upload", response_model=TagDocLinkOut, status_code=status.HTTP_201_CREATED)
