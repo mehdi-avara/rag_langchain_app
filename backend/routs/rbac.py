@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session
 from Models.user import User
 from Models.rbac import Role, Permission
 from db.init_db import get_db
-from deps import require_permission
+from deps import get_current_user, require_permission
 from schemas.users import (
     AdminUserCreate,
     AdminUserOut,
     AdminUserPasswordReset,
     AdminUserRolesUpdate,
     AdminUserUpdate,
+    CurrentUserAccessOut,
     PermissionCreate,
     PermissionOut,
     RoleCreate,
@@ -460,6 +461,7 @@ def get_company_user(
 def update_company_user(
     user_id: int,
     payload: AdminUserUpdate,
+    CurrentUserAccessOut,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("users:update")),
 ):
@@ -592,3 +594,36 @@ def reset_company_user_password(
     db.refresh(user)
 
     return _admin_user_out(user)
+
+
+
+def _current_user_role_names(user: User) -> list[str]:
+    names = {
+        role.name
+        for role in getattr(user, "roles", []) or []
+        if getattr(role, "is_active", True) is not False
+    }
+
+    legacy_role = getattr(user, "role", None)
+    if legacy_role:
+        names.add(legacy_role)
+
+    return sorted(names)
+
+
+@router.get("/me/access", response_model=CurrentUserAccessOut)
+def get_current_user_access(
+    current_user: User = Depends(get_current_user),
+):
+    roles = _current_user_role_names(current_user)
+    permissions = _user_permission_names(current_user)
+
+    return CurrentUserAccessOut(
+        user_id=current_user.id,
+        company_id=current_user.company_id,
+        username=current_user.username,
+        roles=roles,
+        permissions=permissions,
+        is_admin="admin" in roles,
+        is_active=getattr(current_user, "is_active", True) is not False,
+    )

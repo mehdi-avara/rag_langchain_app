@@ -173,3 +173,14 @@ class AdminUserOut(BaseModel):
 
 class AdminUserRolesUpdate(BaseModel):
     role_ids: List[int] = Field(default_factory=list)
+
+
+
+class CurrentUserAccessOut(BaseModel):
+    user_id: int
+    company_id: Optional[int] = None
+    username: str
+    roles: List[str] = Field(default_factory=list)
+    permissions: List[str] = Field(default_factory=list)
+    is_admin: bool = False
+    is_active: bool = True

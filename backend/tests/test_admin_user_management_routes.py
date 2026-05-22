@@ -303,3 +303,51 @@ def test_invalid_role_ids_returns_standard_error():
     assert exc.value.status_code == 400
     assert exc.value.detail["code"] == "INVALID_ROLE_IDS"
     assert exc.value.detail["message"] == "Invalid role_ids"
+
+
+def test_current_user_access_returns_roles_permissions_and_admin_flag():
+    role = make_role(
+        role_id=1,
+        name="admin",
+        permissions=["users:read", "users:create"],
+    )
+    user = make_user(user_id=10, company_id=3, username="admin@example.com", role_name="admin")
+    user.roles = [role]
+
+    result = rbac.get_current_user_access(current_user=user)
+
+    assert result.user_id == 10
+    assert result.company_id == 3
+    assert result.username == "admin@example.com"
+    assert result.roles == ["admin"]
+    assert result.permissions == ["users:create", "users:read"]
+    assert result.is_admin is True
+    assert result.is_active is True
+
+
+def test_current_user_access_ignores_inactive_roles_permissions():
+    active_role = make_role(
+        role_id=1,
+        name="operator",
+        permissions=["documents:read"],
+        is_system=False,
+        company_id=1,
+    )
+    inactive_role = make_role(
+        role_id=2,
+        name="inactive-role",
+        active=False,
+        permissions=["users:delete"],
+        is_system=False,
+        company_id=1,
+    )
+
+    user = make_user(user_id=11, company_id=1, username="operator@example.com", role_name="user")
+    user.role = None
+    user.roles = [active_role, inactive_role]
+
+    result = rbac.get_current_user_access(current_user=user)
+
+    assert result.roles == ["operator"]
+    assert result.permissions == ["documents:read"]
+    assert result.is_admin is False
