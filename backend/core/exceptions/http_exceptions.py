@@ -1,17 +1,22 @@
-from fastapi import HTTPException
+from core.exceptions.app_exception import AppException
 from core.exceptions.error_codes import (
-    NOT_FOUND_STATUS_CODE,
     CHAT_NOT_FOUND,
+    DOCUMENT_NOT_FOUND,
+    NOT_FOUND_STATUS_CODE,
 )
 
-def chat_not_found_exception() -> HTTPException:
-    return HTTPException(
+
+def chat_not_found_exception() -> AppException:
+    return AppException(
         status_code=NOT_FOUND_STATUS_CODE,
-        detail=CHAT_NOT_FOUND,
+        code=CHAT_NOT_FOUND,
+        message="Chat not found",
     )
 
-def document_not_found_exception():
-    return HTTPException(
+
+def document_not_found_exception() -> AppException:
+    return AppException(
         status_code=NOT_FOUND_STATUS_CODE,
-        detail=DOCUMENT_NOT_FOUND,
+        code=DOCUMENT_NOT_FOUND,
+        message="Document not found",
     )

@@ -23,12 +23,15 @@ from buying_management.routes import buying_router
 from db.session import SessionLocal
 from components.embedding_service import get_or_create_embedding_config, regenerate_missing_embeddings
 from financial_management.services import safe_embed_text
+from core.exceptions import register_exception_handlers
 
 settings = get_settings()
 
 app = FastAPI(title="Porsa Search system",
     docs_url=None,
     redoc_url=None,)
+
+register_exception_handlers(app)
 
 app.mount(
     "/static",
