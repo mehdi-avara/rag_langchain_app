@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from fastapi import Depends, APIRouter, UploadFile, status, Response, HTTPException, Query, Request, Header, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
@@ -281,6 +281,7 @@ def complete_document_upload(
 @router.get("/download-url/{doc_id}", response_model=AssetDownloadUrlOut)
 async def create_document_download_url(
     doc_id: int,
+    disposition: Annotated[str, Query(pattern="^(attachment|inline)$")] = "attachment",
     current_user: User = Depends(require_permission("documents:download")),
     db: Session = Depends(get_db),
 ):
@@ -293,7 +294,7 @@ async def create_document_download_url(
     download_url = manager.create_download_url(
         asset_id=doc.original_asset_id,
         user=current_user,
-        disposition="attachment",
+        disposition=disposition,
     )
 
     return {
