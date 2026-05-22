@@ -11,7 +11,8 @@ from Models import Chunk, Comment
 from retrieval.vector.postgres_store import PostgresVectorStore
 from settings import get_settings
 from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
-from components.llm import llm_client
+from components.llm import llm_client, raise_llm_exception
+from core.exceptions import AppException
 
 
 from langchain_core.runnables import Runnable
@@ -103,15 +104,7 @@ Answer:"""
     
     prompt = ChatPromptTemplate.from_template(template)
     
-    # Use centralized LLM client
-    # Initialize LLM
-    llm = ChatOpenAI(
-        base_url=settings.openai_base_url,
-        model=settings.openai_model,
-        temperature=0.1,
-        openai_api_key=settings.openai_api_key
-    )    
-    # Generate answer
+    llm = llm_client.langchain_llm
     chain = prompt | llm
     
     context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
@@ -121,10 +114,15 @@ Answer:"""
     # print(context)
     # print("Question:")
     # print(question)
-    result = await chain.ainvoke({
-        "context": context,
-        "question": question
-    })
+    try:
+        result = await chain.ainvoke({
+            "context": context,
+            "question": question
+        })
+    except AppException:
+        raise
+    except Exception as exc:
+        raise_llm_exception(exc, "chat_generate_answer")
     
     # Extract citations
     citations = []

@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Tuple
 
-from components.llm import llm_client
+from components.llm import llm_client, raise_llm_exception
+from core.exceptions import AppException
 from settings import get_settings
 
 
@@ -89,12 +90,17 @@ def _ask_messages(question: str, references: Any) -> List[Dict[str, str]]:
 
 
 async def generate_answer_from_references(question: str, references: Any) -> str:
-    response = await llm_client.async_openai_client.chat.completions.create(
-        model=settings.openai_model,
-        temperature=settings.llm_temperature,
-        messages=_ask_messages(question, references),
-    )
-    return (response.choices[0].message.content or "").strip()
+    try:
+        response = await llm_client.async_openai_client.chat.completions.create(
+            model=settings.openai_model,
+            temperature=settings.llm_temperature,
+            messages=_ask_messages(question, references),
+        )
+        return (response.choices[0].message.content or "").strip()
+    except AppException:
+        raise
+    except Exception as exc:
+        raise_llm_exception(exc, "generate_answer_from_references")
 
 
 def _extract_delta_text(delta_content: Any) -> str:
@@ -110,23 +116,28 @@ def _extract_delta_text(delta_content: Any) -> str:
 
 
 async def stream_answer_from_references(question: str, references: Any):
-    stream = await llm_client.async_openai_client.chat.completions.create(
-        model=settings.openai_model,
-        temperature=settings.llm_temperature,
-        messages=_ask_messages(question, references),
-        stream=True,
-    )
+    try:
+        stream = await llm_client.async_openai_client.chat.completions.create(
+            model=settings.openai_model,
+            temperature=settings.llm_temperature,
+            messages=_ask_messages(question, references),
+            stream=True,
+        )
 
-    async for chunk in stream:
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            continue
-        delta = getattr(choices[0], "delta", None)
-        if delta is None:
-            continue
-        text = _extract_delta_text(getattr(delta, "content", None))
-        if text:
-            yield text
+        async for chunk in stream:
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            if delta is None:
+                continue
+            text = _extract_delta_text(getattr(delta, "content", None))
+            if text:
+                yield text
+    except AppException:
+        raise
+    except Exception as exc:
+        raise_llm_exception(exc, "stream_answer_from_references")
 
 
 def parse_semantic_citations(answer: str) -> Tuple[List[int], List[int], List[int]]:
