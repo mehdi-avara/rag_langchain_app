@@ -141,6 +141,24 @@ def _get_visible_role_or_404(db: Session, role_id: int, company_id: int) -> Role
     return role
 
 
+def _active_users_with_role(role: Role) -> list[User]:
+    return [
+        user
+        for user in getattr(role, "users", []) or []
+        if getattr(user, "is_active", True) is not False
+    ]
+
+
+def _ensure_role_has_no_active_users(role: Role) -> None:
+    active_users = _active_users_with_role(role)
+
+    if active_users:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot modify a role assigned to active users",
+        )
+
+
 @router.get("/roles", response_model=list[RoleOut])
 def list_roles(
     db: Session = Depends(get_db),
@@ -217,6 +235,8 @@ def update_role(
         role.description = data.description
 
     if data.is_active is not None:
+        if data.is_active is False:
+            _ensure_role_has_no_active_users(role)
         role.is_active = data.is_active
 
     if data.permission_ids is not None:
@@ -243,6 +263,8 @@ def delete_role(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System roles cannot be deleted",
         )
+
+    _ensure_role_has_no_active_users(role)
 
     db.delete(role)
     db.commit()

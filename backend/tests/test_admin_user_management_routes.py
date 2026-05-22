@@ -66,6 +66,12 @@ class FakeDB:
         if isinstance(obj, User):
             self.users.append(obj)
 
+    def delete(self, obj):
+        if obj in self.roles:
+            self.roles.remove(obj)
+        if obj in self.users:
+            self.users.remove(obj)
+
     def commit(self):
         self.committed = True
 
@@ -181,3 +187,79 @@ def test_change_own_roles_is_rejected():
 
     assert exc.value.status_code == 400
     assert exc.value.detail == "Cannot change your own roles"
+
+
+def test_delete_role_assigned_to_active_user_is_rejected():
+    current_user = make_user(user_id=1, company_id=1, role_name="admin")
+    custom_role = make_role(role_id=9, name="operator", company_id=1, is_system=False)
+    assigned_user = make_user(user_id=8, company_id=1, role_name="user", active=True)
+    custom_role.users = [assigned_user]
+
+    db = FakeDB(roles=[custom_role], first_user=None, first_role=custom_role)
+
+    with pytest.raises(HTTPException) as exc:
+        rbac.delete_role(role_id=9, db=db, current_user=current_user)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Cannot modify a role assigned to active users"
+
+
+def test_delete_role_assigned_only_to_inactive_user_is_allowed():
+    current_user = make_user(user_id=1, company_id=1, role_name="admin")
+    custom_role = make_role(role_id=9, name="operator", company_id=1, is_system=False)
+    assigned_user = make_user(user_id=8, company_id=1, role_name="user", active=False)
+    custom_role.users = [assigned_user]
+
+    db = FakeDB(roles=[custom_role], first_user=None, first_role=custom_role)
+    deleted = []
+
+    def delete(obj):
+        deleted.append(obj)
+
+    db.delete = delete
+
+    result = rbac.delete_role(role_id=9, db=db, current_user=current_user)
+
+    assert result == {"message": "Role deleted"}
+    assert deleted == [custom_role]
+    assert db.committed is True
+
+
+def test_inactivate_role_assigned_to_active_user_is_rejected():
+    current_user = make_user(user_id=1, company_id=1, role_name="admin")
+    custom_role = make_role(role_id=9, name="operator", company_id=1, is_system=False)
+    assigned_user = make_user(user_id=8, company_id=1, role_name="user", active=True)
+    custom_role.users = [assigned_user]
+
+    db = FakeDB(roles=[custom_role], first_role=custom_role)
+
+    with pytest.raises(HTTPException) as exc:
+        rbac.update_role(
+            role_id=9,
+            data=rbac.RoleUpdate(is_active=False),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Cannot modify a role assigned to active users"
+
+
+def test_inactivate_role_assigned_only_to_inactive_user_is_allowed():
+    current_user = make_user(user_id=1, company_id=1, role_name="admin")
+    custom_role = make_role(role_id=9, name="operator", company_id=1, is_system=False)
+    assigned_user = make_user(user_id=8, company_id=1, role_name="user", active=False)
+    custom_role.users = [assigned_user]
+
+    db = FakeDB(roles=[custom_role], first_role=custom_role)
+
+    result = rbac.update_role(
+        role_id=9,
+        data=rbac.RoleUpdate(is_active=False),
+        db=db,
+        current_user=current_user,
+    )
+
+    assert result.is_active is False
+    assert custom_role.is_active is False
+    assert db.committed is True
