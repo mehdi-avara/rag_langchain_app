@@ -98,6 +98,7 @@ def build_retrieved_data(
     chunks: list,
     comments: list,
     receipts: list,
+    receipt_notes: list,
 ) -> tuple[list[Retrieved_data], list[int]]:
     retrieved_data: list[Retrieved_data] = []
     citations: list[int] = []
@@ -167,6 +168,33 @@ def build_retrieved_data(
             )
         )
 
+    for note in receipt_notes:
+        source_type = note.get("source_type") or "receipt_note"
+        receipt_id = note.get("receipt_id")
+        retrieved_data.append(
+            Retrieved_data(
+                content=note.get("note") or "",
+                source_type=source_type,
+                doc_id=None,
+                doc_name="",
+                title=f"Receipt Note #{receipt_id}",
+                chunk_id=None,
+                chunk_page=None,
+                comment_id=note.get("comment_id"),
+                comment_type=None,
+                receipt_id=receipt_id,
+                receipt_amount=str(note.get("amount")) if note.get("amount") is not None else None,
+                receipt_direction=str(note.get("direction")) if note.get("direction") is not None else None,
+                receipt_counterparty_name=note.get("counterparty_name"),
+                receipt_date=str(note.get("receipt_date")) if note.get("receipt_date") is not None else None,
+                receipt_tracking_number=note.get("tracking_number"),
+                receipt_card_title=None,
+                receipt_note=note.get("note"),
+                model_id=note.get("model_id"),
+                tag_id=note.get("tag_id"),
+            )
+        )
+
     return retrieved_data, citations
 
 
@@ -226,6 +254,7 @@ async def chat(
         chunks=result.get("chunks", []),
         comments=result.get("comments", []),
         receipts=result.get("receipts", []),
+        receipt_notes=result.get("receipt_notes", []),
     )
 
     answer = result.get("answer") or ""

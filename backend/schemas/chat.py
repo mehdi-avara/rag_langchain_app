@@ -31,6 +31,9 @@ class Retrieved_data(BaseModel):
     receipt_date: str | None = None
     receipt_tracking_number: str | None = None
     receipt_card_title: str | None = None
+    receipt_note: str | None = None
+    model_id: int | None = None
+    tag_id: int | None = None
 
 
 class ChatResponse(BaseModel):
