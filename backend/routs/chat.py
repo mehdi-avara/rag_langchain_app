@@ -119,6 +119,7 @@ def build_retrieved_data(
             Retrieved_data(
                 content=chunk.content,
                 source_type="document_chunk",
+                citation_key=f"chunk:{chunk.id}",
                 doc_id=chunk.doc_id,
                 doc_name=doc_name_map.get(chunk.doc_id, ""),
                 title=doc_name_map.get(chunk.doc_id, ""),
@@ -135,6 +136,7 @@ def build_retrieved_data(
             Retrieved_data(
                 content=comment.content,
                 source_type="comment",
+                citation_key=f"comment:{comment.id}",
                 doc_id=None,
                 doc_name="",
                 title=comment.title,
@@ -151,6 +153,7 @@ def build_retrieved_data(
             Retrieved_data(
                 content=receipt.get("description") or "",
                 source_type="financial_receipt",
+                citation_key=f"receipt:{receipt_id}",
                 doc_id=None,
                 doc_name="",
                 title=f"Receipt #{receipt_id}",
@@ -171,10 +174,20 @@ def build_retrieved_data(
     for note in receipt_notes:
         source_type = note.get("source_type") or "receipt_note"
         receipt_id = note.get("receipt_id")
+        if source_type == "model_receipt_note":
+            citation_key = f"model-receipt-note:{note.get('model_id')}:{receipt_id}"
+        elif source_type == "tag_receipt_note":
+            citation_key = f"tag-receipt-note:{note.get('tag_id')}:{receipt_id}"
+        elif source_type == "financial_receipt_comment_note":
+            citation_key = f"receipt-comment-note:{receipt_id}:{note.get('comment_id')}"
+        else:
+            citation_key = f"receipt-note:{receipt_id}"
+
         retrieved_data.append(
             Retrieved_data(
                 content=note.get("note") or "",
                 source_type=source_type,
+                citation_key=citation_key,
                 doc_id=None,
                 doc_name="",
                 title=f"Receipt Note #{receipt_id}",
@@ -243,6 +256,7 @@ async def chat(
         doc_ids=safe_doc_ids,
         comment_ids=safe_comment_ids,
         company_id=current_user.company_id,
+        user_id=current_user.id,
         receipt_ids=request.receipt_ids,
         scope="both",
     )

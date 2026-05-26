@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
 class Retrieved_data(BaseModel):
     content: str
     source_type: Optional[str] = None
+    citation_key: str | None = None
     doc_id: int | None = None
     doc_name: str = ""
     title: str = ""
