@@ -1,45 +1,66 @@
+from typing import Any, Dict, List, TypedDict
 
-from typing import Dict, List, TypedDict, Tuple
-from fastapi import HTTPException
-from langgraph.graph import Graph, StateGraph
 from langchain.prompts import ChatPromptTemplate
+from langgraph.graph import Graph, StateGraph
 from sqlalchemy.orm import Session
-from langchain.chat_models import ChatOpenAI
-
 
 from Models import Chunk, Comment
-from retrieval.vector.postgres_store import PostgresVectorStore
-from settings import get_settings
-from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
 from components.llm import llm_client, raise_llm_exception
 from core.exceptions import AppException
-
-
-from langchain_core.runnables import Runnable
-from typing import Any
+from financial_management.search.repository import search_financial_receipt_hits_semantic
+from retrieval.keyword.full_text_db import FullTextRetrieverFromDB
+from retrieval.vector.postgres_store import PostgresVectorStore
+from settings import get_settings
 
 settings = get_settings()
+
 
 class GraphState(TypedDict):
     question: str
     route: str
     chunks: List[Chunk]
     comments: List[Comment]
+    receipts: List[Dict[str, Any]]
     answer: str
     citations: List[int]
-    mode: str  # Can be "preview" or "full"
-    db: Session  # SQLAlchemy session for database access
+    mode: str
+    db: Session
     doc_ids: List[int] | None
     comment_ids: List[int] | None
+    receipt_ids: List[int] | None
     company_id: int | None
     scope: str | None
-    
+
+
+def _search_receipts(
+    db: Session,
+    *,
+    question: str,
+    company_id: int | None,
+    receipt_ids: List[int] | None,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    if company_id is None:
+        return []
+
+    try:
+        return search_financial_receipt_hits_semantic(
+            db=db,
+            query_text=question,
+            company_id=company_id,
+            receipt_ids=receipt_ids,
+            limit=limit,
+        )
+    except Exception:
+        return []
+
 
 async def retrieve_docs(state: GraphState) -> GraphState:
-    """Retrieve relevant documents based on route."""
     question = f"search_query: {state.get('question')}"
-    mode = state.get("mode", "hybrid")  # Default to full mode if not specified
-    db = state.get("db")  # Assume db session is passed in state
+    mode = state.get("mode", "hybrid")
+    db = state.get("db")
+    scope = state.get("scope", "both")
+
     keyword_retriever = FullTextRetrieverFromDB(db)
     vector_store = PostgresVectorStore(db)
     vector_retriever = vector_store.as_retriever(
@@ -48,52 +69,108 @@ async def retrieve_docs(state: GraphState) -> GraphState:
         comment_ids=state.get("comment_ids", None),
         company_id=state.get("company_id", None),
     )
+
     comments = []
     chunks = []
-    # Manual routing logic
+    receipts = []
+
     if mode == "keyword":
-        chunks = await keyword_retriever.ainvoke(question, doc_ids=state.get("doc_ids", None), company_id=state.get("company_id", None))
+        chunks = await keyword_retriever.ainvoke(
+            question,
+            doc_ids=state.get("doc_ids", None),
+            company_id=state.get("company_id", None),
+        )
     elif mode == "vector":
         retrieved_content = vector_retriever.invoke(question)
-        chunks = retrieved_content["chunks"]  
+        chunks = retrieved_content["chunks"]
         comments = retrieved_content["comments"]
     elif mode == "hybrid":
         retrieved_content = vector_retriever.invoke(question)
-        chunks = retrieved_content["chunks"]  
+        chunks = retrieved_content["chunks"]
         comments = retrieved_content["comments"]
-        holder = await keyword_retriever.ainvoke(question, doc_ids=state.get("doc_ids", None), company_id=state.get("company_id", None))
+        holder = await keyword_retriever.ainvoke(
+            question,
+            doc_ids=state.get("doc_ids", None),
+            company_id=state.get("company_id", None),
+        )
         chunks += holder
+
+    if scope in {"both", "financial", "receipts"}:
+        receipts = _search_receipts(
+            db,
+            question=question,
+            company_id=state.get("company_id", None),
+            receipt_ids=state.get("receipt_ids", None),
+            limit=6,
+        )
 
     comment_ids = state.get("comment_ids")
     if comment_ids is not None:
         allowed = set(comment_ids)
         comments = [comment for comment in comments if comment.id in allowed]
 
-    scope = state.get("scope", "both")
     if scope == "comments":
         chunks = []
+        receipts = []
     elif scope == "docs":
         comments = []
-        
-    return {**state, "chunks": chunks , "comments": comments}
+        receipts = []
+    elif scope in {"financial", "receipts"}:
+        chunks = []
+        comments = []
+
+    return {
+        **state,
+        "chunks": chunks,
+        "comments": comments,
+        "receipts": receipts,
+    }
 
 
+def _build_context(chunks: List[Chunk], comments: List[Comment], receipts: List[Dict[str, Any]]) -> str:
+    parts = []
 
+    for chunk in chunks:
+        parts.append(
+            f"[chunk:{chunk.id}]\n"
+            f"document_id={chunk.doc_id}\n"
+            f"page={chunk.page_num}\n"
+            f"content={chunk.content}"
+        )
 
-def add_page_numbers_to_chunks(state: GraphState):
-    """Add page numbers to chunk metadata if available."""
-    files_address = settings.files_dir
-    #TODO: implement this function to add page numbers to chunks based on file paths
-    return state
+    for comment in comments:
+        parts.append(
+            f"[comment:{comment.id}]\n"
+            f"title={comment.title}\n"
+            f"type={comment.type}\n"
+            f"content={comment.content}"
+        )
+
+    for receipt in receipts:
+        tracking_number = receipt.get("tracking_number") or "-"
+        parts.append(
+            f"[receipt:{receipt['receipt_id']}]\n"
+            f"date={receipt.get('receipt_date')}\n"
+            f"direction={receipt.get('direction')}\n"
+            f"amount={receipt.get('amount')}\n"
+            f"counterparty={receipt.get('counterparty_name')}\n"
+            f"tracking={tracking_number}\n"
+            f"card={receipt.get('card_title')}({receipt.get('card_number')})\n"
+            f"description={receipt.get('description')}"
+        )
+
+    return "\n\n".join(parts) if parts else "(no context)"
+
 
 async def generate_answer(state: GraphState) -> GraphState:
-    """Generate answer using retrieved documents."""
     question = state["question"]
-    chunks = state["chunks"]
-    comments = state["comments"]
-    
-    # Create prompt template
-    template = """Use ONLY the provided context to answer the question. Cite sources using [chunk:id] or [comment:id].
+    chunks = state.get("chunks", [])
+    comments = state.get("comments", [])
+    receipts = state.get("receipts", [])
+
+    template = """Use ONLY the provided context to answer the question.
+Cite sources exactly using [chunk:id], [comment:id], or [receipt:id].
+If the context is insufficient, say so clearly.
 
 Context:
 {context}
@@ -101,73 +178,56 @@ Context:
 Question: {question}
 
 Answer:"""
-    
+
     prompt = ChatPromptTemplate.from_template(template)
-    
     llm = llm_client.langchain_llm
     chain = prompt | llm
-    
-    context = "\n\n".join(f"context Id:{chunk.id}\ncontext content:{chunk.content}" for chunk in chunks)
-    context += "\n\n" + "\n\n".join(f"Comment Id:{comment.id}\ncomment content:{comment.content}" for comment in comments)
-    
-    # print("Generated Context for LLM:")
-    # print(context)
-    # print("Question:")
-    # print(question)
+
+    context = _build_context(chunks, comments, receipts)
+
     try:
         result = await chain.ainvoke({
             "context": context,
-            "question": question
+            "question": question,
         })
     except AppException:
         raise
     except Exception as exc:
         raise_llm_exception(exc, "chat_generate_answer")
-    
-    # Extract citations
-    citations = []
-    for chunk in chunks:
-        if "chunk_id" in chunk.metadata:
-            citations.append(chunk.metadata["chunk_id"])
-    
+
     return {
         **state,
         "answer": result.content.strip(),
         "context": context,
-        "citations": citations
+        "citations": [],
     }
 
 
 def end_node(state: GraphState) -> GraphState:
-    
-    return state  # No-op, just returns the state
+    return state
+
 
 def build_answer_graph() -> Graph:
-    """Build the answer generation graph."""
-    # Create graph
     workflow = StateGraph(GraphState)
-    
-    # Add nodes
+
     workflow.add_node("retrieve", retrieve_docs)
     workflow.add_node("generate", generate_answer)
     workflow.add_node("end", end_node)
-    # Add edges with conditional routing
+
     def should_generate(state: GraphState) -> str:
         return "generate" if state.get("route", "full") == "full" else "end"
-    
+
     workflow.add_conditional_edges(
         "retrieve",
         should_generate,
         {
             "generate": "generate",
-            "end": "end"
-        }
+            "end": "end",
+        },
     )
-    
+
     workflow.add_edge("generate", "end")
-    
-    # Set entry point
     workflow.set_entry_point("retrieve")
     workflow.set_finish_point("end")
-    # Compile
+
     return workflow.compile()

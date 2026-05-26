@@ -97,6 +97,7 @@ def build_retrieved_data(
     *,
     chunks: list,
     comments: list,
+    receipts: list,
 ) -> tuple[list[Retrieved_data], list[int]]:
     retrieved_data: list[Retrieved_data] = []
     citations: list[int] = []
@@ -116,6 +117,7 @@ def build_retrieved_data(
         retrieved_data.append(
             Retrieved_data(
                 content=chunk.content,
+                source_type="document_chunk",
                 doc_id=chunk.doc_id,
                 doc_name=doc_name_map.get(chunk.doc_id, ""),
                 title=doc_name_map.get(chunk.doc_id, ""),
@@ -131,6 +133,7 @@ def build_retrieved_data(
         retrieved_data.append(
             Retrieved_data(
                 content=comment.content,
+                source_type="comment",
                 doc_id=None,
                 doc_name="",
                 title=comment.title,
@@ -138,6 +141,29 @@ def build_retrieved_data(
                 chunk_page=None,
                 comment_id=comment.id,
                 comment_type=comment.type,
+            )
+        )
+
+    for receipt in receipts:
+        receipt_id = receipt.get("receipt_id")
+        retrieved_data.append(
+            Retrieved_data(
+                content=receipt.get("description") or "",
+                source_type="financial_receipt",
+                doc_id=None,
+                doc_name="",
+                title=f"Receipt #{receipt_id}",
+                chunk_id=None,
+                chunk_page=None,
+                comment_id=None,
+                comment_type=None,
+                receipt_id=receipt_id,
+                receipt_amount=str(receipt.get("amount")) if receipt.get("amount") is not None else None,
+                receipt_direction=str(receipt.get("direction")) if receipt.get("direction") is not None else None,
+                receipt_counterparty_name=receipt.get("counterparty_name"),
+                receipt_date=str(receipt.get("receipt_date")) if receipt.get("receipt_date") is not None else None,
+                receipt_tracking_number=receipt.get("tracking_number"),
+                receipt_card_title=receipt.get("card_title"),
             )
         )
 
@@ -189,6 +215,7 @@ async def chat(
         doc_ids=safe_doc_ids,
         comment_ids=safe_comment_ids,
         company_id=current_user.company_id,
+        receipt_ids=request.receipt_ids,
         scope="both",
     )
 
@@ -198,6 +225,7 @@ async def chat(
         db,
         chunks=result.get("chunks", []),
         comments=result.get("comments", []),
+        receipts=result.get("receipts", []),
     )
 
     answer = result.get("answer") or ""
