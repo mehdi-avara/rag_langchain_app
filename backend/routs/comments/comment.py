@@ -131,7 +131,7 @@ async def create_comment(
 ):
     embedding_vec = None
     try:
-        embeddings = generate_embeddings_for_chunks([payload.content])
+        embeddings = generate_embeddings_for_chunks([f"search_document: {payload.content}"])
         embedding_vec = embeddings[0] if embeddings else None
     except Exception:
         embedding_vec = None
@@ -164,7 +164,7 @@ async def update_comment(
 
     if "content" in data and data["content"] is not None:
         try:
-            embeddings = generate_embeddings_for_chunks([data["content"]])
+            embeddings = generate_embeddings_for_chunks([f"search_document: {data['content']}"])
             comment.embedding = embeddings[0] if embeddings else None
         except Exception:
             comment.embedding = None
