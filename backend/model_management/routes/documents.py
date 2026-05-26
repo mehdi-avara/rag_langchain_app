@@ -100,7 +100,7 @@ def complete_model_document_upload_and_link(
     return link_document(model_id=model_id, payload=payload, db=db, current_user=current_user)
 
 
-@router.post("/{model_id}/documents/upload", response_model=ModelDocLinkOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{model_id}/documents/upload", response_model=ModelDocLinkOut, status_code=status.HTTP_201_CREATED, deprecated=True)
 def upload_document_and_link(
     model_id: int,
     file: UploadFile = File(...),
@@ -108,16 +108,16 @@ def upload_document_and_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("models:documents")),
 ):
-    _ = get_model_or_404(db, model_id, current_user)
-
-    upload_result = upload_pdf_mineru(file=file, current_user=current_user, db=db)
-    doc_id = upload_result.get("doc_id")
-    if doc_id is None:
-        raise HTTPException(status_code=500, detail="Document upload did not return doc_id")
-
-    payload = ModelDocLinkCreate(document_id=doc_id, note=link_description)
-    return link_document(model_id=model_id, payload=payload, db=db, current_user=current_user)
-
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "This direct model document upload route is deprecated. Use the MinIO/block-storage upload flow.",
+            "replacement": [
+                "/models/{model_id}/documents/upload-url",
+                "/models/{model_id}/documents/complete-upload/{asset_id}",
+            ],
+        },
+    )
 
 @router.delete("/{model_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def unlink_document(

@@ -114,7 +114,7 @@ def complete_tag_document_upload_and_link(
     return link_document(tag_id=tag_id, payload=payload, db=db, current_user=current_user)
 
 
-@router.post("/{tag_id}/documents/upload", response_model=TagDocLinkOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{tag_id}/documents/upload", response_model=TagDocLinkOut, status_code=status.HTTP_201_CREATED, deprecated=True)
 def upload_document_and_link(
     tag_id: int,
     file: UploadFile = File(...),
@@ -122,16 +122,16 @@ def upload_document_and_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("tags:documents")),
 ):
-    _ = get_tag_or_404(db, tag_id, current_user)
-
-    upload_result = upload_pdf_mineru(file=file, current_user=current_user, db=db)
-    doc_id = upload_result.get("doc_id")
-    if doc_id is None:
-        raise HTTPException(status_code=500, detail="Document upload did not return doc_id")
-
-    payload = TagDocLinkCreate(document_id=doc_id, note=link_description)
-    return link_document(tag_id=tag_id, payload=payload, db=db, current_user=current_user)
-
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "This direct tag document upload route is deprecated. Use the MinIO/block-storage upload flow.",
+            "replacement": [
+                "/tags/{tag_id}/documents/upload-url",
+                "/tags/{tag_id}/documents/complete-upload/{asset_id}",
+            ],
+        },
+    )
 
 @router.delete("/{tag_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def unlink_document(

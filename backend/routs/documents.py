@@ -305,45 +305,22 @@ async def create_document_download_url(
     }
 
 
-@router.post("/upload")
+@router.post("/upload", deprecated=True)
 def upload_pdf_mineru(
     file: UploadFile,
     current_user: User = Depends(require_permission("documents:create")),
     db: Session = Depends(get_db),
 ):
-    file_bytes = file.file.read()
-
-    if not file_bytes.startswith(b"%PDF"):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    doc = Document(
-        owner_id=current_user.id,
-        filename=file.filename,
-        n_pages=0,
-        n_chunks=0,
-        file_path=None,
-        status=DocumentStatusType.QUEUED,
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "This direct upload route is deprecated. Use /documents/upload-url and /documents/complete-upload/{asset_id}.",
+            "replacement": [
+                "/documents/upload-url",
+                "/documents/complete-upload/{asset_id}",
+            ],
+        },
     )
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    temp_path = os.path.join(settings.files_dir, f"{doc.id}")
-    os.makedirs(temp_path, exist_ok=True)
-    original_pdf = os.path.join(temp_path, "original.pdf")
-
-    with open(original_pdf, "wb") as f:
-        f.write(file_bytes)
-
-    from core.celery.tasks import mineru_process_pdf
-
-    mineru_process_pdf.delay(
-        doc_id=doc.id,
-        pdf_path=os.path.join(f"{doc.id}", "original.pdf"),
-    )
-
-    return {"doc_id": doc.id, "status": DocumentStatusType.QUEUED.value}
-
 
 @router.post("/import-processed-zip", status_code=status.HTTP_200_OK)
 async def import_processed_zip(
