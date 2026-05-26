@@ -267,8 +267,9 @@ def complete_document_upload(
     from core.celery.tasks import mineru_process_pdf
 
     mineru_process_pdf.delay(
-        pdf_path=os.path.join(f"{doc.id}", "original.pdf"),
         doc_id=doc.id,
+        asset_id=asset.id,
+        owner_id=current_user.id,
     )
 
     return {
@@ -337,8 +338,8 @@ def upload_pdf_mineru(
     from core.celery.tasks import mineru_process_pdf
 
     mineru_process_pdf.delay(
-        pdf_path=os.path.join(f"{doc.id}", "original.pdf"),
         doc_id=doc.id,
+        pdf_path=os.path.join(f"{doc.id}", "original.pdf"),
     )
 
     return {"doc_id": doc.id, "status": DocumentStatusType.QUEUED.value}

@@ -60,6 +60,7 @@ services:
       - redis
       - postgres
     volumes:
+      - ./backend:/app
       - $files_dir:/app/uploaded_files
 
   stt:

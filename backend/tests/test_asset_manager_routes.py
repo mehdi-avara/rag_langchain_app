@@ -325,9 +325,11 @@ def test_document_complete_upload_creates_document_and_local_pdf(tmp_path, monke
 
     class FakeMineruTask:
         @staticmethod
-        def delay(pdf_path, doc_id):
-            queued["pdf_path"] = pdf_path
+        def delay(doc_id, pdf_path=None, asset_id=None, owner_id=None):
             queued["doc_id"] = doc_id
+            queued["pdf_path"] = pdf_path
+            queued["asset_id"] = asset_id
+            queued["owner_id"] = owner_id
 
     fake_tasks.mineru_process_pdf = FakeMineruTask()
     monkeypatch.setitem(sys.modules, "core.celery.tasks", fake_tasks)
@@ -354,7 +356,12 @@ def test_document_complete_upload_creates_document_and_local_pdf(tmp_path, monke
     original_pdf = tmp_path / "100" / "original.pdf"
     assert original_pdf.exists()
     assert original_pdf.read_bytes().startswith(b"%PDF")
-    assert queued == {"pdf_path": "100/original.pdf", "doc_id": 100}
+    assert queued == {
+        "doc_id": 100,
+        "pdf_path": None,
+        "asset_id": 77,
+        "owner_id": 3,
+    }
 
 
 @pytest.mark.asyncio

@@ -39,11 +39,61 @@ def raise_embedding_exception(exc: Exception, context: str):
     raise embedding_exception_to_app_exception(exc, context) from exc
 
 
+def normalize_api_key(value: str | None) -> str:
+    if value is None:
+        return ""
+    value = str(value).strip()
+    if value.lower() in ("", "none", "null", "false"):
+        return ""
+    return value
+
+
+def normalize_embedding_url(value: str) -> str:
+    url = str(value).strip().rstrip("/")
+    if url.endswith("/embeddings"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/embeddings"
+    return url
+
+
+def extract_embeddings(result) -> list[list[float]]:
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, list):
+            if not data:
+                return []
+            if isinstance(data[0], dict) and "embedding" in data[0]:
+                return [item["embedding"] for item in data]
+            if isinstance(data[0], list):
+                return data
+
+        nested = result.get("result")
+        if isinstance(nested, dict):
+            nested_data = nested.get("data")
+            if isinstance(nested_data, list):
+                if not nested_data:
+                    return []
+                if isinstance(nested_data[0], dict) and "embedding" in nested_data[0]:
+                    return [item["embedding"] for item in nested_data]
+                if isinstance(nested_data[0], list):
+                    return nested_data
+
+        embeddings = result.get("embeddings")
+        if isinstance(embeddings, list):
+            return embeddings
+
+    raise ValueError("Unsupported embedding response format")
+
+
 class JinaAPIEmbeddings(Embeddings):
     def __init__(self, fail_soft: bool = False):
-        self.api_key = settings.embedding_api_key or settings.jina_api_key
+        embedding_key = normalize_api_key(settings.embedding_api_key)
+        jina_key = normalize_api_key(settings.jina_api_key)
+
+        self.api_key = embedding_key or jina_key
         self.model = settings.embedding_model
-        self.api_url = settings.embedding_base_url
+        self.api_url = normalize_embedding_url(settings.embedding_base_url)
         self.task = "text-matching"
         self.fail_soft = fail_soft
 
@@ -58,19 +108,26 @@ class JinaAPIEmbeddings(Embeddings):
         )
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        payload = {"model": self.model, "input": texts}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model,
+            "input": texts,
+        }
 
         try:
-            response = requests.post(self.api_url, headers=headers, json=payload, timeout=20)
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             result = response.json()
-            return result["result"]["data"]
+            return extract_embeddings(result)
         except AppException:
             raise
         except Exception as exc:
             self._log_error(exc, "embed_documents")
             if self.fail_soft:
+                print("Embedding failed softly:", repr(exc), flush=True)
                 return []
             raise_embedding_exception(exc, "embed_documents")
 
@@ -83,6 +140,7 @@ class JinaAPIEmbeddings(Embeddings):
         except Exception as exc:
             self._log_error(exc, "embed_query")
             if self.fail_soft:
+                print("Embedding query failed softly:", repr(exc), flush=True)
                 return []
             raise_embedding_exception(exc, "embed_query")
 

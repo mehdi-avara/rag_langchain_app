@@ -1,37 +1,69 @@
-# core/celery/tasks.py
 import asyncio
+import os
+from pathlib import Path
 
 from core.celery.celery_app import celery_app
 from core.chat_title import generate_chat_title_from_question
 from core.simple_ingestion import run_mineru_on_file
 from db.session import db_session
-from Models import Chat, Document,DocumentStatusType
+from Models import Chat, Document, DocumentStatusType, User
+from settings import get_settings
+from storage.manager import StorageManager
+
+settings = get_settings()
+
+
+def _set_document_status(doc_id: int, status: DocumentStatusType):
+    with db_session() as db:
+        db.query(Document).filter(Document.id == doc_id).update({
+            Document.status: status.value
+        })
+        db.commit()
 
 
 @celery_app.task(name="mineru.process_pdf")
-def mineru_process_pdf(pdf_path: str, doc_id: int):
-    
-    with db_session() as db:
-        # Update document record
-        db.query(Document).filter(Document.id == doc_id).update({
-            Document.status: DocumentStatusType.INPROGGRESS.value
-        })
-        db.commit()
+def mineru_process_pdf(doc_id: int, pdf_path: str | None = None, asset_id: int | None = None, owner_id: int | None = None):
+    _set_document_status(doc_id, DocumentStatusType.INPROGGRESS)
+
     try:
+        if asset_id is not None:
+            with db_session() as db:
+                doc = db.query(Document).filter(Document.id == doc_id).first()
+                if not doc:
+                    raise ValueError("Document not found")
+
+                user_id = owner_id or doc.owner_id
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user:
+                    raise ValueError("Document owner not found")
+
+                doc_dir = Path(settings.files_dir) / str(doc_id)
+                original_pdf = doc_dir / "original.pdf"
+
+                manager = StorageManager(db)
+                manager.download_asset_to_path(
+                    asset_id=asset_id,
+                    user=user,
+                    target_path=original_pdf,
+                )
+
+                with original_pdf.open("rb") as f:
+                    header = f.read(4)
+
+                if header != b"%PDF":
+                    raise ValueError("Uploaded file is not a valid PDF")
+
+                pdf_path = os.path.join(str(doc_id), "original.pdf")
+
+        if not pdf_path:
+            raise ValueError("Either pdf_path or asset_id is required")
+
         run_mineru_on_file(pdf_path, doc_id)
-        with db_session() as db:
-            db.query(Document).filter(Document.id == doc_id).update({
-                Document.status: DocumentStatusType.DONE.value
-            })
-            db.commit()
-    except Exception as e:
-        with db_session() as db:
-            db.query(Document).filter(Document.id == doc_id).update({
-                Document.status: DocumentStatusType.FAIELED.value
-            })
-            db.commit()
-        raise e
-        
+        _set_document_status(doc_id, DocumentStatusType.DONE)
+
+    except Exception:
+        _set_document_status(doc_id, DocumentStatusType.FAIELED)
+        raise
 
 
 @celery_app.task(name="chat.generate_title")
@@ -57,4 +89,4 @@ def chat_generate_title(chat_id: int, first_user_question: str):
             return
 
         chat.name = title.strip()
-
+        db.commit()

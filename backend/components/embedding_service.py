@@ -18,7 +18,7 @@ def get_or_create_embedding_config(db: Session, model_name: str, base_url: str, 
         db.refresh(config)
         return config
 
-    if config.model_name != model_name:
+    if config.model_name != model_name or config.base_url != base_url or config.api_key != api_key:
         config.model_name = model_name
         config.base_url = base_url
         config.api_key = api_key
@@ -29,19 +29,31 @@ def get_or_create_embedding_config(db: Session, model_name: str, base_url: str, 
     return config
 
 
+def _reset_model_embedding_fields(db: Session, model, field_names: list[str]) -> None:
+    values = {}
+
+    for field_name in field_names:
+        if hasattr(model, field_name):
+            values[getattr(model, field_name)] = None
+
+    if values:
+        db.query(model).update(values, synchronize_session=False)
+
+
 def reset_all_embeddings(db: Session) -> None:
-    db.query(Chunk).update({Chunk.embedding: None}, synchronize_session=False)
-    db.query(Comment).update({Comment.embedding: None}, synchronize_session=False)
-    db.query(FinancialReceipt).update({FinancialReceipt.description_embedding: None}, synchronize_session=False)
-    db.query(FinancialReceiptCommentLink).update({FinancialReceiptCommentLink.note_embedding: None}, synchronize_session=False)
-    db.query(ModelCommentLink).update({ModelCommentLink.note_embedding: None}, synchronize_session=False)
-    db.query(ModelReceiptLink).update({ModelReceiptLink.note_embedding: None}, synchronize_session=False)
-    db.query(TagCommentLink).update({TagCommentLink.note_embedding: None}, synchronize_session=False)
-    db.query(TagReceiptLink).update({TagReceiptLink.note_embedding: None}, synchronize_session=False)
+    _reset_model_embedding_fields(db, Chunk, ["embedding"])
+    _reset_model_embedding_fields(db, Comment, ["embedding"])
+    _reset_model_embedding_fields(db, FinancialReceipt, ["description_embedding"])
+    _reset_model_embedding_fields(db, FinancialReceiptCommentLink, ["note_embedding", "embedding"])
+    _reset_model_embedding_fields(db, ModelCommentLink, ["note_embedding", "embedding"])
+    _reset_model_embedding_fields(db, ModelReceiptLink, ["note_embedding", "embedding"])
+    _reset_model_embedding_fields(db, TagCommentLink, ["note_embedding", "embedding"])
+    _reset_model_embedding_fields(db, TagReceiptLink, ["note_embedding", "embedding"])
 
 
 def regenerate_missing_embeddings(db: Session, embed_func) -> int:
     updated = 0
+
     for comment in db.query(Comment).filter(Comment.embedding.is_(None)).all():
         vec = embed_func(comment.content)
         if vec is not None:
