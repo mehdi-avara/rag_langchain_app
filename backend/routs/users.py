@@ -58,6 +58,7 @@ def get_me(
 
 
 @router.put("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
+@router.patch("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
 def update_user(
     payload: UserUpdateIn,
     current_user: User = Depends(require_permission("profile:update")),
@@ -308,6 +309,40 @@ def create_profile_image_download_url(
     return {
         "asset_id": user.profile_asset_id,
         "download_url": download_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
+
+
+@router.get(
+    "/profile-image/preview-url",
+    response_model=AssetDownloadUrlOut,
+    status_code=status.HTTP_200_OK,
+)
+def create_profile_image_preview_url(
+    current_user: User = Depends(require_permission("profile:image")),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(
+        User.id == current_user.id,
+        User.company_id == current_user.company_id,
+    ).first()
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if not user.profile_asset_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No profile image asset set")
+
+    manager = StorageManager(db)
+    preview_url = manager.create_download_url(
+        asset_id=user.profile_asset_id,
+        user=current_user,
+        disposition="inline",
+    )
+
+    return {
+        "asset_id": user.profile_asset_id,
+        "download_url": preview_url,
         "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
     }
 

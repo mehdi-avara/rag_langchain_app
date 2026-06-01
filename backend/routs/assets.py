@@ -83,6 +83,26 @@ def create_asset_download_url(
     }
 
 
+@router.get("/{asset_id}/preview-url", response_model=AssetDownloadUrlOut)
+def create_asset_preview_url(
+    asset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    manager = StorageManager(db)
+    preview_url = manager.create_download_url(
+        asset_id=asset_id,
+        user=current_user,
+        disposition="inline",
+    )
+
+    return {
+        "asset_id": asset_id,
+        "download_url": preview_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
+
+
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_asset(
     asset_id: int,

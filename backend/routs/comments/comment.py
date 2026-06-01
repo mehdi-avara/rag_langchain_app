@@ -152,6 +152,7 @@ async def create_comment(
 
 
 @router.put("/{comment_id}", response_model=CommentOut)
+@router.patch("/{comment_id}", response_model=CommentOut)
 async def update_comment(
     comment_id: int,
     payload: CommentUpdate,

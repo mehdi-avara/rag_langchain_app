@@ -172,6 +172,7 @@ def get_receipts_by_ids(
 
 
 @router.put("/{receipt_id}", response_model=FinancialReceiptOut)
+@router.patch("/{receipt_id}", response_model=FinancialReceiptOut)
 def update_receipt(
     receipt_id: int,
     payload: FinancialReceiptUpdate,

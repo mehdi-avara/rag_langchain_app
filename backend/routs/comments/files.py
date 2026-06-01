@@ -169,6 +169,34 @@ def create_comment_file_download_url(
     }
 
 
+@router.get("/{comment_id}/{file_id}/preview-url", response_model=AssetDownloadUrlOut)
+def create_comment_file_preview_url(
+    comment_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_owned_comment(db, comment_id, current_user)
+    file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
+
+    asset_id = getattr(file_rec, "asset_id", None)
+    if not asset_id:
+        raise HTTPException(status_code=409, detail="This comment file is stored locally and has no asset preview URL")
+
+    manager = StorageManager(db)
+    preview_url = manager.create_download_url(
+        asset_id=asset_id,
+        user=current_user,
+        disposition="inline",
+    )
+
+    return {
+        "asset_id": asset_id,
+        "download_url": preview_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
+
+
 @router.get("/{comment_id}/{file_id}/download")
 def download_comment_file(
     comment_id: int,

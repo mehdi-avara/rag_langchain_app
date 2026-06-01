@@ -199,6 +199,34 @@ def create_receipt_file_download_url(
     }
 
 
+@router.get("/{receipt_id}/files/{file_id}/preview-url", response_model=AssetDownloadUrlOut)
+def create_receipt_file_preview_url(
+    receipt_id: int,
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_management:files")),
+):
+    get_receipt_or_404(db, receipt_id, current_user)
+    file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
+
+    asset_id = getattr(file_rec, "asset_id", None)
+    if not asset_id:
+        raise HTTPException(status_code=409, detail="This receipt file is stored locally and has no asset preview URL")
+
+    manager = StorageManager(db)
+    preview_url = manager.create_download_url(
+        asset_id=asset_id,
+        user=current_user,
+        disposition="inline",
+    )
+
+    return {
+        "asset_id": asset_id,
+        "download_url": preview_url,
+        "expires_seconds": settings.S3_DOWNLOAD_EXPIRES_SECONDS,
+    }
+
+
 @router.get("/{receipt_id}/files/{file_id}/download")
 def download_receipt_file(
     receipt_id: int,

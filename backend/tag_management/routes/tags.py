@@ -312,6 +312,7 @@ async def create_tag(
 
 
 @router.put("/{tag_id}", response_model=TagOut, status_code=status.HTTP_200_OK)
+@router.patch("/{tag_id}", response_model=TagOut, status_code=status.HTTP_200_OK)
 async def update_tag(
     tag_id: int,
     payload: TagUpdate,

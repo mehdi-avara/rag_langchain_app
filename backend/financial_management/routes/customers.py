@@ -80,6 +80,7 @@ def get_customer(
 
 
 @router.put("/{customer_id}", response_model=FinancialCustomerOut)
+@router.patch("/{customer_id}", response_model=FinancialCustomerOut)
 def update_customer(
     customer_id: int,
     payload: FinancialCustomerUpdate,

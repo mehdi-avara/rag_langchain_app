@@ -96,6 +96,7 @@ def get_card(
 
 
 @router.put("/{card_id}", response_model=FinancialCardOut)
+@router.patch("/{card_id}", response_model=FinancialCardOut)
 def update_card(
     card_id: int,
     payload: FinancialCardUpdate,

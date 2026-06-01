@@ -344,6 +344,7 @@ def semantic_search_model_content(
     )
 
 
+@router.put("/{model_id}", response_model=ModelOut)
 @router.patch("/{model_id}", response_model=ModelOut)
 def update_model(
     model_id: int,
