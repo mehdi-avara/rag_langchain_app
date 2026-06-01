@@ -52,7 +52,7 @@ def create_card(
 @router.get("", response_model=List[FinancialCardOut])
 def list_cards(
     search: Optional[str] = Query(None),
-    is_active: Optional[bool] = Query(None),
+    is_active: Optional[bool] = Query(True),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -140,7 +140,9 @@ def delete_card(
     )
 
     if linked_receipt:
-        raise HTTPException(status_code=409, detail="Cannot delete a card that is linked to receipts")
+        card.is_active = False
+        db.commit()
+        return None
 
     db.delete(card)
     db.commit()
