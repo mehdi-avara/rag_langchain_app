@@ -171,7 +171,6 @@ def get_receipts_by_ids(
     return [receipts_by_id[receipt_id] for receipt_id in receipt_ids if receipt_id in receipts_by_id]
 
 
-@router.put("/{receipt_id}", response_model=FinancialReceiptOut)
 @router.patch("/{receipt_id}", response_model=FinancialReceiptOut)
 def update_receipt(
     receipt_id: int,

@@ -95,7 +95,6 @@ def get_card(
     return card_to_out(get_card_or_404(db, card_id, current_user))
 
 
-@router.put("/{card_id}", response_model=FinancialCardOut)
 @router.patch("/{card_id}", response_model=FinancialCardOut)
 def update_card(
     card_id: int,

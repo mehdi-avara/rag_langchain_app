@@ -57,7 +57,6 @@ def get_me(
     )
 
 
-@router.put("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
 @router.patch("", response_model=CurrentUserOut, status_code=status.HTTP_200_OK)
 def update_user(
     payload: UserUpdateIn,

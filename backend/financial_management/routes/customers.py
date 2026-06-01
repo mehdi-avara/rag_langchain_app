@@ -79,7 +79,6 @@ def get_customer(
     return customer_to_out(get_customer_or_404(db, customer_id, current_user))
 
 
-@router.put("/{customer_id}", response_model=FinancialCustomerOut)
 @router.patch("/{customer_id}", response_model=FinancialCustomerOut)
 def update_customer(
     customer_id: int,
