@@ -1,17 +1,32 @@
-from fastapi import APIRouter, Depends, status, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
-from typing import List
+from __future__ import annotations
 
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import desc
+from sqlalchemy.orm import Session, joinedload
+
+from core.agents import GraphState, build_answer_graph, call_llm_to_rewrite
+from core.celery.tasks import chat_generate_title
 from core.exceptions import chat_not_found_exception
-from schemas.chat import ChatRequest, ChatResponse, ChatUpdateNameRequest, Retrieved_data, ChatListResponse, ChatListItem, ChatHistoryResponse, ChatMessageItem
 from db.init_db import get_db
 from deps import require_permission
-from Models import Chat, ChatMessage, User, Document, Comment
-from core.agents import build_answer_graph, GraphState, call_llm_to_rewrite
+from financial_management.models import FinancialReceipt
+from financial_management.services import receipt_to_out
+from Models import Chat, ChatMessage, Comment, Document, User
 from Models.chat import ChatRole
-from core.celery.tasks import chat_generate_title
 from routs.documents import _get_accessible_document_ids
+from schemas.chat import (
+    ChatHistoryResponse,
+    ChatListItem,
+    ChatListResponse,
+    ChatMessageItem,
+    ChatRequest,
+    ChatResponse,
+    ChatUpdateNameRequest,
+    RetrieveInformation,
+    RetrievedItem,
+)
 
 router = APIRouter()
 
@@ -52,7 +67,7 @@ def add_message(
     chat_id: int,
     role: ChatRole,
     content: str,
-    citations: list[int] | None = None,
+    citations: list[Any] | None = None,
     retrieved_chunks: list[dict] | None = None,
 ) -> ChatMessage:
     message = ChatMessage(
@@ -92,123 +107,229 @@ def _get_current_user_comment_ids(db: Session, current_user: User) -> list[int]:
     ]
 
 
-def build_retrieved_data(
+def _jsonable_model(model_obj) -> dict:
+    return model_obj.model_dump(mode="json")
+
+
+def _build_document_chunk_item(chunk, doc_name_map: dict[int, str]) -> dict:
+    doc_name = doc_name_map.get(chunk.doc_id, "")
+    data = {
+        "id": chunk.id,
+        "doc_id": chunk.doc_id,
+        "page_num": chunk.page_num,
+        "chunk_page": chunk.page_num + 1,
+        "chunk_type": chunk.chunk_type,
+        "content": chunk.content,
+        "start_pos": chunk.start_pos,
+        "end_pos": chunk.end_pos,
+        "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
+        "document": {
+            "id": chunk.doc_id,
+            "filename": doc_name,
+        },
+    }
+    return {
+        "source_type": "document_chunk",
+        "citation_key": f"chunk:{chunk.id}",
+        "title": doc_name,
+        "data": data,
+    }
+
+
+def _build_comment_item(comment) -> dict:
+    files = []
+    for file_rec in list(getattr(comment, "files", []) or []):
+        files.append(
+            {
+                "id": file_rec.id,
+                "file_name": file_rec.file_name,
+                "media_address": file_rec.media_address,
+                "asset_id": getattr(file_rec, "asset_id", None),
+            }
+        )
+
+    data = {
+        "id": comment.id,
+        "user_id": comment.user_id,
+        "title": comment.title,
+        "doc_id": getattr(comment, "doc_id", None),
+        "chunk_id": getattr(comment, "chunk_id", None),
+        "type": comment.type.value if hasattr(comment.type, "value") else str(comment.type),
+        "content": comment.content,
+        "created_at": comment.created_at.isoformat() if comment.created_at else None,
+        "files": files,
+    }
+    return {
+        "source_type": "comment",
+        "citation_key": f"comment:{comment.id}",
+        "title": comment.title,
+        "data": data,
+    }
+
+
+def _load_receipt_outputs(
+    db: Session,
+    *,
+    receipt_ids: list[int],
+    company_id: int,
+) -> dict[int, dict]:
+    if not receipt_ids:
+        return {}
+
+    receipts = (
+        db.query(FinancialReceipt)
+        .options(
+            joinedload(FinancialReceipt.credit_card),
+            joinedload(FinancialReceipt.customer),
+            joinedload(FinancialReceipt.files),
+        )
+        .filter(
+            FinancialReceipt.id.in_(receipt_ids),
+            FinancialReceipt.company_id == company_id,
+        )
+        .all()
+    )
+
+    return {receipt.id: _jsonable_model(receipt_to_out(receipt)) for receipt in receipts}
+
+
+def _build_receipt_item(receipt: dict, receipt_out_map: dict[int, dict]) -> dict:
+    receipt_id = receipt.get("receipt_id")
+    data = receipt_out_map.get(receipt_id)
+
+    if data is None:
+        data = {
+            "id": receipt_id,
+            "company_id": receipt.get("company_id"),
+            "owner_id": receipt.get("owner_id"),
+            "description": receipt.get("description"),
+            "tracking_number": receipt.get("tracking_number"),
+            "amount": str(receipt.get("amount")) if receipt.get("amount") is not None else None,
+            "direction": str(receipt.get("direction")) if receipt.get("direction") is not None else None,
+            "counterparty_name": receipt.get("counterparty_name"),
+            "receipt_date": str(receipt.get("receipt_date")) if receipt.get("receipt_date") is not None else None,
+            "credit_card": {
+                "id": receipt.get("credit_card_id"),
+                "title": receipt.get("card_title"),
+                "card_number": receipt.get("card_number"),
+            },
+            "customer_id": receipt.get("customer_id"),
+            "customer": None,
+            "embedding_status": "available",
+            "created_at": str(receipt.get("createdAt")) if receipt.get("createdAt") is not None else None,
+            "updated_at": None,
+            "files": [],
+        }
+
+    return {
+        "source_type": "financial_receipt",
+        "citation_key": f"receipt:{receipt_id}",
+        "title": f"Receipt #{receipt_id}",
+        "data": data,
+    }
+
+
+def _build_receipt_note_item(note: dict) -> dict:
+    source_type = note.get("source_type") or "receipt_note"
+    receipt_id = note.get("receipt_id")
+
+    if source_type == "model_receipt_note":
+        citation_key = f"model-receipt-note:{note.get('model_id')}:{receipt_id}"
+    elif source_type == "tag_receipt_note":
+        citation_key = f"tag-receipt-note:{note.get('tag_id')}:{receipt_id}"
+    elif source_type == "financial_receipt_comment_note":
+        citation_key = f"receipt-comment-note:{receipt_id}:{note.get('comment_id')}"
+    else:
+        citation_key = f"receipt-note:{receipt_id}"
+
+    data = {}
+    for key, value in note.items():
+        if hasattr(value, "isoformat"):
+            data[key] = value.isoformat()
+        elif key in {"amount"} and value is not None:
+            data[key] = str(value)
+        elif hasattr(value, "value"):
+            data[key] = value.value
+        else:
+            data[key] = value
+
+    return {
+        "source_type": source_type,
+        "citation_key": citation_key,
+        "title": f"Receipt Note #{receipt_id}",
+        "data": data,
+    }
+
+
+def build_retrieved_items(
     db: Session,
     *,
     chunks: list,
     comments: list,
     receipts: list,
     receipt_notes: list,
-) -> tuple[list[Retrieved_data], list[int]]:
-    retrieved_data: list[Retrieved_data] = []
-    citations: list[int] = []
+    company_id: int,
+) -> list[dict]:
+    items: list[dict] = []
 
-    doc_ids = {c.doc_id for c in chunks}
-
+    doc_ids = {chunk.doc_id for chunk in chunks}
     docs = (
         db.query(Document.id, Document.filename)
         .filter(Document.id.in_(doc_ids))
         .all()
-        if doc_ids else []
+        if doc_ids
+        else []
     )
-
-    doc_name_map = {d.id: d.filename for d in docs}
+    doc_name_map = {doc.id: doc.filename for doc in docs}
 
     for chunk in chunks:
-        retrieved_data.append(
-            Retrieved_data(
-                content=chunk.content,
-                source_type="document_chunk",
-                citation_key=f"chunk:{chunk.id}",
-                doc_id=chunk.doc_id,
-                doc_name=doc_name_map.get(chunk.doc_id, ""),
-                title=doc_name_map.get(chunk.doc_id, ""),
-                chunk_id=chunk.id,
-                chunk_page=chunk.page_num + 1,
-                comment_id=None,
-                comment_type=None,
-            )
-        )
-        citations.append(chunk.id)
+        items.append(_build_document_chunk_item(chunk, doc_name_map))
 
     for comment in comments:
-        retrieved_data.append(
-            Retrieved_data(
-                content=comment.content,
-                source_type="comment",
-                citation_key=f"comment:{comment.id}",
-                doc_id=None,
-                doc_name="",
-                title=comment.title,
-                chunk_id=None,
-                chunk_page=None,
-                comment_id=comment.id,
-                comment_type=comment.type,
-            )
-        )
+        items.append(_build_comment_item(comment))
+
+    receipt_ids = [receipt.get("receipt_id") for receipt in receipts if receipt.get("receipt_id") is not None]
+    receipt_ids += [note.get("receipt_id") for note in receipt_notes if note.get("receipt_id") is not None]
+    receipt_out_map = _load_receipt_outputs(
+        db,
+        receipt_ids=list(dict.fromkeys(receipt_ids)),
+        company_id=company_id,
+    )
 
     for receipt in receipts:
-        receipt_id = receipt.get("receipt_id")
-        retrieved_data.append(
-            Retrieved_data(
-                content=receipt.get("description") or "",
-                source_type="financial_receipt",
-                citation_key=f"receipt:{receipt_id}",
-                doc_id=None,
-                doc_name="",
-                title=f"Receipt #{receipt_id}",
-                chunk_id=None,
-                chunk_page=None,
-                comment_id=None,
-                comment_type=None,
-                receipt_id=receipt_id,
-                receipt_amount=str(receipt.get("amount")) if receipt.get("amount") is not None else None,
-                receipt_direction=str(receipt.get("direction")) if receipt.get("direction") is not None else None,
-                receipt_counterparty_name=receipt.get("counterparty_name"),
-                receipt_date=str(receipt.get("receipt_date")) if receipt.get("receipt_date") is not None else None,
-                receipt_tracking_number=receipt.get("tracking_number"),
-                receipt_card_title=receipt.get("card_title"),
-            )
-        )
+        items.append(_build_receipt_item(receipt, receipt_out_map))
 
     for note in receipt_notes:
-        source_type = note.get("source_type") or "receipt_note"
-        receipt_id = note.get("receipt_id")
-        if source_type == "model_receipt_note":
-            citation_key = f"model-receipt-note:{note.get('model_id')}:{receipt_id}"
-        elif source_type == "tag_receipt_note":
-            citation_key = f"tag-receipt-note:{note.get('tag_id')}:{receipt_id}"
-        elif source_type == "financial_receipt_comment_note":
-            citation_key = f"receipt-comment-note:{receipt_id}:{note.get('comment_id')}"
-        else:
-            citation_key = f"receipt-note:{receipt_id}"
+        items.append(_build_receipt_note_item(note))
 
-        retrieved_data.append(
-            Retrieved_data(
-                content=note.get("note") or "",
-                source_type=source_type,
-                citation_key=citation_key,
-                doc_id=None,
-                doc_name="",
-                title=f"Receipt Note #{receipt_id}",
-                chunk_id=None,
-                chunk_page=None,
-                comment_id=note.get("comment_id"),
-                comment_type=None,
-                receipt_id=receipt_id,
-                receipt_amount=str(note.get("amount")) if note.get("amount") is not None else None,
-                receipt_direction=str(note.get("direction")) if note.get("direction") is not None else None,
-                receipt_counterparty_name=note.get("counterparty_name"),
-                receipt_date=str(note.get("receipt_date")) if note.get("receipt_date") is not None else None,
-                receipt_tracking_number=note.get("tracking_number"),
-                receipt_card_title=None,
-                receipt_note=note.get("note"),
-                model_id=note.get("model_id"),
-                tag_id=note.get("tag_id"),
-            )
-        )
+    return items
 
-    return retrieved_data, citations
+
+def build_retrieve_information(retrieved_items: list[dict]) -> RetrieveInformation:
+    items = [RetrievedItem.model_validate(item) for item in retrieved_items]
+    by_type: dict[str, list[RetrievedItem]] = {}
+
+    for item in items:
+        by_type.setdefault(item.source_type, []).append(item)
+
+    return RetrieveInformation(items=items, by_type=by_type)
+
+
+def build_chat_response(
+    *,
+    answer: str,
+    citations: list[Any],
+    retrieved_items: list[dict],
+    chat_id: int,
+) -> ChatResponse:
+    retrieve_information = build_retrieve_information(retrieved_items)
+    return ChatResponse(
+        answer=answer,
+        citations=citations,
+        retrieved_chunks=retrieve_information.items,
+        retrieve_information=retrieve_information,
+        chat_id=chat_id,
+    )
 
 
 @router.post("", response_model=ChatResponse)
@@ -263,15 +384,17 @@ async def chat(
 
     result = await graph.ainvoke(state)
 
-    retrieved_data, citations = build_retrieved_data(
+    retrieved_items = build_retrieved_items(
         db,
         chunks=result.get("chunks", []),
         comments=result.get("comments", []),
         receipts=result.get("receipts", []),
         receipt_notes=result.get("receipt_notes", []),
+        company_id=current_user.company_id,
     )
 
     answer = result.get("answer") or ""
+    citation_keys = [item.get("citation_key") for item in retrieved_items if item.get("citation_key")]
 
     if not request.preview:
         add_message(
@@ -279,14 +402,14 @@ async def chat(
             chat_id=chat_obj.id,
             role=ChatRole.assistant,
             content=answer,
-            citations=citations,
-            retrieved_chunks=[c.model_dump() for c in retrieved_data],
+            citations=citation_keys,
+            retrieved_chunks=retrieved_items,
         )
 
-    return ChatResponse(
+    return build_chat_response(
         answer=answer,
-        citations=citations,
-        retrieved_chunks=retrieved_data,
+        citations=citation_keys,
+        retrieved_items=retrieved_items,
         chat_id=chat_obj.id,
     )
 
@@ -369,6 +492,31 @@ async def list_user_chats(
     )
 
 
+def _parse_retrieved_items(raw) -> list[RetrievedItem]:
+    if not raw:
+        return []
+
+    parsed: list[RetrievedItem] = []
+
+    for item in raw:
+        if isinstance(item, dict) and "data" in item and "source_type" in item:
+            parsed.append(RetrievedItem.model_validate(item))
+            continue
+
+        if isinstance(item, dict):
+            source_type = item.get("source_type") or "unknown"
+            parsed.append(
+                RetrievedItem(
+                    source_type=source_type,
+                    citation_key=item.get("citation_key"),
+                    title=item.get("title") or "",
+                    data=item,
+                )
+            )
+
+    return parsed
+
+
 @router.get("/{chat_id}/history", response_model=ChatHistoryResponse)
 async def get_chat_history(
     chat_id: int,
@@ -395,23 +543,32 @@ async def get_chat_history(
         .all()
     )
 
-    def parse_retrieved_chunks(raw) -> List[Retrieved_data]:
-        if not raw:
-            return []
-        return [Retrieved_data.model_validate(item) for item in raw]
+    message_items = []
+
+    for message in messages:
+        retrieved_items = _parse_retrieved_items(message.retrieved_chunks)
+        retrieve_information = RetrieveInformation(
+            items=retrieved_items,
+            by_type={},
+        )
+
+        for item in retrieved_items:
+            retrieve_information.by_type.setdefault(item.source_type, []).append(item)
+
+        message_items.append(
+            ChatMessageItem(
+                id=message.id,
+                role=message.role.value if hasattr(message.role, "value") else str(message.role),
+                content=message.content,
+                citations=message.citations or [],
+                retrieved_chunks=retrieved_items,
+                retrieve_information=retrieve_information,
+                created_at=message.created_at,
+            )
+        )
 
     return ChatHistoryResponse(
         chat_id=chat_obj.id,
         name=chat_obj.name,
-        messages=[
-            ChatMessageItem(
-                id=m.id,
-                role=m.role.value if hasattr(m.role, "value") else str(m.role),
-                content=m.content,
-                citations=m.citations or [],
-                retrieved_chunks=parse_retrieved_chunks(m.retrieved_chunks),
-                created_at=m.created_at,
-            )
-            for m in messages
-        ],
+        messages=message_items,
     )

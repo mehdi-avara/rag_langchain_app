@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import enum
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 
 class PropertyCategory(str, enum.Enum):
@@ -14,6 +16,23 @@ class PropertyCategory(str, enum.Enum):
     LAND = "land"
     OFFICE = "office"
     OTHER = "other"
+
+
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def normalize_hex_color(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip()
+
+    if not HEX_COLOR_RE.fullmatch(normalized):
+        raise PydanticCustomError("hex_color", "color must be a hex color in #RRGGBB format")
+
+    return normalized.lower()
+
+
 
 
 class WarehouseModelSummaryOut(BaseModel):
@@ -33,6 +52,11 @@ class WarehouseItemBase(BaseModel):
     unit_cost: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
     unit_current_value: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
 
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, value: str) -> str:
+        return normalize_hex_color(value)
+
 
 class WarehouseItemCreate(WarehouseItemBase):
     pass
@@ -45,6 +69,11 @@ class WarehouseItemUpdate(BaseModel):
     description: Optional[str] = None
     unit_cost: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
     unit_current_value: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
+
+    @field_validator("color")
+    @classmethod
+    def validate_color(cls, value: str | None) -> str | None:
+        return normalize_hex_color(value)
 
 
 class WarehouseCountAdjustRequest(BaseModel):

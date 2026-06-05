@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -14,33 +14,27 @@ class ChatRequest(BaseModel):
     preview: bool = False
 
 
-class Retrieved_data(BaseModel):
-    content: str
-    source_type: Optional[str] = None
+class RetrievedItem(BaseModel):
+    source_type: str
     citation_key: str | None = None
-    doc_id: int | None = None
-    doc_name: str = ""
     title: str = ""
-    chunk_id: int | None = None
-    chunk_page: int | None = None
-    comment_id: int | None = None
-    comment_type: str | None = None
-    receipt_id: int | None = None
-    receipt_amount: str | None = None
-    receipt_direction: str | None = None
-    receipt_counterparty_name: str | None = None
-    receipt_date: str | None = None
-    receipt_tracking_number: str | None = None
-    receipt_card_title: str | None = None
-    receipt_note: str | None = None
-    model_id: int | None = None
-    tag_id: int | None = None
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrieveInformation(BaseModel):
+    items: List[RetrievedItem] = Field(default_factory=list)
+    by_type: Dict[str, List[RetrievedItem]] = Field(default_factory=dict)
+
+
+class Retrieved_data(RetrievedItem):
+    pass
 
 
 class ChatResponse(BaseModel):
     answer: str
-    citations: List[int]
-    retrieved_chunks: List[Retrieved_data]
+    citations: List[Any] = Field(default_factory=list)
+    retrieved_chunks: List[RetrievedItem] = Field(default_factory=list)
+    retrieve_information: RetrieveInformation = Field(default_factory=RetrieveInformation)
     chat_id: int
 
 
@@ -61,8 +55,9 @@ class ChatMessageItem(BaseModel):
     id: int
     role: str
     content: str
-    citations: List[int] = []
-    retrieved_chunks: List[Retrieved_data] = []
+    citations: List[Any] = Field(default_factory=list)
+    retrieved_chunks: List[RetrievedItem] = Field(default_factory=list)
+    retrieve_information: RetrieveInformation = Field(default_factory=RetrieveInformation)
     created_at: datetime
 
 
