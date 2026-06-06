@@ -15,7 +15,8 @@ class ChatRequest(BaseModel):
 
 
 class RetrievedItem(BaseModel):
-    source_type: str
+    resource_type: str
+    source_type: str | None = None
     citation_key: str | None = None
     title: str = ""
     data: Dict[str, Any] = Field(default_factory=dict)

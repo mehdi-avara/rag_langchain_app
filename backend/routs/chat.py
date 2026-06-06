@@ -111,24 +111,68 @@ def _jsonable_model(model_obj) -> dict:
     return model_obj.model_dump(mode="json")
 
 
+APP_RESOURCE_TYPES = [
+    "document",
+    "tag",
+    "model",
+    "comment",
+    "receipt",
+    "credit_card",
+    "customer",
+    "warehouse_item",
+    "connection",
+    "unknown",
+]
+
+
+def _resource_type_for_source(source_type: str | None) -> str:
+    mapping = {
+        "document_chunk": "document",
+        "comment": "comment",
+        "financial_receipt": "receipt",
+        "model_receipt_note": "connection",
+        "tag_receipt_note": "connection",
+        "financial_receipt_comment_note": "connection",
+        "receipt_note": "connection",
+    }
+    return mapping.get(source_type or "", "unknown")
+
+
+def _empty_resource_groups() -> dict[str, list[RetrievedItem]]:
+    return {resource_type: [] for resource_type in APP_RESOURCE_TYPES}
+
+
+def _safe_title(*parts) -> str:
+    values = [str(part).strip() for part in parts if part is not None and str(part).strip()]
+    return " ".join(values)
+
+
+def _resource_ref(resource_type: str, resource_id, title: str | None = None) -> dict:
+    return {
+        "resource_type": resource_type,
+        "id": resource_id,
+        "title": title or f"{resource_type.replace('_', ' ').title()} #{resource_id}",
+    }
+
+
 def _build_document_chunk_item(chunk, doc_name_map: dict[int, str]) -> dict:
     doc_name = doc_name_map.get(chunk.doc_id, "")
     data = {
-        "id": chunk.id,
-        "doc_id": chunk.doc_id,
-        "page_num": chunk.page_num,
-        "chunk_page": chunk.page_num + 1,
-        "chunk_type": chunk.chunk_type,
-        "content": chunk.content,
-        "start_pos": chunk.start_pos,
-        "end_pos": chunk.end_pos,
-        "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
-        "document": {
-            "id": chunk.doc_id,
-            "filename": doc_name,
+        "id": chunk.doc_id,
+        "filename": doc_name,
+        "chunk": {
+            "id": chunk.id,
+            "page_num": chunk.page_num,
+            "chunk_page": chunk.page_num + 1,
+            "chunk_type": chunk.chunk_type,
+            "content": chunk.content,
+            "start_pos": chunk.start_pos,
+            "end_pos": chunk.end_pos,
+            "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
         },
     }
     return {
+        "resource_type": "document",
         "source_type": "document_chunk",
         "citation_key": f"chunk:{chunk.id}",
         "title": doc_name,
@@ -160,6 +204,7 @@ def _build_comment_item(comment) -> dict:
         "files": files,
     }
     return {
+        "resource_type": "comment",
         "source_type": "comment",
         "citation_key": f"comment:{comment.id}",
         "title": comment.title,
@@ -222,6 +267,7 @@ def _build_receipt_item(receipt: dict, receipt_out_map: dict[int, dict]) -> dict
         }
 
     return {
+        "resource_type": "receipt",
         "source_type": "financial_receipt",
         "citation_key": f"receipt:{receipt_id}",
         "title": f"Receipt #{receipt_id}",
@@ -229,19 +275,7 @@ def _build_receipt_item(receipt: dict, receipt_out_map: dict[int, dict]) -> dict
     }
 
 
-def _build_receipt_note_item(note: dict) -> dict:
-    source_type = note.get("source_type") or "receipt_note"
-    receipt_id = note.get("receipt_id")
-
-    if source_type == "model_receipt_note":
-        citation_key = f"model-receipt-note:{note.get('model_id')}:{receipt_id}"
-    elif source_type == "tag_receipt_note":
-        citation_key = f"tag-receipt-note:{note.get('tag_id')}:{receipt_id}"
-    elif source_type == "financial_receipt_comment_note":
-        citation_key = f"receipt-comment-note:{receipt_id}:{note.get('comment_id')}"
-    else:
-        citation_key = f"receipt-note:{receipt_id}"
-
+def _jsonable_note(note: dict) -> dict:
     data = {}
     for key, value in note.items():
         if hasattr(value, "isoformat"):
@@ -252,12 +286,87 @@ def _build_receipt_note_item(note: dict) -> dict:
             data[key] = value.value
         else:
             data[key] = value
+    return data
+
+
+def _connection_meta(data: dict) -> dict:
+    keys = [
+        "receipt_description",
+        "amount",
+        "direction",
+        "counterparty_name",
+        "receipt_date",
+        "tracking_number",
+        "similarity",
+    ]
+    return {key: data.get(key) for key in keys if data.get(key) is not None}
+
+
+def _build_receipt_note_item(note: dict) -> dict:
+    source_type = note.get("source_type") or "receipt_note"
+    receipt_id = note.get("receipt_id")
+    data = _jsonable_note(note)
+
+    if source_type == "model_receipt_note":
+        model_id = data.get("model_id")
+        model_title = _safe_title(data.get("model_manufacturer"), data.get("model_name")) or f"Model #{model_id}"
+        citation_key = f"model-receipt-note:{model_id}:{receipt_id}"
+        connection_data = {
+            "connection_type": "model_receipt",
+            "from": _resource_ref("model", model_id, model_title),
+            "to": _resource_ref("receipt", receipt_id, f"Receipt #{receipt_id}"),
+            "note": data.get("note"),
+            "created_at": data.get("created_at"),
+            "meta": _connection_meta(data),
+        }
+        title = "Model Receipt Connection"
+
+    elif source_type == "tag_receipt_note":
+        tag_id = data.get("tag_id")
+        tag_title = data.get("tag_name") or data.get("tag_title") or data.get("name") or f"Tag #{tag_id}"
+        citation_key = f"tag-receipt-note:{tag_id}:{receipt_id}"
+        connection_data = {
+            "connection_type": "tag_receipt",
+            "from": _resource_ref("tag", tag_id, tag_title),
+            "to": _resource_ref("receipt", receipt_id, f"Receipt #{receipt_id}"),
+            "note": data.get("note"),
+            "created_at": data.get("created_at"),
+            "meta": _connection_meta(data),
+        }
+        title = "Tag Receipt Connection"
+
+    elif source_type == "financial_receipt_comment_note":
+        comment_id = data.get("comment_id")
+        comment_title = data.get("comment_title") or f"Comment #{comment_id}"
+        citation_key = f"receipt-comment-note:{receipt_id}:{comment_id}"
+        connection_data = {
+            "connection_type": "receipt_comment",
+            "from": _resource_ref("receipt", receipt_id, f"Receipt #{receipt_id}"),
+            "to": _resource_ref("comment", comment_id, comment_title),
+            "note": data.get("note"),
+            "created_at": data.get("created_at"),
+            "meta": _connection_meta(data),
+        }
+        title = "Receipt Comment Connection"
+
+    else:
+        citation_key = f"receipt-note:{receipt_id}"
+        connection_data = {
+            "connection_type": "receipt_note",
+            "from": _resource_ref("receipt", receipt_id, f"Receipt #{receipt_id}"),
+            "to": None,
+            "note": data.get("note"),
+            "created_at": data.get("created_at"),
+            "meta": _connection_meta(data),
+        }
+        title = "Receipt Note Connection"
 
     return {
+        "resource_type": "connection",
         "source_type": source_type,
         "citation_key": citation_key,
-        "title": f"Receipt Note #{receipt_id}",
-        "data": data,
+        "title": title,
+        "data": connection_data,
     }
 
 
@@ -306,11 +415,11 @@ def build_retrieved_items(
 
 
 def build_retrieve_information(retrieved_items: list[dict]) -> RetrieveInformation:
-    items = [RetrievedItem.model_validate(item) for item in retrieved_items]
-    by_type: dict[str, list[RetrievedItem]] = {}
+    items = [RetrievedItem.model_validate(_normalize_retrieved_item(item)) for item in retrieved_items]
+    by_type = _empty_resource_groups()
 
     for item in items:
-        by_type.setdefault(item.source_type, []).append(item)
+        by_type.setdefault(item.resource_type, []).append(item)
 
     return RetrieveInformation(items=items, by_type=by_type)
 
@@ -492,6 +601,44 @@ async def list_user_chats(
     )
 
 
+def _normalize_retrieved_item(item: dict) -> dict:
+    if not isinstance(item, dict):
+        return {
+            "resource_type": "unknown",
+            "source_type": "unknown",
+            "citation_key": None,
+            "title": "",
+            "data": {},
+        }
+
+    source_type = item.get("source_type") or "unknown"
+
+    if "data" in item:
+        normalized = dict(item)
+        normalized.setdefault("resource_type", _resource_type_for_source(source_type))
+        normalized.setdefault("source_type", source_type)
+
+        if normalized["resource_type"] == "connection" and source_type in {
+            "model_receipt_note",
+            "tag_receipt_note",
+            "financial_receipt_comment_note",
+            "receipt_note",
+        }:
+            data = normalized.get("data") or {}
+            if not isinstance(data, dict) or "connection_type" not in data:
+                return _build_receipt_note_item(data if isinstance(data, dict) else item)
+
+        return normalized
+
+    return {
+        "resource_type": _resource_type_for_source(source_type),
+        "source_type": source_type,
+        "citation_key": item.get("citation_key"),
+        "title": item.get("title") or "",
+        "data": item,
+    }
+
+
 def _parse_retrieved_items(raw) -> list[RetrievedItem]:
     if not raw:
         return []
@@ -499,20 +646,8 @@ def _parse_retrieved_items(raw) -> list[RetrievedItem]:
     parsed: list[RetrievedItem] = []
 
     for item in raw:
-        if isinstance(item, dict) and "data" in item and "source_type" in item:
-            parsed.append(RetrievedItem.model_validate(item))
-            continue
-
         if isinstance(item, dict):
-            source_type = item.get("source_type") or "unknown"
-            parsed.append(
-                RetrievedItem(
-                    source_type=source_type,
-                    citation_key=item.get("citation_key"),
-                    title=item.get("title") or "",
-                    data=item,
-                )
-            )
+            parsed.append(RetrievedItem.model_validate(_normalize_retrieved_item(item)))
 
     return parsed
 
@@ -549,11 +684,11 @@ async def get_chat_history(
         retrieved_items = _parse_retrieved_items(message.retrieved_chunks)
         retrieve_information = RetrieveInformation(
             items=retrieved_items,
-            by_type={},
+            by_type=_empty_resource_groups(),
         )
 
         for item in retrieved_items:
-            retrieve_information.by_type.setdefault(item.source_type, []).append(item)
+            retrieve_information.by_type.setdefault(item.resource_type, []).append(item)
 
         message_items.append(
             ChatMessageItem(
