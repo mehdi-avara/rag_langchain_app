@@ -17,7 +17,6 @@ from schemas.users import (
     AdminUserRolesUpdate,
     AdminUserUpdate,
     CurrentUserAccessOut,
-    PermissionCreate,
     PermissionOut,
     RoleCreate,
     RoleUpdate,
@@ -29,8 +28,6 @@ from core.exceptions.error_codes import (
     COMPANY_REQUIRED,
     INVALID_ROLE_IDS,
     LAST_ADMIN_PROTECTED,
-    PERMISSION_ALREADY_EXISTS,
-    PERMISSION_NOT_FOUND,
     ROLE_ALREADY_EXISTS,
     ROLE_IN_USE,
     ROLE_NOT_FOUND,
@@ -60,96 +57,6 @@ def list_permissions(
     current_user: User = Depends(require_permission("permissions:read")),
 ):
     return db.query(Permission).order_by(Permission.id.asc()).all()
-
-
-@router.post("/permissions", response_model=PermissionOut, status_code=status.HTTP_201_CREATED)
-def create_permission(
-    data: PermissionCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("permissions:create")),
-):
-    existing = db.query(Permission).filter(Permission.name == data.name).first()
-
-    if existing:
-        _error(
-            status.HTTP_400_BAD_REQUEST,
-            PERMISSION_ALREADY_EXISTS,
-            "Permission already exists",
-        )
-
-    permission = Permission(
-        name=data.name,
-        resource=data.resource,
-        action=data.action,
-        description=data.description,
-    )
-
-    db.add(permission)
-    db.commit()
-    db.refresh(permission)
-
-    return permission
-
-
-@router.put("/permissions/{permission_id}", response_model=PermissionOut)
-def update_permission(
-    permission_id: int,
-    data: PermissionCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("permissions:update")),
-):
-    permission = db.query(Permission).filter(Permission.id == permission_id).first()
-
-    if not permission:
-        _error(
-            status.HTTP_404_NOT_FOUND,
-            PERMISSION_NOT_FOUND,
-            "Permission not found",
-        )
-
-    existing = (
-        db.query(Permission)
-        .filter(Permission.name == data.name, Permission.id != permission_id)
-        .first()
-    )
-
-    if existing:
-        _error(
-            status.HTTP_400_BAD_REQUEST,
-            PERMISSION_ALREADY_EXISTS,
-            "Permission already exists",
-        )
-
-    permission.name = data.name
-    permission.resource = data.resource
-    permission.action = data.action
-    permission.description = data.description
-
-    db.commit()
-    db.refresh(permission)
-
-    return permission
-
-
-@router.delete("/permissions/{permission_id}")
-def delete_permission(
-    permission_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("permissions:delete")),
-):
-    permission = db.query(Permission).filter(Permission.id == permission_id).first()
-
-    if not permission:
-        _error(
-            status.HTTP_404_NOT_FOUND,
-            PERMISSION_NOT_FOUND,
-            "Permission not found",
-        )
-
-    db.delete(permission)
-    db.commit()
-
-    return {"message": "Permission deleted"}
 
 
 def _role_scope_query(db: Session, company_id: int):
