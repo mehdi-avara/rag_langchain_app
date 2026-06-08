@@ -373,8 +373,8 @@ def create_company_user(
     user = User(
         company_id=company_id,
         username=username,
-        First_name=payload.First_name.strip(),
-        Last_name=payload.Last_name.strip() if payload.Last_name else None,
+        First_name=payload.first_name.strip(),
+        Last_name=payload.last_name.strip() if payload.last_name else None,
         pw_hash=bcrypt.hash(payload.password),
         role=_legacy_role_from_roles(roles),
         is_active=True,
@@ -403,7 +403,6 @@ def get_company_user(
 def update_company_user(
     user_id: int,
     payload: AdminUserUpdate,
-    CurrentUserAccessOut,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("users:update")),
 ):
@@ -417,11 +416,11 @@ def update_company_user(
             _error(status.HTTP_409_CONFLICT, USERNAME_ALREADY_EXISTS, "Username already exists")
         user.username = username
 
-    if payload.First_name is not None:
-        user.First_name = payload.First_name.strip()
+    if payload.first_name is not None:
+        user.First_name = payload.first_name.strip()
 
-    if payload.Last_name is not None:
-        user.Last_name = payload.Last_name.strip() if payload.Last_name else None
+    if payload.last_name is not None:
+        user.Last_name = payload.last_name.strip() if payload.last_name else None
 
     if payload.notification_token is not None:
         user.notification_token = payload.notification_token

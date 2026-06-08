@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class UserNotificationTokenOut(BaseModel):
@@ -133,17 +133,39 @@ class ProfileImageOut(BaseModel):
 class AdminUserCreate(BaseModel):
     username: str
     password: str = Field(..., min_length=8, max_length=128)
-    First_name: str
-    Last_name: Optional[str] = None
+    first_name: str
+    last_name: Optional[str] = None
     role_ids: List[int] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_name_fields(cls, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            if "first_name" not in data and "First_name" in data:
+                data["first_name"] = data["First_name"]
+            if "last_name" not in data and "Last_name" in data:
+                data["last_name"] = data["Last_name"]
+        return data
 
 
 class AdminUserUpdate(BaseModel):
     username: Optional[str] = None
-    First_name: Optional[str] = None
-    Last_name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     notification_token: Optional[str] = None
     role_ids: Optional[List[int]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_name_fields(cls, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            if "first_name" not in data and "First_name" in data:
+                data["first_name"] = data["First_name"]
+            if "last_name" not in data and "Last_name" in data:
+                data["last_name"] = data["Last_name"]
+        return data
 
 
 class AdminUserPasswordReset(BaseModel):
