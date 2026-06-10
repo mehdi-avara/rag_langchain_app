@@ -16,16 +16,22 @@ class FullTextRetrieverFromDB(Runnable):
         doc_ids: Optional[List[int]] = kwargs.get("doc_ids")
         company_id = kwargs.get("company_id")
 
-        query_builder = self.db.query(Chunk).filter(
-            func.to_tsvector("simple", Chunk.content)
-            .op("@@")(func.plainto_tsquery("simple", query))
+        from Models import Document as DbDocument
+
+        query_builder = (
+            self.db.query(Chunk)
+            .join(DbDocument, DbDocument.id == Chunk.doc_id)
+            .filter(
+                Chunk.document_version_id == DbDocument.current_version_id,
+                func.to_tsvector("simple", Chunk.content)
+                .op("@@")(func.plainto_tsquery("simple", query)),
+            )
         )
 
         if company_id is not None:
-            from Models import Document as DbDocument, User
+            from Models import User
             query_builder = (
                 query_builder
-                .join(DbDocument, DbDocument.id == Chunk.doc_id)
                 .join(User, User.id == DbDocument.owner_id)
                 .filter(User.company_id == company_id)
             )

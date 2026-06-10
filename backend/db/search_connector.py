@@ -30,7 +30,11 @@ def search_documents_text(
     pattern = f"%{query_text}%"
     chunk_match = (
         db.query(Chunk.id)
-        .filter(Chunk.doc_id == Document.id, Chunk.content.ilike(pattern))
+        .filter(
+            Chunk.doc_id == Document.id,
+            Chunk.document_version_id == Document.current_version_id,
+            Chunk.content.ilike(pattern),
+        )
         .exists()
     )
 
@@ -144,7 +148,8 @@ def search_document_part_hits_semantic(
         FROM documents d
         JOIN chunks c ON c.doc_id = d.id
         {user_join_sql}
-        WHERE {where_clause}
+        WHERE c.document_version_id = d.current_version_id
+          AND {where_clause}
         ORDER BY similarity DESC
         LIMIT :limit
         """

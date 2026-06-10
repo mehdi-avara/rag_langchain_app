@@ -5,7 +5,7 @@ from typing import List, Tuple, Dict
 import json
 
 from settings import get_settings
-from Models import Document, Chunk, DocumentStatusType
+from Models import Document, Chunk, DocumentVersion, DocumentStatusType
 from db.session import db_session
 from core.chunking import ChunkingMode, chunk_text
 from components.folders import get_full_processed_file_path
@@ -95,8 +95,8 @@ def run_mineru_sync(original_pdf_path: str, doc_dir: str):
         raise RuntimeError(f"MinerU failed with return code {e.returncode}") from e
 
 
-def process_pdf_with_mineru(pdf_path: str, doc_id: int, base_dir: str) -> str:
-    doc_dir = Path(base_dir) / str(doc_id)
+def process_pdf_with_mineru(pdf_path: str, doc_id: int, base_dir: str, storage_path: str | None = None) -> str:
+    doc_dir = Path(base_dir) / (storage_path or str(doc_id))
     doc_dir.mkdir(parents=True, exist_ok=True)
     run_mineru_sync(Path(base_dir) / pdf_path, doc_dir)
     middle_json_file = get_full_processed_file_path(doc_dir, "_middle.json")
@@ -158,12 +158,19 @@ def make_simple_chunks_from_pages(pages: List[Dict], max_chars: int = 3500, over
     return chunks
 
 
-def save_text_chunks(doc_id: int, chunks: List[Dict], n_pages: int) -> int:
+def save_text_chunks(
+    doc_id: int,
+    chunks: List[Dict],
+    n_pages: int,
+    document_version_id: int | None = None,
+    storage_path: str | None = None,
+) -> int:
     embedding_inputs = [f"search_document: {chunk['content']}" for chunk in chunks]
     embeddings = generate_embeddings_for_chunks(embedding_inputs) if chunks else []
 
     chunk_records = []
     current_pos = 0
+    effective_storage_path = storage_path or str(doc_id)
 
     for index, chunk in enumerate(chunks):
         content = chunk["content"]
@@ -172,9 +179,11 @@ def save_text_chunks(doc_id: int, chunks: List[Dict], n_pages: int) -> int:
         current_pos = end_pos
 
         embedding = embeddings[index] if index < len(embeddings) else None
+        version_part = document_version_id if document_version_id is not None else "current"
 
         holder = Chunk(
             doc_id=doc_id,
+            document_version_id=document_version_id,
             page_num=int(chunk["page_num"]),
             token_count=int(chunk["token_count"]),
             content=content,
@@ -182,26 +191,51 @@ def save_text_chunks(doc_id: int, chunks: List[Dict], n_pages: int) -> int:
             end_pos=end_pos,
             chunk_type="text",
             embedding=embedding,
-            vdb_id=f"{doc_id}_{index}",
-            es_id=f"{doc_id}_{index}",
+            vdb_id=f"{doc_id}_{version_part}_{index}",
+            es_id=f"{doc_id}_{version_part}_{index}",
         )
         chunk_records.append(holder)
 
     with db_session() as db:
-        db.query(Chunk).filter(Chunk.doc_id == doc_id).delete(synchronize_session=False)
-        db.query(Document).filter(Document.id == doc_id).update({
-            Document.n_pages: n_pages,
-            Document.n_chunks: len(chunk_records),
-            Document.file_path: str(doc_id),
-        })
+        if document_version_id is not None:
+            db.query(Chunk).filter(
+                Chunk.doc_id == doc_id,
+                Chunk.document_version_id == document_version_id,
+            ).delete(synchronize_session=False)
+
+            version = db.query(DocumentVersion).filter(
+                DocumentVersion.id == document_version_id,
+                DocumentVersion.document_id == doc_id,
+            ).first()
+
+            if version:
+                version.n_pages = n_pages
+                version.n_chunks = len(chunk_records)
+                version.file_path = effective_storage_path
+
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if doc and doc.current_version_id == document_version_id:
+                doc.n_pages = n_pages
+                doc.n_chunks = len(chunk_records)
+                doc.file_path = effective_storage_path
+        else:
+            db.query(Chunk).filter(Chunk.doc_id == doc_id).delete(synchronize_session=False)
+            db.query(Document).filter(Document.id == doc_id).update({
+                Document.n_pages: n_pages,
+                Document.n_chunks: len(chunk_records),
+                Document.file_path: effective_storage_path,
+            })
+
         if chunk_records:
             db.bulk_save_objects(chunk_records)
+
         db.commit()
 
     return len(chunk_records)
 
 
-def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode = ChunkingMode.token_fixed) -> int:
+
+def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode = ChunkingMode.token_fixed, document_version_id: int | None = None, storage_path: str | None = None) -> int:
     base_dir = settings.files_dir
     full_pdf_path = Path(base_dir) / pdf_path
     mineru_enabled = os.getenv("MINERU_ENABLED", "false").lower() in ("1", "true", "yes")
@@ -214,10 +248,10 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
         if not fallback_chunks:
             raise RuntimeError("pypdf fallback failed to extract text")
 
-        return save_text_chunks(doc_id, fallback_chunks, len(pages))
+        return save_text_chunks(doc_id, fallback_chunks, len(pages), document_version_id=document_version_id, storage_path=storage_path)
 
     try:
-        middle_json_path = process_pdf_with_mineru(pdf_path, doc_id, base_dir)
+        middle_json_path = process_pdf_with_mineru(pdf_path, doc_id, base_dir, storage_path=storage_path)
 
         with open(middle_json_path, "r", encoding="utf-8") as f:
             middle_data = json.load(f)
@@ -247,7 +281,7 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
                 "token_count": int(chunk["token_count"]),
             })
 
-        return save_text_chunks(doc_id, normalized_chunks, n_pages)
+        return save_text_chunks(doc_id, normalized_chunks, n_pages, document_version_id=document_version_id, storage_path=storage_path)
 
     except Exception as e:
         print("MinerU ingestion failed, falling back to pypdf", flush=True)
@@ -259,7 +293,7 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
         if not fallback_chunks:
             raise RuntimeError("Both MinerU and pypdf fallback failed to extract text") from e
 
-        return save_text_chunks(doc_id, fallback_chunks, len(pages))
+        return save_text_chunks(doc_id, fallback_chunks, len(pages), document_version_id=document_version_id, storage_path=storage_path)
 
 
 
@@ -268,6 +302,8 @@ def ingest_processed_middle_json(
     doc_id: int,
     db,
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
+    document_version_id: int | None = None,
+    storage_path: str | None = None,
 ) -> tuple[int, int]:
     with open(middle_json_path, "r", encoding="utf-8") as f:
         middle_data = json.load(f)
@@ -306,6 +342,7 @@ def ingest_processed_middle_json(
 
         holder = Chunk(
             doc_id=doc_id,
+            document_version_id=document_version_id,
             page_num=int(chunk["start_page"]),
             token_count=int(chunk["token_count"]),
             content=chunk_text_mm,
@@ -317,15 +354,41 @@ def ingest_processed_middle_json(
         chunk_records.append(holder)
 
     for i, chunk in enumerate(chunk_records):
-        chunk.vdb_id = f"{doc_id}_{i}"
-        chunk.es_id = f"{doc_id}_{i}"
+        version_part = document_version_id if document_version_id is not None else "current"
+        chunk.vdb_id = f"{doc_id}_{version_part}_{i}"
+        chunk.es_id = f"{doc_id}_{version_part}_{i}"
 
-    db.query(Chunk).filter(Chunk.doc_id == doc_id).delete(synchronize_session=False)
-    db.query(Document).filter(Document.id == doc_id).update({
-        Document.n_pages: n_pages,
-        Document.n_chunks: len(chunks),
-        Document.file_path: str(doc_id),
-    })
+    effective_storage_path = storage_path or str(doc_id)
+
+    if document_version_id is not None:
+        db.query(Chunk).filter(
+            Chunk.doc_id == doc_id,
+            Chunk.document_version_id == document_version_id,
+        ).delete(synchronize_session=False)
+
+        version = db.query(DocumentVersion).filter(
+            DocumentVersion.id == document_version_id,
+            DocumentVersion.document_id == doc_id,
+        ).first()
+
+        if version:
+            version.n_pages = n_pages
+            version.n_chunks = len(chunks)
+            version.file_path = effective_storage_path
+
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if doc and doc.current_version_id == document_version_id:
+            doc.n_pages = n_pages
+            doc.n_chunks = len(chunks)
+            doc.file_path = effective_storage_path
+    else:
+        db.query(Chunk).filter(Chunk.doc_id == doc_id).delete(synchronize_session=False)
+        db.query(Document).filter(Document.id == doc_id).update({
+            Document.n_pages: n_pages,
+            Document.n_chunks: len(chunks),
+            Document.file_path: effective_storage_path,
+        })
+
     if chunk_records:
         db.bulk_save_objects(chunk_records)
 

@@ -56,3 +56,22 @@ class DocumentAccessOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DocumentVersionOut(BaseModel):
+    id: int
+    document_id: int
+    version_number: int
+    asset_id: int | None = None
+    filename: str
+    file_path: str | None = None
+    status: str
+    n_pages: int
+    n_chunks: int
+    created_by_user_id: int | None = None
+    note: str | None = None
+    is_current: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

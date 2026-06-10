@@ -1,6 +1,7 @@
 from typing import Annotated, List, Optional
 from fastapi import Depends, APIRouter, UploadFile, status, Response, HTTPException, Query, Request, Header, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pathlib import Path
 import os
@@ -12,10 +13,10 @@ import posixpath
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from deps import require_permission
-from Models import User, Document, Chunk, DocumentStatusType, UserDocumentAccess
+from Models import User, Document, DocumentVersion, Chunk, DocumentStatusType, UserDocumentAccess
 from db.init_db import get_db
 from db.search_connector import search_documents_text, search_document_part_hits_semantic
-from schemas.document import DocumentOut, ChunkOut, DocumentAccessGrantIn, DocumentAccessOut
+from schemas.document import DocumentOut, ChunkOut, DocumentAccessGrantIn, DocumentAccessOut, DocumentVersionOut
 from schemas.asset import AssetUploadUrlCreate, AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
 from schemas.search import (
     TextSearchRequest,
@@ -247,6 +248,28 @@ def complete_document_upload(
     db.commit()
     db.refresh(doc)
 
+    version = DocumentVersion(
+        document_id=doc.id,
+        version_number=1,
+        asset_id=asset.id,
+        filename=asset.original_filename,
+        file_path=str(doc.id),
+        status=DocumentStatusType.QUEUED.value,
+        n_pages=0,
+        n_chunks=0,
+        created_by_user_id=current_user.id,
+        note="Initial version",
+        is_current=True,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    doc.current_version_id = version.id
+    doc.file_path = str(doc.id)
+    db.commit()
+    db.refresh(doc)
+
     doc_dir = Path(settings.files_dir) / str(doc.id)
     original_pdf = doc_dir / "original.pdf"
 
@@ -261,6 +284,7 @@ def complete_document_upload(
 
     if header != b"%PDF":
         doc.status = DocumentStatusType.FAIELED.value
+        version.status = DocumentStatusType.FAIELED.value
         db.commit()
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF")
 
@@ -270,11 +294,14 @@ def complete_document_upload(
         doc_id=doc.id,
         asset_id=asset.id,
         owner_id=current_user.id,
+        document_version_id=version.id,
     )
 
     return {
         "doc_id": doc.id,
         "asset_id": asset.id,
+        "version_id": version.id,
+        "version_number": version.version_number,
         "status": DocumentStatusType.QUEUED.value,
     }
 
@@ -796,6 +823,173 @@ async def revoke_document_access(
 
 
 
+@router.get("/{doc_id}/versions", response_model=List[DocumentVersionOut], status_code=status.HTTP_200_OK)
+async def list_document_versions(
+    doc_id: int,
+    current_user: User = Depends(require_permission("documents:read")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_accessible_document(db, doc_id, current_user, "read")
+
+    return (
+        db.query(DocumentVersion)
+        .filter(DocumentVersion.document_id == doc.id)
+        .order_by(DocumentVersion.version_number.desc())
+        .all()
+    )
+
+
+@router.post("/{doc_id}/versions/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
+def create_document_version_upload_url(
+    doc_id: int,
+    payload: AssetUploadUrlCreate,
+    current_user: User = Depends(require_permission("documents:update")),
+    db: Session = Depends(get_db),
+):
+    _get_accessible_document(db, doc_id, current_user, "update")
+
+    if payload.content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="Only PDF documents are supported")
+
+    manager = StorageManager(db)
+    return manager.create_upload_url(
+        filename=payload.filename,
+        content_type=payload.content_type,
+        size_bytes=payload.size_bytes,
+        owner=current_user,
+        purpose="document_version_pdf",
+        checksum=payload.checksum,
+    )
+
+
+@router.post("/{doc_id}/versions/complete-upload/{asset_id}", status_code=status.HTTP_201_CREATED)
+def complete_document_version_upload(
+    doc_id: int,
+    asset_id: int,
+    payload: AssetCompleteUploadIn,
+    current_user: User = Depends(require_permission("documents:update")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_accessible_document(db, doc_id, current_user, "update")
+
+    manager = StorageManager(db)
+    asset = manager.complete_upload(
+        asset_id=asset_id,
+        user=current_user,
+        checksum=payload.checksum,
+    )
+
+    if asset.content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="Only PDF documents are supported")
+
+    last_version_number = (
+        db.query(func.max(DocumentVersion.version_number))
+        .filter(DocumentVersion.document_id == doc.id)
+        .scalar()
+        or 0
+    )
+
+    next_version_number = int(last_version_number) + 1
+    version_file_path = f"{doc.id}/versions/{next_version_number}"
+
+    version = DocumentVersion(
+        document_id=doc.id,
+        version_number=next_version_number,
+        asset_id=asset.id,
+        filename=asset.original_filename,
+        file_path=version_file_path,
+        status=DocumentStatusType.QUEUED.value,
+        n_pages=0,
+        n_chunks=0,
+        created_by_user_id=current_user.id,
+        note=payload.note if hasattr(payload, "note") else None,
+        is_current=False,
+    )
+
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    original_pdf = Path(settings.files_dir) / version_file_path / "original.pdf"
+
+    manager.download_asset_to_path(
+        asset_id=asset.id,
+        user=current_user,
+        target_path=original_pdf,
+    )
+
+    with original_pdf.open("rb") as f:
+        header = f.read(4)
+
+    if header != b"%PDF":
+        version.status = DocumentStatusType.FAIELED.value
+        db.commit()
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid PDF")
+
+    from core.celery.tasks import mineru_process_pdf
+
+    mineru_process_pdf.delay(
+        doc_id=doc.id,
+        asset_id=asset.id,
+        owner_id=current_user.id,
+        document_version_id=version.id,
+    )
+
+    return {
+        "doc_id": doc.id,
+        "asset_id": asset.id,
+        "version_id": version.id,
+        "version_number": version.version_number,
+        "status": DocumentStatusType.QUEUED.value,
+    }
+
+
+@router.post("/{doc_id}/versions/{version_id}/activate", response_model=DocumentVersionOut, status_code=status.HTTP_200_OK)
+def activate_document_version(
+    doc_id: int,
+    version_id: int,
+    current_user: User = Depends(require_permission("documents:update")),
+    db: Session = Depends(get_db),
+):
+    doc = _get_accessible_document(db, doc_id, current_user, "update")
+
+    version = (
+        db.query(DocumentVersion)
+        .filter(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == doc.id,
+        )
+        .first()
+    )
+
+    if not version:
+        raise HTTPException(status_code=404, detail="Document version not found")
+
+    if version.status != DocumentStatusType.DONE.value:
+        raise HTTPException(status_code=409, detail="Only done versions can be activated")
+
+    db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc.id,
+        DocumentVersion.id != version.id,
+    ).update({DocumentVersion.is_current: False}, synchronize_session=False)
+
+    version.is_current = True
+    doc.current_version_id = version.id
+    doc.original_asset_id = version.asset_id
+    doc.filename = version.filename
+    doc.file_path = version.file_path
+    doc.n_pages = version.n_pages
+    doc.n_chunks = version.n_chunks
+    doc.status = version.status
+
+    db.commit()
+    db.refresh(version)
+
+    return version
+
+
+
+
 @router.get("/{doc_id}", status_code=status.HTTP_200_OK, response_model=DocumentOut)
 async def get_document(
     doc_id: int,
@@ -838,10 +1032,13 @@ async def browse_chunks(
     db_start_page = start_page - 1
     db_end_page = end_page - 1
 
+    doc = _get_accessible_document(db, doc_id, current_user, "read")
+
     chunks = (
         db.query(Chunk)
         .filter(
             Chunk.doc_id == doc_id,
+            Chunk.document_version_id == doc.current_version_id,
             Chunk.page_num >= db_start_page,
             Chunk.page_num <= db_end_page,
         )

@@ -44,7 +44,7 @@ class PostgresVectorStore:
             return []
         embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-        filters = ["c.embedding IS NOT NULL"]
+        filters = ["c.embedding IS NOT NULL", "c.document_version_id = d.current_version_id"]
         params: Dict[str, Any] = {"k": k, "query_vec": embedding_str}
         joins = ["JOIN documents d ON d.id = c.doc_id"]
 
