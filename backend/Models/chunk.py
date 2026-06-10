@@ -12,6 +12,7 @@ class Chunk(Base):
 
     id = Column(Integer, primary_key=True)
     doc_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    document_version_id = Column(Integer, ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=True, index=True)
     page_num = Column(Integer, nullable=False)
     token_count = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
@@ -25,3 +26,4 @@ class Chunk(Base):
 
     image_data = relationship("ImageChunk", back_populates="chunk", cascade="all, delete-orphan")
     document = relationship("Document", back_populates="chunks")
+    document_version = relationship("DocumentVersion", back_populates="chunks", foreign_keys=[document_version_id])
