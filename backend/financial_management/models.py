@@ -31,6 +31,7 @@ class FinancialAccessMethod(str, enum.Enum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
     EMAIL = "email"
+    PHONE = "phone"
     WECHAT = "we-chat"
 
 

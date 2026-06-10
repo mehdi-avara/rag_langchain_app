@@ -4,7 +4,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, validator
 
 from Models import CommentType
 from schemas.comment import CommentCreate
@@ -109,6 +109,21 @@ class FinancialCustomerBase(BaseModel):
     email: Optional[str] = None
     description: Optional[str] = None
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("phone_number1", "phone_number2", "email", "description", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
 
 class FinancialCustomerCreate(FinancialCustomerBase):
     pass
@@ -121,6 +136,21 @@ class FinancialCustomerUpdate(BaseModel):
     access_method: Optional[FinancialAccessMethod] = None
     email: Optional[str] = None
     description: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("phone_number1", "phone_number2", "email", "description", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
 
 class FinancialCustomerSummaryOut(BaseModel):
