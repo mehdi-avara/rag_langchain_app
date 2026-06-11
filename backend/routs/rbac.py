@@ -449,7 +449,7 @@ def update_company_user_roles(
     user_id: int,
     payload: AdminUserRolesUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("users:update")),
+    current_user: User = Depends(require_permission("users:roles:manage")),
 ):
     company_id = _require_company_id(current_user)
     user = _get_company_user_or_404(db, user_id, company_id)
@@ -477,7 +477,7 @@ def update_company_user_roles(
 def activate_company_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("users:update")),
+    current_user: User = Depends(require_permission("users:status:manage")),
 ):
     company_id = _require_company_id(current_user)
     user = _get_company_user_or_404(db, user_id, company_id)
@@ -495,7 +495,7 @@ def activate_company_user(
 def deactivate_company_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("users:update")),
+    current_user: User = Depends(require_permission("users:status:manage")),
 ):
     company_id = _require_company_id(current_user)
     user = _get_company_user_or_404(db, user_id, company_id)
@@ -523,7 +523,7 @@ def reset_company_user_password(
     user_id: int,
     payload: AdminUserPasswordReset,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("users:update")),
+    current_user: User = Depends(require_permission("users:password:reset")),
 ):
     company_id = _require_company_id(current_user)
     user = _get_company_user_or_404(db, user_id, company_id)
