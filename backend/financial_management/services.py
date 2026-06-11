@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional, Sequence
 
 from fastapi import HTTPException
@@ -13,7 +13,7 @@ from components.llm import llm_client
 from settings import get_settings
 from Models import User
 
-from .models import FinancialCard, FinancialCustomer, FinancialReceipt, FinancialReceiptFile
+from .models import FinancialCard, FinancialCurrency, FinancialCustomer, FinancialReceipt, FinancialReceiptFile
 from .schemas import (
     FinancialCardOut,
     FinancialCardSummaryOut,
@@ -94,6 +94,51 @@ def normalize_card_number(card_number: str) -> str:
 
 def mask_card_number(card_number: str) -> str:
     return normalize_card_number(card_number)
+
+
+def normalize_currency(value) -> str:
+    if isinstance(value, FinancialCurrency):
+        return value.value
+    normalized = str(value or FinancialCurrency.TOMAN.value).strip().upper()
+    allowed = {item.value for item in FinancialCurrency}
+    if normalized not in allowed:
+        raise HTTPException(status_code=422, detail="Invalid currency")
+    return normalized
+
+
+def calculate_receipt_currency_fields(
+    amount,
+    currency,
+    base_currency,
+    exchange_rate_to_base=None,
+):
+    amount_dec = Decimal(str(amount))
+    currency_value = normalize_currency(currency)
+    base_currency_value = normalize_currency(base_currency)
+
+    if currency_value == base_currency_value:
+        rate = Decimal("1")
+        source = "system"
+    else:
+        if exchange_rate_to_base is None:
+            raise HTTPException(
+                status_code=422,
+                detail="exchange_rate_to_base is required when currency differs from company base currency",
+            )
+        rate = Decimal(str(exchange_rate_to_base))
+        if rate <= 0:
+            raise HTTPException(status_code=422, detail="exchange_rate_to_base must be greater than zero")
+        source = "manual"
+
+    base_amount = (amount_dec * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    return {
+        "currency": currency_value,
+        "base_currency": base_currency_value,
+        "exchange_rate_to_base": rate,
+        "base_amount": base_amount,
+        "exchange_rate_source": source,
+    }
 
 
 def _div(a: int, b: int) -> int:
@@ -288,6 +333,11 @@ def receipt_to_out(receipt: FinancialReceipt) -> FinancialReceiptOut:
         description=receipt.description,
         tracking_number=receipt.tracking_number,
         amount=Decimal(str(receipt.amount)),
+        currency=receipt.currency,
+        base_currency=receipt.base_currency,
+        exchange_rate_to_base=Decimal(str(receipt.exchange_rate_to_base)),
+        base_amount=Decimal(str(receipt.base_amount)),
+        exchange_rate_source=receipt.exchange_rate_source,
         direction=receipt.direction,
         counterparty_name=receipt.counterparty_name,
         receipt_date=receipt.receipt_date,

@@ -13,6 +13,7 @@ class Company(Base):
     name = Column(String(150), nullable=False)
     slug = Column(String(120), nullable=False, unique=True, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    base_currency = Column(String(12), nullable=False, default="IRT")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     users = relationship("User", back_populates="company")

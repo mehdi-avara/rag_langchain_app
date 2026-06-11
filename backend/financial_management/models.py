@@ -27,6 +27,15 @@ class FinancialDirection(str, enum.Enum):
     OUTPUT = "output"
 
 
+class FinancialCurrency(str, enum.Enum):
+    TOMAN = "IRT"
+    RIAL = "IRR"
+    DOLLAR = "USD"
+    DIRHAM = "AED"
+    DINAR = "IQD"
+    YUAN = "CNY"
+
+
 class FinancialAccessMethod(str, enum.Enum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
@@ -107,6 +116,11 @@ class FinancialReceipt(Base):
     description_embedding = Column(Vector(1024), nullable=True)
     tracking_number = Column(String, nullable=True)
     amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(String(12), nullable=False, default=FinancialCurrency.TOMAN.value, index=True)
+    base_currency = Column(String(12), nullable=False, default=FinancialCurrency.TOMAN.value, index=True)
+    exchange_rate_to_base = Column(Numeric(18, 6), nullable=False, default=1)
+    base_amount = Column(Numeric(18, 2), nullable=False, default=0)
+    exchange_rate_source = Column(String(20), nullable=False, default="system")
     direction = Column(String, nullable=False, index=True)
     counterparty_name = Column(String, nullable=False, index=True)
     receipt_date = Column(DateTime, nullable=False, default=datetime.utcnow)

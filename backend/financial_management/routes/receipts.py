@@ -13,6 +13,7 @@ from Models import User
 from ..models import FinancialReceipt
 from ..schemas import FinancialReceiptBatchRequest, FinancialReceiptCreate, FinancialReceiptOut, FinancialReceiptUpdate
 from ..services import (
+    calculate_receipt_currency_fields,
     get_card_or_404,
     get_customer_or_404,
     get_receipt_or_404,
@@ -46,6 +47,13 @@ def create_receipt(
     customer = get_customer_or_404(db, payload.customer_id, current_user) if payload.customer_id is not None else None
     embedding = safe_embed_text(payload.description)
     counterparty_name = _resolve_counterparty_name(payload.counterparty_name, customer.name if customer else None)
+    base_currency = getattr(getattr(current_user, "company", None), "base_currency", None) or "IRT"
+    currency_fields = calculate_receipt_currency_fields(
+        amount=payload.amount,
+        currency=payload.currency,
+        base_currency=base_currency,
+        exchange_rate_to_base=payload.exchange_rate_to_base,
+    )
 
     receipt = FinancialReceipt(
         company_id=current_user.company_id,
@@ -56,6 +64,11 @@ def create_receipt(
         description_embedding=embedding,
         tracking_number=payload.tracking_number,
         amount=payload.amount,
+        currency=currency_fields["currency"],
+        base_currency=currency_fields["base_currency"],
+        exchange_rate_to_base=currency_fields["exchange_rate_to_base"],
+        base_amount=currency_fields["base_amount"],
+        exchange_rate_source=currency_fields["exchange_rate_source"],
         direction=payload.direction,
         counterparty_name=counterparty_name,
         receipt_date=payload.receipt_date,
@@ -199,6 +212,32 @@ def update_receipt(
 
     if "receipt_date" in data and data["receipt_date"] is not None:
         receipt.receipt_date = data.pop("receipt_date")
+
+    currency_supplied = "currency" in data
+    amount_supplied = "amount" in data
+    rate_supplied = "exchange_rate_to_base" in data
+
+    if currency_supplied or amount_supplied or rate_supplied:
+        new_amount = data.pop("amount", receipt.amount)
+        new_currency = data.pop("currency", receipt.currency)
+        new_rate = data.pop("exchange_rate_to_base", None)
+        if new_rate is None and not currency_supplied:
+            new_rate = receipt.exchange_rate_to_base
+
+        base_currency = getattr(getattr(current_user, "company", None), "base_currency", None) or receipt.base_currency or "IRT"
+        currency_fields = calculate_receipt_currency_fields(
+            amount=new_amount,
+            currency=new_currency,
+            base_currency=base_currency,
+            exchange_rate_to_base=new_rate,
+        )
+
+        receipt.amount = new_amount
+        receipt.currency = currency_fields["currency"]
+        receipt.base_currency = currency_fields["base_currency"]
+        receipt.exchange_rate_to_base = currency_fields["exchange_rate_to_base"]
+        receipt.base_amount = currency_fields["base_amount"]
+        receipt.exchange_rate_source = currency_fields["exchange_rate_source"]
 
     if "description" in data and data["description"] is not None:
         receipt.description_embedding = safe_embed_text(data["description"])
