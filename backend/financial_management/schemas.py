@@ -103,9 +103,9 @@ class FinancialCardOut(FinancialCardSummaryOut):
 
 class FinancialCustomerBase(BaseModel):
     name: str = Field(..., min_length=1)
-    phone_number1: Optional[str] = None
+    phone_number1: str = Field(..., min_length=1)
     phone_number2: Optional[str] = None
-    access_method: Optional[FinancialAccessMethod] = None
+    access_method: FinancialAccessMethod
     email: Optional[str] = None
     description: Optional[str] = None
 
@@ -116,7 +116,19 @@ class FinancialCustomerBase(BaseModel):
             return value.strip()
         return value
 
-    @field_validator("phone_number1", "phone_number2", "email", "description", mode="before")
+    @field_validator("phone_number1", mode="before")
+    @classmethod
+    def normalize_required_phone_number1(cls, value):
+        if value is None:
+            raise ValueError("phone_number1 is required")
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("phone_number1 is required")
+            return value
+        return value
+
+    @field_validator("phone_number2", "email", "description", mode="before")
     @classmethod
     def empty_string_to_none(cls, value):
         if isinstance(value, str):
@@ -131,9 +143,9 @@ class FinancialCustomerCreate(FinancialCustomerBase):
 
 class FinancialCustomerUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
-    phone_number1: Optional[str] = None
+    phone_number1: str
     phone_number2: Optional[str] = None
-    access_method: Optional[FinancialAccessMethod] = None
+    access_method: FinancialAccessMethod
     email: Optional[str] = None
     description: Optional[str] = None
 
@@ -144,7 +156,19 @@ class FinancialCustomerUpdate(BaseModel):
             return value.strip()
         return value
 
-    @field_validator("phone_number1", "phone_number2", "email", "description", mode="before")
+    @field_validator("phone_number1", mode="before")
+    @classmethod
+    def normalize_required_phone_number1(cls, value):
+        if value is None:
+            raise ValueError("phone_number1 is required")
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("phone_number1 is required")
+            return value
+        return value
+
+    @field_validator("phone_number2", "email", "description", mode="before")
     @classmethod
     def empty_string_to_none(cls, value):
         if isinstance(value, str):
@@ -158,9 +182,9 @@ class FinancialCustomerSummaryOut(BaseModel):
 
     id: int
     name: str
-    phone_number1: Optional[str] = None
+    phone_number1: str
     phone_number2: Optional[str] = None
-    access_method: Optional[FinancialAccessMethod] = None
+    access_method: FinancialAccessMethod
     email: Optional[str] = None
     description: Optional[str] = None
 
