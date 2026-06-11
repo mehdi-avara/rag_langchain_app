@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload
 
 from db.init_db import get_db
@@ -11,7 +12,7 @@ from deps import require_permission
 from Models import User
 
 from ..models import FinancialReceipt
-from ..schemas import FinancialReceiptBatchRequest, FinancialReceiptCreate, FinancialReceiptOut, FinancialReceiptUpdate
+from ..schemas import FinancialReceiptBatchRequest, FinancialReceiptCreate, FinancialReceiptCurrencySummaryOut, FinancialReceiptOut, FinancialReceiptSummaryOut, FinancialReceiptUpdate
 from ..services import (
     calculate_receipt_currency_fields,
     get_card_or_404,
@@ -127,6 +128,85 @@ def list_receipts(
 
     return [receipt_to_out(receipt) for receipt in receipts]
 
+
+
+@router.get("/summary", response_model=FinancialReceiptSummaryOut)
+def get_receipts_summary(
+    direction: Optional[str] = Query(None),
+    credit_card_id: Optional[int] = Query(None),
+    date_from: Optional[date] = Query(None, description="Gregorian date, format YYYY-MM-DD"),
+    date_to: Optional[date] = Query(None, description="Gregorian date, format YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_management:receipts:read")),
+):
+    query = db.query(FinancialReceipt).filter(FinancialReceipt.company_id == current_user.company_id)
+
+    if direction:
+        query = query.filter(FinancialReceipt.direction == direction)
+
+    if credit_card_id is not None:
+        query = query.filter(FinancialReceipt.credit_card_id == credit_card_id)
+
+    if date_from:
+        query = query.filter(FinancialReceipt.receipt_date >= datetime.combine(date_from, time.min))
+
+    if date_to:
+        query = query.filter(FinancialReceipt.receipt_date <= datetime.combine(date_to, time.max))
+
+    total_row = query.with_entities(
+        func.coalesce(
+            func.sum(case((FinancialReceipt.direction == "input", FinancialReceipt.base_amount), else_=0)),
+            0,
+        ).label("total_input_base"),
+        func.coalesce(
+            func.sum(case((FinancialReceipt.direction == "output", FinancialReceipt.base_amount), else_=0)),
+            0,
+        ).label("total_output_base"),
+        func.count(FinancialReceipt.id).label("receipt_count"),
+    ).one()
+
+    currency_rows = (
+        query.with_entities(
+            FinancialReceipt.currency.label("currency"),
+            func.coalesce(
+                func.sum(case((FinancialReceipt.direction == "input", FinancialReceipt.amount), else_=0)),
+                0,
+            ).label("input_amount"),
+            func.coalesce(
+                func.sum(case((FinancialReceipt.direction == "output", FinancialReceipt.amount), else_=0)),
+                0,
+            ).label("output_amount"),
+            func.count(FinancialReceipt.id).label("receipt_count"),
+        )
+        .group_by(FinancialReceipt.currency)
+        .order_by(FinancialReceipt.currency.asc())
+        .all()
+    )
+
+    total_input_base = total_row.total_input_base
+    total_output_base = total_row.total_output_base
+
+    by_currency = [
+        FinancialReceiptCurrencySummaryOut(
+            currency=row.currency,
+            input_amount=row.input_amount,
+            output_amount=row.output_amount,
+            net_amount=row.input_amount - row.output_amount,
+            receipt_count=row.receipt_count,
+        )
+        for row in currency_rows
+    ]
+
+    base_currency = getattr(getattr(current_user, "company", None), "base_currency", None) or "IRT"
+
+    return FinancialReceiptSummaryOut(
+        base_currency=base_currency,
+        total_input_base=total_input_base,
+        total_output_base=total_output_base,
+        net_base=total_input_base - total_output_base,
+        receipt_count=total_row.receipt_count,
+        by_currency=by_currency,
+    )
 
 @router.get("/{receipt_id}", response_model=FinancialReceiptOut)
 def get_receipt(

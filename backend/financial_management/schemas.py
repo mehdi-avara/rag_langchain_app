@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, validator
 from Models import CommentType
 from schemas.comment import CommentCreate
 
-from .models import FinancialAccessMethod, FinancialDirection
+from .models import FinancialAccessMethod, FinancialCurrency, FinancialDirection
 
 
 def normalize_receipt_date(value):
@@ -211,6 +211,8 @@ class FinancialReceiptBase(BaseModel):
     description: str = Field(..., min_length=1)
     tracking_number: Optional[str] = None
     amount: Decimal = Field(..., gt=Decimal("0"))
+    currency: FinancialCurrency = FinancialCurrency.TOMAN
+    exchange_rate_to_base: Optional[Decimal] = Field(default=None, gt=Decimal("0"))
     direction: FinancialDirection
     counterparty_name: Optional[str] = None
     receipt_date: datetime
@@ -230,6 +232,8 @@ class FinancialReceiptUpdate(BaseModel):
     description: Optional[str] = Field(None, min_length=1)
     tracking_number: Optional[str] = None
     amount: Optional[Decimal] = Field(None, gt=Decimal("0"))
+    currency: Optional[FinancialCurrency] = None
+    exchange_rate_to_base: Optional[Decimal] = Field(default=None, gt=Decimal("0"))
     direction: Optional[FinancialDirection] = None
     counterparty_name: Optional[str] = None
     receipt_date: Optional[datetime] = None
@@ -248,6 +252,11 @@ class FinancialReceiptOut(BaseModel):
     description: str
     tracking_number: Optional[str] = None
     amount: Decimal
+    currency: FinancialCurrency
+    base_currency: FinancialCurrency
+    exchange_rate_to_base: Decimal
+    base_amount: Decimal
+    exchange_rate_source: str
     direction: FinancialDirection
     counterparty_name: Optional[str] = None
     receipt_date: datetime
@@ -259,6 +268,23 @@ class FinancialReceiptOut(BaseModel):
     updated_at: datetime
     files: List[FinancialReceiptFileOut] = Field(default_factory=list)
 
+
+
+class FinancialReceiptCurrencySummaryOut(BaseModel):
+    currency: FinancialCurrency
+    input_amount: Decimal = Decimal("0")
+    output_amount: Decimal = Decimal("0")
+    net_amount: Decimal = Decimal("0")
+    receipt_count: int = 0
+
+
+class FinancialReceiptSummaryOut(BaseModel):
+    base_currency: FinancialCurrency
+    total_input_base: Decimal = Decimal("0")
+    total_output_base: Decimal = Decimal("0")
+    net_base: Decimal = Decimal("0")
+    receipt_count: int = 0
+    by_currency: List[FinancialReceiptCurrencySummaryOut] = Field(default_factory=list)
 
 class FinancialReceiptBatchRequest(BaseModel):
     ids: List[int] = Field(default_factory=list)
@@ -288,6 +314,11 @@ class FinancialReceiptSemanticHit(BaseModel):
     description: str
     tracking_number: Optional[str] = None
     amount: Decimal
+    currency: FinancialCurrency
+    base_currency: FinancialCurrency
+    exchange_rate_to_base: Decimal
+    base_amount: Decimal
+    exchange_rate_source: str
     direction: FinancialDirection
     counterparty_name: str
     receipt_date: datetime
