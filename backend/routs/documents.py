@@ -519,7 +519,7 @@ def _resolve_accessible_document_search_ids(
 @router.post("/search", response_model=DocumentSearchResponse, status_code=status.HTTP_200_OK)
 async def search_documents(
     payload: DocumentSearchRequest,
-    current_user: User = Depends(require_permission("documents:read")),
+    current_user: User = Depends(require_permission("documents:search")),
     db: Session = Depends(get_db),
 ):
     mode = "semantic" if payload.mode == "vector" else payload.mode
@@ -561,7 +561,7 @@ async def search_documents(
 @router.post("/filter", response_model=List[DocumentOut], status_code=status.HTTP_200_OK, deprecated=True)
 async def filter_documents(
     payload: TextSearchRequest,
-    current_user: User = Depends(require_permission("documents:read")),
+    current_user: User = Depends(require_permission("documents:search")),
     db: Session = Depends(get_db),
 ):
     result = await search_documents(
@@ -581,7 +581,7 @@ async def filter_documents(
 async def semantic_search_documents(
     payload: SemanticSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(require_permission("documents:read")),
+    current_user: User = Depends(require_permission("documents:search")),
     db: Session = Depends(get_db),
 ):
     result = await search_documents(
@@ -773,7 +773,7 @@ async def stream_pdf(
 @router.get("/{doc_id}/access", response_model=List[DocumentAccessOut], status_code=status.HTTP_200_OK)
 async def list_document_access(
     doc_id: int,
-    current_user: User = Depends(require_permission("documents:read")),
+    current_user: User = Depends(require_permission("documents:access:manage")),
     db: Session = Depends(get_db),
 ):
     doc = _get_company_document(db, doc_id, current_user)
@@ -873,7 +873,7 @@ async def revoke_document_access(
 @router.get("/{doc_id}/versions", response_model=List[DocumentVersionOut], status_code=status.HTTP_200_OK)
 async def list_document_versions(
     doc_id: int,
-    current_user: User = Depends(require_permission("documents:read")),
+    current_user: User = Depends(require_permission("documents:versions:manage")),
     db: Session = Depends(get_db),
 ):
     doc = _get_accessible_document(db, doc_id, current_user, "read")

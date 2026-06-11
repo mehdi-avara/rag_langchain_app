@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from db.init_db import get_db
 from Models import Comment, User, CommentFile
 from Models.file_asset import FileAssetStatus
-from deps import get_current_user
+from deps import get_current_user, require_permission
 from schemas.asset import AssetUploadUrlCreate, AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
 from schemas.comment import CommentFileName, CommentFileOut, CommentFileUpload
 from settings import get_settings
@@ -61,7 +61,7 @@ def _get_comment_file_or_404(
 def list_comment_files(
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
 
@@ -78,7 +78,7 @@ def create_comment_file_upload_url(
     comment_id: int,
     payload: AssetUploadUrlCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
 
@@ -99,7 +99,7 @@ def complete_comment_file_upload(
     asset_id: int,
     payload: AssetCompleteUploadIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
 
@@ -146,7 +146,7 @@ def create_comment_file_download_url(
     comment_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
@@ -174,7 +174,7 @@ def create_comment_file_preview_url(
     comment_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
@@ -202,7 +202,7 @@ def download_comment_file(
     comment_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)
@@ -236,7 +236,7 @@ async def add_file_to_comment(
     comment_id: int,
     upload: CommentFileUpload = Depends(_parse_file_upload),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
 
@@ -269,7 +269,7 @@ def delete_comment_file(
     comment_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:files:manage")),
 ):
     _get_owned_comment(db, comment_id, current_user)
     file_rec = _get_comment_file_or_404(db, comment_id, file_id, current_user)

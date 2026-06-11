@@ -7,7 +7,7 @@ from core.semantic_ask import generate_answer_from_references, parse_semantic_ci
 from db.init_db import get_db
 from db.search_connector import search_comments_text, search_comment_hits_semantic
 from Models import Comment, User
-from deps import get_current_user
+from deps import get_current_user, require_permission
 from schemas.comment import CommentCreate, CommentOut, CommentUpdate
 from schemas.search import (
     TextSearchRequest,
@@ -43,7 +43,7 @@ def _get_owned_comment(db: Session, comment_id: int, current_user: User) -> Comm
 @router.get("", response_model=List[CommentOut])
 def list_comments(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:read")),
 ):
     return (
         db.query(Comment)
@@ -57,7 +57,7 @@ def list_comments(
 def search_comments(
     payload: CommentSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:search")),
 ):
     mode = "semantic" if payload.mode == "vector" else payload.mode
 
@@ -94,7 +94,7 @@ def search_comments(
 def filter_comments(
     payload: TextSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:search")),
 ):
     result = search_comments(
         payload=CommentSearchRequest(
@@ -114,7 +114,7 @@ def semantic_search_comments(
     payload: SemanticCommentSearchRequestWithId,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:search")),
 ):
     result = search_comments(
         payload=CommentSearchRequest(
@@ -134,7 +134,7 @@ def semantic_search_comments(
 async def ask_comments(
     payload: CommentAskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:ask")),
 ):
     comment_top_k = 10 if payload.scope in {"comments", "both"} else 0
     references = (
@@ -165,7 +165,7 @@ async def ask_comments(
 def get_comment_by_id(
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:read")),
 ):
     return _get_owned_comment(db, comment_id, current_user)
 
@@ -174,7 +174,7 @@ def get_comment_by_id(
 async def create_comment(
     payload: CommentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:create")),
 ):
     embedding_vec = None
     try:
@@ -203,7 +203,7 @@ async def update_comment(
     comment_id: int,
     payload: CommentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:update")),
 ):
     comment = _get_owned_comment(db, comment_id, current_user)
 
@@ -228,7 +228,7 @@ async def update_comment(
 def delete_comment(
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("comments:delete")),
 ):
     comment = _get_owned_comment(db, comment_id, current_user)
 
