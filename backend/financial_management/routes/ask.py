@@ -23,7 +23,7 @@ router = APIRouter(prefix="/receipts")
 async def ask_receipts(
     payload: FinancialReceiptAskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:ask")),
+    current_user: User = Depends(require_permission("financial_management:receipts:ask")),
 ):
     for receipt_id in payload.receipt_ids:
         get_receipt_or_404(db, receipt_id, current_user)
@@ -55,7 +55,7 @@ async def ask_single_receipt(
     receipt_id: int,
     payload: FinancialReceiptAskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:ask")),
+    current_user: User = Depends(require_permission("financial_management:receipts:ask")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
 

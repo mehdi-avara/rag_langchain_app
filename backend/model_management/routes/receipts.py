@@ -83,7 +83,7 @@ def link_receipt(
     model_id: int,
     payload: ModelReceiptLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("models:receipts", "financial_management:read")),
+    current_user: User = Depends(require_permissions("models:receipts", "financial_management:receipts:read")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
     _ = get_receipt(receipt_id=payload.receipt_id, db=db, current_user=current_user)
@@ -122,7 +122,7 @@ def create_receipt_and_link(
     model_id: int,
     body: ModelCreateReceiptAndLinkRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("models:receipts", "financial_management:create", "financial_management:read")),
+    current_user: User = Depends(require_permissions("models:receipts", "financial_management:receipts:create", "financial_management:receipts:read")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
     receipt = create_receipt(payload=body.payload, db=db, current_user=current_user)
@@ -158,7 +158,7 @@ def unlink_receipt(
 def list_linked_receipts(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("models:receipts", "financial_management:read", "financial_management:search")),
+    current_user: User = Depends(require_permissions("models:receipts", "financial_management:receipts:read", "financial_management:receipts:search")),
     search: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -206,7 +206,7 @@ def search_linked_receipts(
     model_id: int,
     payload: ModelReceiptSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("models:receipts", "financial_management:search", "financial_management:read")),
+    current_user: User = Depends(require_permissions("models:receipts", "financial_management:receipts:search", "financial_management:receipts:read")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
     links = db.query(ModelReceiptLink).filter(ModelReceiptLink.model_id == model_id).order_by(ModelReceiptLink.created_at.desc()).all()
@@ -246,7 +246,7 @@ def search_linked_receipts(
 def get_model_receipt_summary(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("models:receipts", "financial_management:read")),
+    current_user: User = Depends(require_permissions("models:receipts", "financial_management:receipts:read")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
     receipt_ids = get_receipt_ids(db, model_id)

@@ -23,7 +23,7 @@ router = APIRouter(prefix="/cards")
 def create_card(
     payload: FinancialCardCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:cards")),
+    current_user: User = Depends(require_permission("financial_management:cards:create")),
 ):
     card = FinancialCard(
         company_id=current_user.company_id,
@@ -56,7 +56,7 @@ def list_cards(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:read")),
+    current_user: User = Depends(require_permission("financial_management:cards:read")),
 ):
     query = db.query(FinancialCard).filter(FinancialCard.company_id == current_user.company_id)
 
@@ -90,7 +90,7 @@ def list_cards(
 def get_card(
     card_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:read")),
+    current_user: User = Depends(require_permission("financial_management:cards:read")),
 ):
     return card_to_out(get_card_or_404(db, card_id, current_user))
 
@@ -100,7 +100,7 @@ def update_card(
     card_id: int,
     payload: FinancialCardUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:update")),
+    current_user: User = Depends(require_permission("financial_management:cards:update")),
 ):
     card = get_card_or_404(db, card_id, current_user)
     data = payload.model_dump(exclude_unset=True)
@@ -126,7 +126,7 @@ def update_card(
 def delete_card(
     card_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:delete")),
+    current_user: User = Depends(require_permission("financial_management:cards:delete")),
 ):
     card = get_card_or_404(db, card_id, current_user)
 

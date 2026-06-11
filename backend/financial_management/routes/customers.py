@@ -26,7 +26,7 @@ router = APIRouter(prefix="/customers")
 def create_customer(
     payload: FinancialCustomerCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:customers")),
+    current_user: User = Depends(require_permission("financial_management:customers:create")),
 ):
     customer = FinancialCustomer(
         company_id=current_user.company_id,
@@ -50,7 +50,7 @@ def list_customers(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:customers")),
+    current_user: User = Depends(require_permission("financial_management:customers:read")),
 ):
     query = db.query(FinancialCustomer).filter(FinancialCustomer.company_id == current_user.company_id)
 
@@ -74,7 +74,7 @@ def list_customers(
 def get_customer(
     customer_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:customers")),
+    current_user: User = Depends(require_permission("financial_management:customers:read")),
 ):
     return customer_to_out(get_customer_or_404(db, customer_id, current_user))
 
@@ -84,7 +84,7 @@ def update_customer(
     customer_id: int,
     payload: FinancialCustomerUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:customers")),
+    current_user: User = Depends(require_permission("financial_management:customers:update")),
 ):
     customer = get_customer_or_404(db, customer_id, current_user)
     data = payload.model_dump(exclude_unset=True)
@@ -99,7 +99,7 @@ def update_customer(
 def delete_customer(
     customer_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:customers")),
+    current_user: User = Depends(require_permission("financial_management:customers:delete")),
 ):
     customer = get_customer_or_404(db, customer_id, current_user)
 

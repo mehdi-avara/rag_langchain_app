@@ -26,7 +26,7 @@ router = APIRouter(prefix="/receipts")
 def filter_receipts(
     payload: FinancialReceiptTextSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:search")),
+    current_user: User = Depends(require_permission("financial_management:receipts:search")),
 ):
     validated_ids = validate_receipt_scope(db, current_user, payload.ids)
 
@@ -43,7 +43,7 @@ def filter_receipts(
 def search_receipts(
     payload: FinancialReceiptSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:search")),
+    current_user: User = Depends(require_permission("financial_management:receipts:search")),
 ):
     validated_ids = validate_receipt_scope(db, current_user, payload.ids)
 
@@ -62,7 +62,7 @@ def semantic_search_receipts(
     payload: FinancialReceiptSemanticSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:search")),
+    current_user: User = Depends(require_permission("financial_management:receipts:search")),
 ):
     delegated_payload = FinancialReceiptSearchRequest(
         query=payload.query,

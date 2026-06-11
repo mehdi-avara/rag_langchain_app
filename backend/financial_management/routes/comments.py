@@ -64,7 +64,7 @@ def _search_receipt_comment_note_ids(
         )
         matched_ids.extend([row[0] for row in rows])
 
-    if mode in {"vector", "hybrid"}:
+    if mode in {"semantic", "vector", "hybrid"}:
         query_embedding = safe_embed_text(query)
         if query_embedding is not None:
             embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
@@ -104,7 +104,7 @@ def link_comment(
     receipt_id: int,
     payload: FinancialReceiptCommentLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:comments")),
+    current_user: User = Depends(require_permission("financial_management:receipt_comments:create")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
     comment = _get_comment_or_404(db, payload.comment_id, current_user)
@@ -147,7 +147,7 @@ async def create_comment_and_link(
     receipt_id: int,
     body: FinancialCreateCommentAndLinkRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:comments")),
+    current_user: User = Depends(require_permission("financial_management:receipt_comments:create")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
 
@@ -166,7 +166,7 @@ def unlink_comment(
     receipt_id: int,
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:comments")),
+    current_user: User = Depends(require_permission("financial_management:receipt_comments:delete")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
     _get_comment_or_404(db, comment_id, current_user)
@@ -193,7 +193,7 @@ def unlink_comment(
 def list_receipt_comments(
     receipt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:comments")),
+    current_user: User = Depends(require_permission("financial_management:receipt_comments:read")),
     search: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -247,7 +247,7 @@ def search_receipt_comments(
     receipt_id: int,
     payload: FinancialReceiptLinkSearchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:comments")),
+    current_user: User = Depends(require_permission("financial_management:receipt_comments:search")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
 

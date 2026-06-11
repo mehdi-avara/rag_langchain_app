@@ -27,7 +27,7 @@ def create_buying_receipt_link(
     process_id: int,
     payload: BuyingProcessReceiptLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("buying_management:update", "financial_management:read")),
+    current_user: User = Depends(require_permissions("buying_management:update", "financial_management:receipts:read")),
 ):
     process = get_buying_process_or_404(db, process_id, current_user)
     ensure_process_editable(process)
@@ -52,7 +52,7 @@ def create_buying_receipt_link(
 def list_buying_receipt_links(
     process_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("buying_management:read", "financial_management:read")),
+    current_user: User = Depends(require_permissions("buying_management:read", "financial_management:receipts:read")),
 ):
     process = get_buying_process_or_404(db, process_id, current_user)
     return (
@@ -68,7 +68,7 @@ def delete_buying_receipt_link(
     process_id: int,
     receipt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("buying_management:update", "financial_management:read")),
+    current_user: User = Depends(require_permissions("buying_management:update", "financial_management:receipts:read")),
 ):
     process = get_buying_process_or_404(db, process_id, current_user)
     ensure_process_editable(process)

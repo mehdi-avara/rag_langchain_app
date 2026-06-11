@@ -40,7 +40,7 @@ def _resolve_counterparty_name(counterparty_name: Optional[str], customer_name: 
 def create_receipt(
     payload: FinancialReceiptCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:create")),
+    current_user: User = Depends(require_permission("financial_management:receipts:create")),
 ):
     card = get_card_or_404(db, payload.credit_card_id, current_user)
     customer = get_customer_or_404(db, payload.customer_id, current_user) if payload.customer_id is not None else None
@@ -80,7 +80,7 @@ def list_receipts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:read")),
+    current_user: User = Depends(require_permission("financial_management:receipts:read")),
 ):
     query = (
         db.query(FinancialReceipt)
@@ -119,7 +119,7 @@ def list_receipts(
 def get_receipt(
     receipt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:read")),
+    current_user: User = Depends(require_permission("financial_management:receipts:read")),
 ):
     receipt = (
         db.query(FinancialReceipt)
@@ -145,7 +145,7 @@ def get_receipt(
 def get_receipts_by_ids(
     payload: FinancialReceiptBatchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:read")),
+    current_user: User = Depends(require_permission("financial_management:receipts:read")),
 ):
     receipt_ids = list(dict.fromkeys(payload.ids))
 
@@ -176,7 +176,7 @@ def update_receipt(
     receipt_id: int,
     payload: FinancialReceiptUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:update")),
+    current_user: User = Depends(require_permission("financial_management:receipts:update")),
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
     data = payload.model_dump(exclude_unset=True)
@@ -224,7 +224,7 @@ def update_receipt(
 def delete_receipt(
     receipt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:delete")),
+    current_user: User = Depends(require_permission("financial_management:receipts:delete")),
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
 

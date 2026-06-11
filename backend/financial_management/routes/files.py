@@ -49,7 +49,7 @@ def _get_receipt_file_or_404(
 def list_receipt_files(
     receipt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:read")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
 
@@ -68,7 +68,7 @@ def create_receipt_file_upload_url(
     receipt_id: int,
     payload: AssetUploadUrlCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:create")),
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
 
@@ -89,7 +89,7 @@ def complete_receipt_file_upload(
     asset_id: int,
     payload: AssetCompleteUploadIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:create")),
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
 
@@ -139,7 +139,7 @@ async def add_receipt_file(
     receipt_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:create")),
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
 
@@ -176,7 +176,7 @@ def create_receipt_file_download_url(
     receipt_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:read")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
@@ -204,7 +204,7 @@ def create_receipt_file_preview_url(
     receipt_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:read")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
@@ -232,7 +232,7 @@ def download_receipt_file(
     receipt_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:read")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
@@ -268,7 +268,7 @@ def delete_receipt_file(
     receipt_id: int,
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("financial_management:files")),
+    current_user: User = Depends(require_permission("financial_management:receipt_files:delete")),
 ):
     get_receipt_or_404(db, receipt_id, current_user)
     file_rec = _get_receipt_file_or_404(db, receipt_id, file_id)
