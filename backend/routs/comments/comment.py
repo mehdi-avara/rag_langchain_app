@@ -13,6 +13,8 @@ from schemas.search import (
     TextSearchRequest,
     SemanticCommentSearchRequestWithId,
     CommentSemanticHit,
+    CommentSearchRequest,
+    CommentSearchResponse,
     CommentAskRequest,
     CommentAskResponse,
 )
@@ -51,36 +53,81 @@ def list_comments(
     )
 
 
-@router.post("/filter", response_model=List[CommentOut], status_code=status.HTTP_200_OK)
+@router.post("/search", response_model=CommentSearchResponse, status_code=status.HTTP_200_OK)
+def search_comments(
+    payload: CommentSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    mode = "semantic" if payload.mode == "vector" else payload.mode
+
+    comments = []
+    hits = []
+
+    if mode in {"keyword", "hybrid"}:
+        comments = search_comments_text(
+            db=db,
+            query_text=payload.query,
+            user_id=current_user.id,
+            comment_ids=payload.ids or None,
+            limit=payload.limit,
+        )
+
+    if mode in {"semantic", "hybrid"}:
+        hits = search_comment_hits_semantic(
+            db=db,
+            query_text=payload.query,
+            user_id=current_user.id,
+            comment_ids=payload.ids or None,
+            types=payload.types or None,
+            limit=payload.limit,
+        )
+
+    return {
+        "mode": mode,
+        "comments": comments,
+        "hits": hits,
+    }
+
+
+@router.post("/filter", response_model=List[CommentOut], status_code=status.HTTP_200_OK, deprecated=True)
 def filter_comments(
     payload: TextSearchRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return search_comments_text(
+    result = search_comments(
+        payload=CommentSearchRequest(
+            query=payload.query,
+            ids=payload.ids,
+            mode="keyword",
+            limit=payload.limit,
+        ),
         db=db,
-        query_text=payload.query,
-        user_id=current_user.id,
-        comment_ids=payload.ids or None,
-        limit=payload.limit,
+        current_user=current_user,
     )
+    return result["comments"]
 
 
-@router.post("/semantic-search", response_model=List[CommentSemanticHit], status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=List[CommentSemanticHit], status_code=status.HTTP_200_OK, deprecated=True)
 def semantic_search_comments(
     payload: SemanticCommentSearchRequestWithId,
     top_k: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return search_comment_hits_semantic(
+    result = search_comments(
+        payload=CommentSearchRequest(
+            query=payload.query,
+            ids=payload.ids,
+            types=payload.types,
+            mode="semantic",
+            limit=top_k,
+        ),
         db=db,
-        query_text=payload.query,
-        user_id=current_user.id,
-        comment_ids=payload.ids or None,
-        types=payload.types or None,
-        limit=top_k,
+        current_user=current_user,
     )
+    return result["hits"]
 
 
 @router.post("/ask", response_model=CommentAskResponse, status_code=status.HTTP_200_OK)

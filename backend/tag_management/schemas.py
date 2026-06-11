@@ -184,7 +184,7 @@ class TagReceiptOut(BaseModel):
 
 class TagReceiptSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
     limit: int = Field(default=50, ge=1, le=200)
 
 
@@ -197,6 +197,17 @@ class TagReceiptSummaryOut(BaseModel):
 
 
 TagTreeOut.update_forward_refs()
+
+
+
+
+class TagUnifiedSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
+    scope: Literal["docs", "comments", "both"] = "both"
+    types: List[CommentType] = Field(default_factory=list)
+    limit: int = Field(default=50, ge=1, le=200)
 
 
 class TagTextSearchRequest(BaseModel):
@@ -287,7 +298,7 @@ class TagSemanticSearchResponse(BaseModel):
 
 class TagAskRequest(BaseModel):
     question: str
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
     route: str = "full"
     scope: Literal["docs", "comments", "both"] = "both"
     types: List[CommentType] = Field(default_factory=list)

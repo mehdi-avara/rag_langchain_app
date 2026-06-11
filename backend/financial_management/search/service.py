@@ -89,6 +89,9 @@ def search_receipt_hits(
     receipt_ids: Optional[Sequence[int]] = None,
     limit: int = 10,
 ) -> List[FinancialReceiptSemanticHit]:
+    if mode == "semantic":
+        mode = "vector"
+
     scoped_ids = list(dict.fromkeys(receipt_ids or []))
     company_id = tenant_filter_id(current_user)
 

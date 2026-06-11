@@ -25,6 +25,7 @@ from ..schemas import (
     TagSemanticSearchResponse,
     TagSemanticSearchRequest,
     TagSemanticSearchRequestWithIds,
+    TagUnifiedSearchRequest,
 )
 from ..services import (
     get_tag_or_404,
@@ -198,7 +199,146 @@ async def get_tag(
     return tag
 
 
-@router.post("/{tag_id}/filter", response_model=TagContentSearchResponse, status_code=status.HTTP_200_OK)
+def _keyword_search_tag_scope(
+    db: Session,
+    current_user: User,
+    query: str,
+    tag_ids: list[int],
+    limit: int,
+    scope: str = "both",
+):
+    doc_ids = get_doc_ids_for_tags(db, tag_ids)
+    comment_ids = get_comment_ids_for_tags(db, tag_ids)
+
+    model_ids = get_model_ids_for_tags(db, tag_ids)
+    model_doc_ids = get_model_document_ids(db, model_ids)
+
+    all_doc_ids = list({*doc_ids, *model_doc_ids})
+
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        accessible_set = set(accessible_doc_ids)
+        all_doc_ids = [doc_id for doc_id in all_doc_ids if doc_id in accessible_set]
+
+    owned_comment_ids = [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
+    owned_comment_set = set(owned_comment_ids)
+    comment_ids = [comment_id for comment_id in comment_ids if comment_id in owned_comment_set]
+
+    return {
+        "documents": search_documents_text(
+            db=db,
+            query_text=query,
+            doc_ids=all_doc_ids,
+            limit=limit,
+        ) if scope in {"docs", "both"} else [],
+        "comments": search_comments_text(
+            db=db,
+            query_text=query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            limit=limit,
+        ) if scope in {"comments", "both"} else [],
+    }
+
+
+@router.post("/search", status_code=status.HTTP_200_OK)
+async def search_all_tags_content(
+    payload: TagUnifiedSearchRequest,
+    current_user: User = Depends(require_permission("tags:search")),
+    db: Session = Depends(get_db),
+):
+    mode = "semantic" if payload.mode == "vector" else payload.mode
+
+    all_tag_ids = [
+        row[0]
+        for row in db.query(SystemTag.id)
+        .filter(SystemTag.company_id == current_user.company_id)
+        .all()
+    ]
+
+    requested_tag_ids = set(payload.ids)
+    tag_ids = [tag_id for tag_id in all_tag_ids if tag_id in requested_tag_ids] if requested_tag_ids else all_tag_ids
+
+    keyword = {"documents": [], "comments": []}
+    semantic = {"tags": [], "documents": [], "comments": []}
+
+    if mode in {"keyword", "hybrid"}:
+        keyword = _keyword_search_tag_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            tag_ids=tag_ids,
+            limit=payload.limit,
+            scope=payload.scope,
+        )
+
+    if mode in {"semantic", "hybrid"}:
+        semantic = _semantic_search_tag_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            tag_ids=tag_ids,
+            doc_top_k=payload.limit if payload.scope in {"docs", "both"} else 0,
+            comment_top_k=payload.limit if payload.scope in {"comments", "both"} else 0,
+            types=payload.types,
+        )
+
+    return {
+        "mode": mode,
+        "keyword": keyword,
+        "semantic": semantic,
+    }
+
+
+@router.post("/{tag_id}/search", status_code=status.HTTP_200_OK)
+async def search_tag_content(
+    tag_id: int,
+    payload: TagUnifiedSearchRequest,
+    current_user: User = Depends(require_permission("tags:search")),
+    db: Session = Depends(get_db),
+):
+    mode = "semantic" if payload.mode == "vector" else payload.mode
+    _ = get_tag_or_404(db, tag_id, current_user)
+    tag_ids = get_descendant_tag_ids(db, tag_id, current_user)
+
+    keyword = {"documents": [], "comments": []}
+    semantic = {"tags": [], "documents": [], "comments": []}
+
+    if mode in {"keyword", "hybrid"}:
+        keyword = _keyword_search_tag_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            tag_ids=tag_ids,
+            limit=payload.limit,
+            scope=payload.scope,
+        )
+
+    if mode in {"semantic", "hybrid"}:
+        semantic = _semantic_search_tag_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            tag_ids=tag_ids,
+            doc_top_k=payload.limit if payload.scope in {"docs", "both"} else 0,
+            comment_top_k=payload.limit if payload.scope in {"comments", "both"} else 0,
+            types=payload.types,
+        )
+
+    return {
+        "mode": mode,
+        "keyword": keyword,
+        "semantic": semantic,
+    }
+
+
+
+@router.post("/{tag_id}/filter", response_model=TagContentSearchResponse, status_code=status.HTTP_200_OK, deprecated=True)
 async def filter_tag_content(
     tag_id: int,
     payload: TagTextSearchRequest,
@@ -240,7 +380,7 @@ async def filter_tag_content(
     }
 
 
-@router.post("/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK, deprecated=True)
 async def semantic_search_all_tags_content(
     payload: TagSemanticSearchRequestWithIds,
     top_k: int = Query(50, ge=1, le=200),
@@ -267,7 +407,7 @@ async def semantic_search_all_tags_content(
     )
 
 
-@router.post("/{tag_id}/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK)
+@router.post("/{tag_id}/semantic-search", response_model=TagSemanticSearchResponse, status_code=status.HTTP_200_OK, deprecated=True)
 async def semantic_search_tag_content(
     tag_id: int,
     payload: TagSemanticSearchRequest,

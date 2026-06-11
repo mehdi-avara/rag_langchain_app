@@ -86,6 +86,39 @@ class ContentSearchResponse(BaseModel):
     comments: List[CommentOut] = Field(default_factory=list)
 
 
+
+
+SearchMode = Literal["keyword", "semantic", "vector", "hybrid"]
+SearchScope = Literal["docs", "comments", "both"]
+
+
+class DocumentSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    mode: SearchMode = "hybrid"
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class DocumentSearchResponse(BaseModel):
+    mode: SearchMode
+    documents: List[DocumentOut] = Field(default_factory=list)
+    hits: List[DocumentSemanticHit] = Field(default_factory=list)
+
+
+class CommentSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    types: List[CommentType] = Field(default_factory=list)
+    mode: SearchMode = "hybrid"
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class CommentSearchResponse(BaseModel):
+    mode: SearchMode
+    comments: List[CommentOut] = Field(default_factory=list)
+    hits: List[CommentSemanticHit] = Field(default_factory=list)
+
+
 class DocumentAskRequest(BaseModel):
     question: str = Field(..., min_length=1)
     scope: Literal["docs", "comments", "both"] = "both"

@@ -22,6 +22,8 @@ from schemas.search import (
     TextSearchRequest,
     SemanticSearchRequest,
     DocumentSemanticHit,
+    DocumentSearchRequest,
+    DocumentSearchResponse,
     DocumentAskRequest,
     DocumentAskResponse,
 )
@@ -497,57 +499,102 @@ async def list_documents(
     return query.order_by(Document.created_at.desc()).all()
 
 
-@router.post("/filter", response_model=List[DocumentOut], status_code=status.HTTP_200_OK)
+def _resolve_accessible_document_search_ids(
+    db: Session,
+    current_user: User,
+    requested_ids: list[int] | None,
+    action: str = "read",
+) -> list[int] | None:
+    allowed_doc_ids = _get_accessible_document_ids(db, current_user, action)
+
+    if allowed_doc_ids is not None:
+        if requested_ids is not None:
+            allowed_set = set(allowed_doc_ids)
+            return [doc_id for doc_id in requested_ids if doc_id in allowed_set]
+        return allowed_doc_ids
+
+    return requested_ids
+
+
+@router.post("/search", response_model=DocumentSearchResponse, status_code=status.HTTP_200_OK)
+async def search_documents(
+    payload: DocumentSearchRequest,
+    current_user: User = Depends(require_permission("documents:read")),
+    db: Session = Depends(get_db),
+):
+    mode = "semantic" if payload.mode == "vector" else payload.mode
+    doc_ids = _resolve_accessible_document_search_ids(
+        db=db,
+        current_user=current_user,
+        requested_ids=payload.ids or None,
+        action="read",
+    )
+
+    documents = []
+    hits = []
+
+    if mode in {"keyword", "hybrid"}:
+        documents = search_documents_text(
+            db=db,
+            query_text=payload.query,
+            company_id=current_user.company_id,
+            doc_ids=doc_ids,
+            limit=payload.limit,
+        )
+
+    if mode in {"semantic", "hybrid"}:
+        hits = search_document_part_hits_semantic(
+            db=db,
+            query_text=payload.query,
+            company_id=current_user.company_id,
+            doc_ids=doc_ids,
+            limit=payload.limit,
+        )
+
+    return {
+        "mode": mode,
+        "documents": documents,
+        "hits": hits,
+    }
+
+
+@router.post("/filter", response_model=List[DocumentOut], status_code=status.HTTP_200_OK, deprecated=True)
 async def filter_documents(
     payload: TextSearchRequest,
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    allowed_doc_ids = _get_accessible_document_ids(db, current_user, "read")
-    requested_ids = payload.ids or None
-
-    if allowed_doc_ids is not None:
-        if requested_ids is not None:
-            doc_ids = [doc_id for doc_id in requested_ids if doc_id in set(allowed_doc_ids)]
-        else:
-            doc_ids = allowed_doc_ids
-    else:
-        doc_ids = requested_ids
-
-    return search_documents_text(
+    result = await search_documents(
+        payload=DocumentSearchRequest(
+            query=payload.query,
+            ids=payload.ids,
+            mode="keyword",
+            limit=payload.limit,
+        ),
+        current_user=current_user,
         db=db,
-        query_text=payload.query,
-        company_id=current_user.company_id,
-        doc_ids=doc_ids,
-        limit=payload.limit,
     )
+    return result["documents"]
 
 
-@router.post("/semantic-search", response_model=List[DocumentSemanticHit], status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=List[DocumentSemanticHit], status_code=status.HTTP_200_OK, deprecated=True)
 async def semantic_search_documents(
     payload: SemanticSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
     current_user: User = Depends(require_permission("documents:read")),
     db: Session = Depends(get_db),
 ):
-    allowed_doc_ids = _get_accessible_document_ids(db, current_user, "read")
-    requested_ids = payload.ids or None
-
-    if allowed_doc_ids is not None:
-        if requested_ids is not None:
-            doc_ids = [doc_id for doc_id in requested_ids if doc_id in set(allowed_doc_ids)]
-        else:
-            doc_ids = allowed_doc_ids
-    else:
-        doc_ids = requested_ids
-
-    return search_document_part_hits_semantic(
+    result = await search_documents(
+        payload=DocumentSearchRequest(
+            query=payload.query,
+            ids=payload.ids,
+            mode="semantic",
+            limit=top_k,
+        ),
+        current_user=current_user,
         db=db,
-        query_text=payload.query,
-        company_id=current_user.company_id,
-        doc_ids=doc_ids,
-        limit=top_k,
     )
+    return result["hits"]
 
 
 @router.post("/ask", response_model=DocumentAskResponse, status_code=status.HTTP_200_OK)

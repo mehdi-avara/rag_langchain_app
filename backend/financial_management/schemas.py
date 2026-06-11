@@ -278,7 +278,7 @@ class FinancialReceiptSemanticSearchRequest(BaseModel):
 class FinancialReceiptSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     ids: List[int] = Field(default_factory=list)
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
     limit: int = Field(default=10, ge=1, le=200)
 
 
@@ -301,7 +301,7 @@ class FinancialReceiptSemanticHit(BaseModel):
 
 class FinancialReceiptAskRequest(BaseModel):
     question: str = Field(..., min_length=1)
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
     receipt_ids: List[int] = Field(default_factory=list)
 
 
@@ -345,5 +345,5 @@ class FinancialReceiptCommentOut(BaseModel):
 
 class FinancialReceiptLinkSearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    mode: Literal["keyword", "vector", "hybrid"] = "hybrid"
+    mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
     limit: int = Field(default=50, ge=1, le=200)

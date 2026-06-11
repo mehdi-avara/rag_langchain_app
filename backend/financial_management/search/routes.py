@@ -22,7 +22,7 @@ from .service import list_text_receipts, search_receipt_hits, validate_receipt_s
 router = APIRouter(prefix="/receipts")
 
 
-@router.post("/filter", response_model=List[FinancialReceiptOut], status_code=status.HTTP_200_OK)
+@router.post("/filter", response_model=List[FinancialReceiptOut], status_code=status.HTTP_200_OK, deprecated=True)
 def filter_receipts(
     payload: FinancialReceiptTextSearchRequest,
     db: Session = Depends(get_db),
@@ -57,7 +57,7 @@ def search_receipts(
     )
 
 
-@router.post("/semantic-search", response_model=List[FinancialReceiptSemanticHit], status_code=status.HTTP_200_OK)
+@router.post("/semantic-search", response_model=List[FinancialReceiptSemanticHit], status_code=status.HTTP_200_OK, deprecated=True)
 def semantic_search_receipts(
     payload: FinancialReceiptSemanticSearchRequest,
     top_k: int = Query(50, ge=1, le=200),
@@ -67,7 +67,7 @@ def semantic_search_receipts(
     delegated_payload = FinancialReceiptSearchRequest(
         query=payload.query,
         ids=payload.ids,
-        mode="vector",
+        mode="semantic",
         limit=top_k,
     )
 

@@ -18,7 +18,7 @@ from financial_management.routes.receipts import get_receipt
 from routs.documents import _get_accessible_document_ids
 
 from ..models import ManagedModel, ModelReceiptLink
-from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut
+from ..schemas import ModelCreate, ModelUpdate, ModelOut, ModelListOut, ModelContentSearchRequest
 from ..services import (
     get_model_or_404,
     get_doc_ids,
@@ -241,10 +241,143 @@ def get_model(
     return _model_out(db, model)
 
 
+def _keyword_search_model_scope(
+    db: Session,
+    current_user: User,
+    query: str,
+    model_ids: list[int],
+    limit: int,
+    scope: str = "both",
+):
+    doc_ids = get_doc_ids_for_models(db, model_ids)
+    comment_ids = get_comment_ids_for_models(db, model_ids)
+
+    accessible_doc_ids = _get_accessible_document_ids(db, current_user, "read")
+    if accessible_doc_ids is not None:
+        accessible_set = set(accessible_doc_ids)
+        doc_ids = [doc_id for doc_id in doc_ids if doc_id in accessible_set]
+
+    owned_comment_ids = [
+        row[0]
+        for row in db.query(Comment.id)
+        .filter(Comment.user_id == current_user.id)
+        .all()
+    ]
+    owned_comment_set = set(owned_comment_ids)
+    comment_ids = [comment_id for comment_id in comment_ids if comment_id in owned_comment_set]
+
+    return {
+        "documents": search_documents_text(
+            db=db,
+            query_text=query,
+            doc_ids=doc_ids,
+            limit=limit,
+        ) if scope in {"docs", "both"} else [],
+        "comments": search_comments_text(
+            db=db,
+            query_text=query,
+            user_id=current_user.id,
+            comment_ids=comment_ids,
+            limit=limit,
+        ) if scope in {"comments", "both"} else [],
+    }
+
+
+@router.post("/search", status_code=status.HTTP_200_OK)
+def search_all_models_content(
+    payload: ModelContentSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("models:search")),
+):
+    mode = "semantic" if payload.mode == "vector" else payload.mode
+    company_id = require_company(current_user)
+
+    all_model_ids = [
+        row[0]
+        for row in db.query(ManagedModel.id).filter(ManagedModel.company_id == company_id).all()
+    ]
+
+    requested_model_ids = set(payload.ids)
+    model_ids = [model_id for model_id in all_model_ids if model_id in requested_model_ids] if requested_model_ids else all_model_ids
+
+    keyword = {"documents": [], "comments": []}
+    semantic = {"documents": [], "comments": []}
+
+    if mode in {"keyword", "hybrid"}:
+        keyword = _keyword_search_model_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            model_ids=model_ids,
+            limit=payload.limit,
+            scope=payload.scope,
+        )
+
+    if mode in {"semantic", "hybrid"}:
+        semantic = _semantic_search_model_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            model_ids=model_ids,
+            doc_top_k=payload.limit if payload.scope in {"docs", "both"} else 0,
+            comment_top_k=payload.limit if payload.scope in {"comments", "both"} else 0,
+            types=payload.types,
+        )
+
+    return {
+        "mode": mode,
+        "keyword": keyword,
+        "semantic": semantic,
+    }
+
+
+@router.post("/{model_id}/search", status_code=status.HTTP_200_OK)
+def search_model_content(
+    model_id: int,
+    payload: ModelContentSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("models:search")),
+):
+    mode = "semantic" if payload.mode == "vector" else payload.mode
+    model = get_model_or_404(db, model_id, current_user)
+
+    keyword = {"documents": [], "comments": []}
+    semantic = {"documents": [], "comments": []}
+
+    if mode in {"keyword", "hybrid"}:
+        keyword = _keyword_search_model_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            model_ids=[model.id],
+            limit=payload.limit,
+            scope=payload.scope,
+        )
+
+    if mode in {"semantic", "hybrid"}:
+        semantic = _semantic_search_model_scope(
+            db=db,
+            current_user=current_user,
+            query=payload.query,
+            model_ids=[model.id],
+            doc_top_k=payload.limit if payload.scope in {"docs", "both"} else 0,
+            comment_top_k=payload.limit if payload.scope in {"comments", "both"} else 0,
+            types=payload.types,
+        )
+
+    return {
+        "mode": mode,
+        "keyword": keyword,
+        "semantic": semantic,
+    }
+
+
+
 @router.post(
     "/{model_id}/filter",
     response_model=ContentSearchResponse,
     status_code=status.HTTP_200_OK,
+    deprecated=True,
 )
 def filter_model_content(
     model_id: int,
@@ -291,6 +424,7 @@ def filter_model_content(
     "/semantic-search",
     response_model=ModelSemanticSearchResponse,
     status_code=status.HTTP_200_OK,
+    deprecated=True,
 )
 def semantic_search_all_models_content(
     payload: SemanticCommentSearchRequestWithId,
@@ -323,6 +457,7 @@ def semantic_search_all_models_content(
     "/{model_id}/semantic-search",
     response_model=ModelSemanticSearchResponse,
     status_code=status.HTTP_200_OK,
+    deprecated=True,
 )
 def semantic_search_model_content(
     model_id: int,
