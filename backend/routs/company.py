@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from db.init_db import get_db
 from deps import require_permission
 from Models import Company, User
+from financial_management.models import FinancialReceipt
 from schemas.company import CompanySettingsOut, CompanySettingsUpdate
 
 router = APIRouter()
@@ -43,7 +44,23 @@ def update_company_settings(
         company.name = data["name"].strip()
 
     if "base_currency" in data and data["base_currency"] is not None:
-        company.base_currency = data["base_currency"].value
+        new_base_currency = data["base_currency"].value
+
+        if new_base_currency != company.base_currency:
+            receipt_exists = (
+                db.query(FinancialReceipt.id)
+                .filter(FinancialReceipt.company_id == company.id)
+                .first()
+                is not None
+            )
+
+            if receipt_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cannot change company base_currency after financial receipts have been created",
+                )
+
+            company.base_currency = new_base_currency
 
     db.commit()
     db.refresh(company)
