@@ -108,6 +108,8 @@ def seed() -> None:
             ("roles:update", "roles", "update", "Update roles"),
             ("roles:delete", "roles", "delete", "Delete roles"),
             ("permissions:read", "permissions", "read", "Read permissions"),
+            ("company:read", "company", "read", "Read company settings"),
+            ("company:update", "company", "update", "Update company settings"),
             ("documents:read", "documents", "read", "Read documents"),
             ("documents:create", "documents", "create", "Create documents"),
             ("documents:update", "documents", "update", "Update documents"),

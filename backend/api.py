@@ -14,6 +14,7 @@ from routs.chat_ai_models import router as chat_ai_models_router
 from routs.chat import router as chat_router
 from routs.stt import router as stt_router
 from routs.rbac import router as rbac_router
+from routs.company import router as company_router
 from routs.assets import router as asset_router
 from model_management.routes import model_router
 from tag_management.routes import tag_router
@@ -75,6 +76,7 @@ app.include_router(document_router, prefix="/documents", tags=["document"])
 app.include_router(comment_router, prefix="/comments", tags=["comments"])
 app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(rbac_router, prefix="/rbac", tags=["rbac"])
+app.include_router(company_router, prefix="/company", tags=["company"])
 app.include_router(asset_router, prefix="/assets", tags=["assets"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 app.include_router(chat_router, prefix="/chat", tags=["chat"])
