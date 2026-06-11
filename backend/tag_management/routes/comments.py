@@ -27,7 +27,7 @@ def link_comment(
     tag_id: int,
     payload: TagCommentLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:comments")),
+    current_user: User = Depends(require_permission("tags:comments:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -64,7 +64,7 @@ async def create_comment_and_link(
     tag_id: int,
     body: TagCreateCommentAndLinkRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:comments")),
+    current_user: User = Depends(require_permission("tags:comments:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -78,7 +78,7 @@ def unlink_comment(
     tag_id: int,
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:comments")),
+    current_user: User = Depends(require_permission("tags:comments:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
     _get_owned_comment(db, comment_id, current_user)
@@ -103,7 +103,7 @@ def unlink_comment(
 def list_tag_comments(
     tag_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:comments")),
+    current_user: User = Depends(require_permission("tags:comments:manage")),
     search: Optional[str] = Query(None),
     type: Optional[CommentType] = Query(None),
     limit: int = Query(50, ge=1, le=200),

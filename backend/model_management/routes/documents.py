@@ -28,7 +28,7 @@ def link_document(
     model_id: int,
     payload: ModelDocLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:documents")),
+    current_user: User = Depends(require_permission("models:documents:manage")),
 ):
     model = get_model_or_404(db, model_id, current_user)
 
@@ -62,7 +62,7 @@ def create_model_document_upload_url(
     model_id: int,
     payload: AssetUploadUrlCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:documents")),
+    current_user: User = Depends(require_permission("models:documents:manage")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -80,7 +80,7 @@ def complete_model_document_upload_and_link(
     payload: AssetCompleteUploadIn,
     link_description: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:documents")),
+    current_user: User = Depends(require_permission("models:documents:manage")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -106,7 +106,7 @@ def upload_document_and_link(
     file: UploadFile = File(...),
     link_description: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:documents")),
+    current_user: User = Depends(require_permission("models:documents:manage")),
 ):
     raise HTTPException(
         status_code=410,
@@ -124,7 +124,7 @@ def unlink_document(
     model_id: int,
     document_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:documents")),
+    current_user: User = Depends(require_permission("models:documents:manage")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
     _get_accessible_document(db, document_id, current_user, "read")
@@ -149,7 +149,7 @@ def unlink_document(
 def list_linked_documents(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:documents")),
+    current_user: User = Depends(require_permission("models:documents:manage")),
     search: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),

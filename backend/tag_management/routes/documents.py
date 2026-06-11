@@ -28,7 +28,7 @@ def link_document(
     tag_id: int,
     payload: TagDocLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:documents")),
+    current_user: User = Depends(require_permission("tags:documents:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -69,7 +69,7 @@ def create_tag_document_upload_url(
     tag_id: int,
     payload: AssetUploadUrlCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:documents")),
+    current_user: User = Depends(require_permission("tags:documents:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -89,7 +89,7 @@ def complete_tag_document_upload_and_link(
     start_page: Optional[int] = Query(None, ge=1),
     end_page: Optional[int] = Query(None, ge=1),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:documents")),
+    current_user: User = Depends(require_permission("tags:documents:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -120,7 +120,7 @@ def upload_document_and_link(
     file: UploadFile = File(...),
     link_description: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:documents")),
+    current_user: User = Depends(require_permission("tags:documents:manage")),
 ):
     raise HTTPException(
         status_code=410,
@@ -138,7 +138,7 @@ def unlink_document(
     tag_id: int,
     document_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:documents")),
+    current_user: User = Depends(require_permission("tags:documents:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
     _get_accessible_document(db, document_id, current_user, "read")
@@ -163,7 +163,7 @@ def unlink_document(
 def list_tag_documents(
     tag_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:documents")),
+    current_user: User = Depends(require_permission("tags:documents:manage")),
     search: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=200),

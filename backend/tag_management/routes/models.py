@@ -23,7 +23,7 @@ def link_model(
     tag_id: int,
     payload: TagModelLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:models")),
+    current_user: User = Depends(require_permission("tags:models:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -61,7 +61,7 @@ def unlink_model(
     tag_id: int,
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:models")),
+    current_user: User = Depends(require_permission("tags:models:manage")),
 ):
     _ = get_tag_or_404(db, tag_id, current_user)
 
@@ -85,7 +85,7 @@ def unlink_model(
 def list_tag_models(
     tag_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("tags:models")),
+    current_user: User = Depends(require_permission("tags:models:manage")),
     search: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),

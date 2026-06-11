@@ -27,7 +27,7 @@ def link_comment(
     model_id: int,
     payload: ModelCommentLinkCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:comments")),
+    current_user: User = Depends(require_permission("models:comments:manage")),
 ):
     model = get_model_or_404(db, model_id, current_user)
 
@@ -61,7 +61,7 @@ async def create_comment_and_link(
     model_id: int,
     body: ModelCreateCommentAndLinkRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:comments")),
+    current_user: User = Depends(require_permission("models:comments:manage")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
 
@@ -75,7 +75,7 @@ def unlink_comment(
     model_id: int,
     comment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:comments")),
+    current_user: User = Depends(require_permission("models:comments:manage")),
 ):
     _ = get_model_or_404(db, model_id, current_user)
     _get_owned_comment(db, comment_id, current_user)
@@ -100,7 +100,7 @@ def unlink_comment(
 def list_linked_comments(
     model_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("models:comments")),
+    current_user: User = Depends(require_permission("models:comments:manage")),
     search: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
