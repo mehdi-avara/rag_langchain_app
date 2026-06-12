@@ -18,6 +18,7 @@ from routs.company import router as company_router
 from routs.assets import router as asset_router
 from model_management.routes import model_router
 from tag_management.routes import tag_router
+from document_intelligence.routes import router as di_router
 from financial_management.routes import financial_router
 from property_management.routes import property_router
 from buying_management.routes import buying_router
@@ -86,6 +87,7 @@ app.include_router(tag_router, tags=["system_tags"])
 app.include_router(financial_router, tags=["financial_management"])
 app.include_router(property_router, tags=["property_management"])
 app.include_router(buying_router, tags=["buying_management"])
+app.include_router(di_router)
 
 
 @app.on_event("startup")
