@@ -14,6 +14,7 @@ from ..models import FinancialCustomer, FinancialReceipt
 from ..schemas import (
     FinancialCustomerCreate,
     FinancialCustomerOut,
+    FinancialCustomerSearchRequest,
     FinancialCustomerUpdate,
 )
 from ..services import customer_to_out, get_customer_or_404
@@ -67,6 +68,41 @@ def list_customers(
         )
 
     customers = query.order_by(FinancialCustomer.created_at.desc()).offset(offset).limit(limit).all()
+    return [customer_to_out(customer) for customer in customers]
+
+
+
+@router.post("/search", response_model=List[FinancialCustomerOut])
+def search_customers(
+    payload: FinancialCustomerSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_management:customers:read")),
+):
+    query = db.query(FinancialCustomer).filter(FinancialCustomer.company_id == current_user.company_id)
+
+    if payload.ids:
+        query = query.filter(FinancialCustomer.id.in_(list(dict.fromkeys(payload.ids))))
+
+    pattern = f"%{payload.query}%"
+    query = query.filter(
+        or_(
+            FinancialCustomer.name.ilike(pattern),
+            FinancialCustomer.phone_number1.ilike(pattern),
+            FinancialCustomer.phone_number2.ilike(pattern),
+            FinancialCustomer.access_method.ilike(pattern),
+            FinancialCustomer.email.ilike(pattern),
+            FinancialCustomer.description.ilike(pattern),
+        )
+    )
+
+    customers = (
+        query
+        .order_by(FinancialCustomer.created_at.desc())
+        .offset(payload.offset)
+        .limit(payload.limit)
+        .all()
+    )
+
     return [customer_to_out(customer) for customer in customers]
 
 

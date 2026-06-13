@@ -13,7 +13,7 @@ from Models import User
 from model_management.models import ManagedModel
 
 from ..models import WarehouseItem
-from ..schemas import WarehouseCountAdjustRequest, WarehouseItemCreate, WarehouseItemOut, WarehouseItemUpdate
+from ..schemas import WarehouseCountAdjustRequest, WarehouseItemCreate, WarehouseItemOut, WarehouseItemUpdate, WarehouseSearchRequest
 from ..services import get_model_or_404, get_warehouse_item_or_404, require_company, warehouse_item_to_out
 
 
@@ -92,6 +92,48 @@ def list_warehouse_items(
         query = query.filter(WarehouseItem.description.ilike(f"%{description}%"))
 
     items = query.order_by(WarehouseItem.created_at.desc()).offset(offset).limit(limit).all()
+    return [warehouse_item_to_out(item) for item in items]
+
+
+
+@router.post("/search", response_model=List[WarehouseItemOut])
+def search_warehouse_items(
+    payload: WarehouseSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("property_management:read")),
+):
+    query = (
+        db.query(WarehouseItem)
+        .options(joinedload(WarehouseItem.model))
+        .join(WarehouseItem.model)
+        .filter(WarehouseItem.company_id == require_company(current_user))
+    )
+
+    if payload.ids:
+        query = query.filter(WarehouseItem.id.in_(list(dict.fromkeys(payload.ids))))
+
+    if payload.model_type:
+        query = query.filter(ManagedModel.type == payload.model_type)
+
+    pattern = f"%{payload.query}%"
+    query = query.filter(
+        or_(
+            ManagedModel.manufacturer.ilike(pattern),
+            ManagedModel.model.ilike(pattern),
+            ManagedModel.type.ilike(pattern),
+            WarehouseItem.color.ilike(pattern),
+            WarehouseItem.description.ilike(pattern),
+        )
+    )
+
+    items = (
+        query
+        .order_by(WarehouseItem.created_at.desc())
+        .offset(payload.offset)
+        .limit(payload.limit)
+        .all()
+    )
+
     return [warehouse_item_to_out(item) for item in items]
 
 

@@ -12,7 +12,7 @@ from deps import require_permission
 from Models import User
 
 from ..models import FinancialCard, FinancialReceipt
-from ..schemas import FinancialCardCreate, FinancialCardOut, FinancialCardUpdate
+from ..schemas import FinancialCardCreate, FinancialCardOut, FinancialCardSearchRequest, FinancialCardUpdate
 from ..services import card_to_out, get_card_or_404, normalize_card_number
 
 
@@ -80,6 +80,43 @@ def list_cards(
         .order_by(FinancialCard.created_at.desc())
         .offset(offset)
         .limit(limit)
+        .all()
+    )
+
+    return [card_to_out(card) for card in cards]
+
+
+
+@router.post("/search", response_model=List[FinancialCardOut])
+def search_cards(
+    payload: FinancialCardSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_management:cards:read")),
+):
+    query = db.query(FinancialCard).filter(FinancialCard.company_id == current_user.company_id)
+
+    if payload.ids:
+        query = query.filter(FinancialCard.id.in_(list(dict.fromkeys(payload.ids))))
+
+    pattern = f"%{payload.query}%"
+    query = query.filter(
+        or_(
+            FinancialCard.title.ilike(pattern),
+            FinancialCard.card_number.ilike(pattern),
+            FinancialCard.bank_name.ilike(pattern),
+            FinancialCard.account_owner_name.ilike(pattern),
+            FinancialCard.description.ilike(pattern),
+        )
+    )
+
+    if payload.is_active is not None:
+        query = query.filter(FinancialCard.is_active == payload.is_active)
+
+    cards = (
+        query
+        .order_by(FinancialCard.created_at.desc())
+        .offset(payload.offset)
+        .limit(payload.limit)
         .all()
     )
 

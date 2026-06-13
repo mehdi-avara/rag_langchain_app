@@ -4,7 +4,7 @@ import enum
 import re
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
@@ -74,6 +74,15 @@ class WarehouseItemUpdate(BaseModel):
     @classmethod
     def validate_color(cls, value: str | None) -> str | None:
         return normalize_hex_color(value)
+
+
+
+class WarehouseSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    model_type: Optional[str] = None
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
 
 
 class WarehouseCountAdjustRequest(BaseModel):

@@ -69,6 +69,15 @@ class FinancialCardBase(BaseModel):
     is_active: bool = True
 
 
+
+class FinancialCardSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    is_active: Optional[bool] = None
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
 class FinancialCardCreate(FinancialCardBase):
     pass
 
@@ -135,6 +144,14 @@ class FinancialCustomerBase(BaseModel):
             value = value.strip()
             return value or None
         return value
+
+
+
+class FinancialCustomerSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    ids: List[int] = Field(default_factory=list)
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
 
 
 class FinancialCustomerCreate(FinancialCustomerBase):
