@@ -1,6 +1,7 @@
 # CMMS Master Plan — Petroleum Industry Platform
-> Last updated: 2026-06-13
-> Base system: RAG / Knowledge Management (FastAPI + PostgreSQL + Elasticsearch + ChromaDB + Celery)
+> Last updated: 2026-06-14
+> Base system: RAG / Knowledge Management (FastAPI + PostgreSQL + Celery)
+> Database: **PostgreSQL only** (Elasticsearch / ChromaDB are optional future additions, not required now)
 
 ---
 
@@ -11,16 +12,22 @@ The existing codebase is a production-ready RAG system. Every new module builds 
 | Existing Module | What it has |
 |---|---|
 | `document_management` | Upload, version, chunk, embed documents |
-| `tag_management` | Tag any entity; semantic tag search |
+| `tag_management` | Tag any entity; tag-based search |
 | `model_management` | AI model configs, document linking, ask/chat |
-| `buying_management` | Items master, costs, purchase receipts, processes |
+| `buying_management` | Items master, costs, purchase receipts, processes (partial — needs completion) |
 | `financial_management` | Financial receipts, cards, customers |
-| `property_management` | Properties catalog, warehouse skeleton |
+| `property_management` | Properties catalog, warehouse skeleton (partial) |
 | `routs/` | Auth, users, company, RBAC, chat, assets, STT |
-| `core/` | Chunking, embedding, semantic search, agents skeleton |
-| `retrieval/` | Vector (ChromaDB) + keyword (Elasticsearch) hybrid search |
+| `core/` | Chunking, embedding, AI ask/search, agents skeleton |
 | `db/` | SQLAlchemy + Alembic migrations |
 | `Models/` | User, Company, RBAC, Document, Chunk, Chat, FileAsset |
+
+**Database: PostgreSQL only.**
+All search is done via PostgreSQL built-in features:
+- `pg_trgm` extension for fuzzy / partial text matching
+- `tsvector` / `tsquery` for full-text search on text fields
+- Standard `ILIKE` for simple keyword filters
+- When Elasticsearch or vector search is added later, it plugs in alongside — it does not replace anything
 
 **Key architectural rule (keep forever):**
 Each feature area lives in its **own app folder** (`buying_management/`, `warehouse_management/`, etc.).
@@ -47,7 +54,7 @@ This keeps each module independently deployable and testable.
 │  │  • Document Intelligence (attach docs to anything) │ │
 │  │  • Tag System (tag anything)                       │ │
 │  │  • Notification Engine (events → notifications)   │ │
-│  │  • AI Search (semantic search across all modules) │ │
+│  │  • Search (PostgreSQL full-text + pg_trgm across all) │ │
 │  │  • Audit Log (every write is recorded)            │ │
 │  └─────────────────────────────────────────────────────┘ │
 │                                                          │
@@ -70,14 +77,21 @@ This keeps each module independently deployable and testable.
 
 ### Phase 1 — Commerce & Warehouse (First Delivery)
 > Target users: Procurement team, Warehouse keepers, Storekeepers
+> **Build order: Buying/Procurement fully complete first, then Warehouse**
 
-| # | Module | Priority |
-|---|---|---|
-| 1.1 | **Warehouse Management** (locations, stock, movements) | P0 |
-| 1.2 | **Material Master** (items catalog, units, categories) | P0 |
-| 1.3 | **Procurement** (MR → RFQ → PO → GRN) | P0 |
-| 1.4 | **Supplier Management** (vendor registry, evaluation) | P1 |
-| 1.5 | **Inventory Reports & AI Search** | P1 |
+| # | Module | Order | Priority |
+|---|---|---|---|
+| 1.1 | **Currency & Exchange Rate** (shared foundation) | First | P0 |
+| 1.2 | **Supplier Management** (vendor registry) | Second | P0 |
+| 1.3 | **Material Master** (items catalog, units, categories) | Third | P0 |
+| 1.4 | **Procurement** (MR → RFQ → PO → GRN) — complete buying_management | Fourth | P0 |
+| 1.5 | **Warehouse Management** (locations, stock, movements) | Fifth — after procurement | P0 |
+| 1.6 | **Inventory Reports & Full-text Search** | Sixth | P1 |
+
+> **Why this order:** Procurement defines what gets bought and from whom.
+> Warehouse receives the result of procurement (GRN → StockMovement IN).
+> So procurement must be fully working before warehouse receiving makes sense.
+> Also: buying_management already exists and needs completion before building warehouse on top of it.
 
 ### Phase 2 — Maintenance & Admin (Second Delivery)
 > Target users: Maintenance engineers, Planners, Admins
@@ -115,7 +129,55 @@ This keeps each module independently deployable and testable.
 
 ---
 
-## 4. Cross-Cutting Modules (Build Once, Used by All)
+## 4. Multi-Currency Support
+
+Multi-currency must be built **from the very beginning** because retrofitting it later is very expensive.
+It applies to: Procurement (PO, GRN), Financial Management, Supplier invoices, Inventory valuation.
+
+### Currency Model (shared, belongs in a `core_config` or `financial_management` app)
+
+```
+Currency
+  - code: ISO 4217 (USD, EUR, IRR, AED, GBP, ...)
+  - name
+  - symbol
+  - decimal_places
+  - is_active
+
+ExchangeRate
+  - from_currency_id
+  - to_currency_id
+  - rate (Decimal, high precision)
+  - effective_date
+  - source: Manual / API
+  - created_by
+```
+
+### Rules that apply to every money field:
+
+1. **Every monetary amount is stored as two fields:**
+   - `amount` — the value in the transaction currency
+   - `currency_id` — which currency
+   - `amount_base` — the equivalent in the company's base currency (for reporting)
+   - `exchange_rate_used` — the rate applied at time of transaction (never recalculated later)
+
+2. **Company base currency** is set once in Company settings (e.g., IRR or USD). All reports aggregate in base currency.
+
+3. **Exchange rates** are entered manually (or fetched via API in future). When a PO is created in a foreign currency, the system applies the current rate and stores it permanently on that PO.
+
+4. **Rounding** follows each currency's decimal_places (USD = 2, IRR = 0, etc.)
+
+### Where multi-currency applies:
+- `PurchaseOrder` — supplier invoices often in foreign currency
+- `POItem` — unit_price + currency
+- `GoodsReceiptNote` — landed cost in transaction currency
+- `SupplierEvaluation` — price comparison normalized to base currency
+- `financial_management` receipts and cards — already partially implemented, needs currency fields
+- Inventory valuation (FIFO/weighted average cost) — always stored with currency
+
+---
+
+## 5. Cross-Cutting Modules (Build Once, Used by All)
 
 These are not phase-specific — they are shared infrastructure that every phase uses.
 Build them progressively starting from Phase 1.
@@ -477,13 +539,15 @@ A conversational agent that a manager can ask questions and get cross-module ans
 
 ## 6. Shared Technical Requirements
 
-### AI Search (every module must have this)
+### Full-Text Search (every module must have this)
 ```
 GET /warehouse/items/?q=hydraulic+pump+seal
 GET /work-orders/?q=pump+P-1001+bearing+failure
 GET /employees/?q=instrument+engineer+certification
 ```
-Implementation: semantic search via existing `retrieval/` module, same as documents.
+Implementation: PostgreSQL `tsvector` column on each searchable entity, updated via trigger or on save.
+Enable `pg_trgm` extension for fuzzy matching (`ILIKE '%term%'` with GIN index).
+When Elasticsearch or vector search is added later: plug in alongside, same `?q=` interface, no breaking changes.
 
 ### Document Attachment (every module must have this)
 Every entity should support: `POST /assets/{entity_type}/{entity_id}/documents`
@@ -520,19 +584,19 @@ Day N: [Module Name]
 
 ### Recommended Day Order:
 
-**Week 1 — Warehouse Foundation**
-- Day 1: Material Master (Items, Categories, Units)
-- Day 2: Warehouse Locations (Warehouse, Zone, Shelf, Bin)
-- Day 3: Stock & StockMovements
-- Day 4: Stock Alerts + AI Search on Inventory
-- Day 5: Inventory Reports API
+**Week 1 — Buying / Procurement (complete buying_management first)**
+- Day 1: Currency model + Exchange Rate + Company base currency setting
+- Day 2: Supplier Management (vendor registry, contacts, categories, documents)
+- Day 3: Material Master (Items, Categories, Units) — review + complete existing buying_management items
+- Day 4: Material Requisition (MR) + MR approval workflow
+- Day 5: Request for Quotation (RFQ) + Quotation Response from suppliers
 
-**Week 2 — Procurement**
-- Day 6: Supplier Management
-- Day 7: Material Requisition (MR)
-- Day 8: Purchase Order (PO) + approval workflow
-- Day 9: Goods Receipt Note (GRN) + auto stock movement
-- Day 10: Procurement Reports + AI Search
+**Week 2 — Procurement (continued) then Warehouse**
+- Day 6: Purchase Order (PO) + multi-currency + PO approval workflow
+- Day 7: Goods Receipt Note (GRN) — what physically arrived vs what was ordered
+- Day 8: Procurement reports + full-text search (PostgreSQL tsvector)
+- Day 9: Warehouse Locations (Warehouse, Zone, Shelf, Bin)
+- Day 10: Stock (StockItem) + StockMovement (GRN auto-triggers IN movement)
 
 **Week 3 — Asset & Work Orders**
 - Day 11: Asset Management (Plant, System, Asset)
@@ -577,172 +641,313 @@ Each prompt is self-contained — it gives me full context about the project so 
 
 ---
 
-### PROMPT 1 — Material Master (Items Catalog)
+### PROMPT 0 — Currency & Exchange Rate (Day 1 — must come first)
 
 ```
 PROJECT CONTEXT:
-We are building a CMMS (Computerized Maintenance Management System) for the petroleum industry.
-The backend is FastAPI + PostgreSQL + SQLAlchemy + Alembic + ChromaDB + Elasticsearch + Celery.
-Architecture: each module lives in its own app folder (e.g. buying_management/, warehouse_management/).
-Apps communicate via REST API only (no cross-app DB joins).
-The system already has: document management, tag management, RBAC, user/company management,
-semantic search (vector + keyword hybrid), file assets, and AI chat.
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Existing: document_management, tag_management, model_management, buying_management (partial),
+financial_management (partial), property_management (partial), RBAC, user/company, file assets, AI chat.
+Database: PostgreSQL only. Full-text search via pg_trgm + tsvector. No Elasticsearch or ChromaDB for now.
 
-EXISTING RELEVANT CODE:
-- backend/buying_management/ has partial item/cost/receipt models — review these first
-- backend/Models/rbac.py for RBAC pattern
-- backend/routs/documents.py for document route pattern
-- Every module folder has: models.py, schemas.py, routes/, tests/
-
-TODAY'S TASK: Material Master module
-Build the central item/material catalog that all other modules reference.
+TODAY'S TASK: Currency & Exchange Rate module (shared foundation for all money in the system)
+This must be built before anything that involves money (procurement, financial, warehouse valuation).
 
 REQUIREMENTS:
-1. ItemCategory model (tree structure, parent_id for sub-categories)
-2. Unit model (KG, Liter, Piece, Meter, etc.)
-3. Item model (code, name, description, category, unit, specs as JSON, barcode, is_active)
-4. ItemAlternative model (vendor codes / alternate item numbers)
-5. AI search: index item name + description + specs in semantic search
-6. Attach documents to items (use existing file_asset system)
-7. Tag items (use existing tag_management)
-8. RBAC: warehouse_manager can create/edit, others can only view
-9. All list endpoints: pagination + ?q= semantic search + filters
+1. Currency model: code (ISO 4217: USD/EUR/IRR/AED), name, symbol, decimal_places, is_active
+2. ExchangeRate model:
+   - from_currency_id, to_currency_id
+   - rate (Numeric high precision, e.g. 28 digits, 10 decimal places)
+   - effective_date (date the rate is valid from)
+   - source: Manual / API_FETCHED
+   - created_by (user)
+3. Company base currency: add base_currency_id to existing Company model
+4. Service function: get_rate(from_currency, to_currency, on_date) → returns closest rate on or before that date
+5. Service function: convert(amount, from_currency, to_currency, on_date) → Decimal
+6. RBAC: finance_manager can create/edit rates; all authenticated users can read
+7. Admin can set which currency is the company's base currency
+
+Money field convention (document this — every future module follows it):
+  - amount: Decimal (the value in the transaction currency)
+  - currency_id: FK to Currency
+  - amount_base: Decimal (equivalent in company base currency at time of transaction)
+  - exchange_rate_used: Decimal (rate applied — frozen at transaction time, never recalculated)
 
 Please:
-A) List all models with their fields and relationships
-B) List all API endpoints with HTTP method, path, request body, response
-C) List integration points with other existing modules
-D) List AI search fields and indexing strategy
-E) List what needs to be migrated in Alembic
-F) At the end, provide the frontend specification: what screens/components the frontend team needs to build for this module
-```
-
----
-
-### PROMPT 2 — Warehouse Locations & Stock
-
-```
-PROJECT CONTEXT:
-[Same as Prompt 1 — copy the PROJECT CONTEXT block]
-
-WHAT IS ALREADY BUILT AT THIS POINT:
-- Material Master (Items, Categories, Units) — fully implemented
-- backend/property_management/ has partial warehouse model — review first
-
-TODAY'S TASK: Warehouse Management module
-Build the physical warehouse structure and stock tracking system.
-
-REQUIREMENTS:
-1. Warehouse model (name, code, location, type: main/secondary/field)
-2. Zone model (area within warehouse, belongs to Warehouse)
-3. StorageLocation model (shelf/bin, belongs to Zone, has capacity)
-4. StockItem model (Item × StorageLocation = quantity, min_level, max_level)
-5. StockMovement model (every in/out/transfer permanently recorded — append-only)
-   - movement_type: RECEIPT (from GRN), ISSUE (to work order), TRANSFER, ADJUSTMENT, RETURN
-   - reference_type + reference_id (links to the GRN or Work Order that caused it)
-6. StockCount model (physical inventory count sessions)
-7. StockCountLine (counted quantity per item per location)
-8. Business logic:
-   - Stock quantity is always calculated from StockMovements (not stored separately — or if stored, always reconciled)
-   - Alert when stock goes below min_level
-   - Prevent issuing more than available stock
-9. AI search on: item name, location code, category
-10. RBAC: storekeeper can issue/receive, warehouse_manager can adjust
-
-Please provide:
-A) All models with fields and relationships
+A) All models with fields, types, constraints
 B) All API endpoints
-C) How StockMovement references other modules (GRN, Work Order)
-D) Celery tasks: daily stock alert check, periodic reconciliation
-E) AI search strategy
-F) Frontend specification: screens for warehouse keepers and storekeepers
+C) The get_rate() and convert() service function signatures and logic
+D) Alembic migration notes (including adding base_currency_id to companies table)
+E) Frontend specification: currency list screen, exchange rate entry screen, rate history view
 ```
 
 ---
 
-### PROMPT 3 — Procurement (MR → PO → GRN)
+### PROMPT 1 — Supplier Management (Day 2)
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1 — copy the PROJECT CONTEXT block]
-
-WHAT IS ALREADY BUILT AT THIS POINT:
-- Material Master (Items, Categories, Units)
-- Warehouse Management (Warehouse, Zone, Location, StockMovement)
-- Supplier Management (Supplier, SupplierContact, SupplierDocument)
-- backend/buying_management/ has partial purchase models — review first
-
-TODAY'S TASK: Full Procurement module
-Build the complete purchasing workflow from need to delivery.
-
-WORKFLOW:
-MaterialRequisition → [optional: RFQ → QuotationResponse] → PurchaseOrder → GoodsReceiptNote → StockMovement IN
-
-REQUIREMENTS:
-1. MaterialRequisition (MR): requester, department, needed_by_date, items list, reason, status
-2. MRItem: item, quantity, unit, notes
-3. RequestForQuotation (RFQ): links to MR, sent to multiple suppliers
-4. QuotationResponse: supplier responds with price + delivery date per item
-5. PurchaseOrder (PO): links to MR (and optionally RFQ winner), supplier, payment_terms, delivery_date
-6. POItem: item, quantity, unit_price, total_price
-7. GoodsReceiptNote (GRN): what physically arrived, links to PO
-8. GRNItem: item, received_quantity, accepted_quantity, rejected_quantity
-9. On GRN save: auto-create StockMovement IN in warehouse module
-10. Approval workflow:
-    - MR: requester → dept_head → procurement_officer → approved
-    - PO: procurement_officer → finance_manager → (if >threshold) general_manager → approved
-11. Status tracking at every step
-12. AI search: "find all POs for supplier X this year" / "pending MRs for department Y"
-13. Print PO as PDF (use existing PDF/document system or generate)
-
-Please provide:
-A) All models with fields and relationships
-B) Complete API endpoint list
-C) Approval workflow implementation (state machine)
-D) How GRN auto-triggers StockMovement (service call pattern)
-E) AI search and indexing strategy
-F) Frontend specification: screens for procurement team and department heads
-```
-
----
-
-### PROMPT 4 — Supplier Management
-
-```
-PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: Material Master, Warehouse
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Existing: document_management, tag_management, RBAC, user/company, file assets, AI chat.
+Database: PostgreSQL only. Search via pg_trgm + tsvector (enable pg_trgm extension in migration).
+Already built in this phase: Currency + ExchangeRate model.
 
 TODAY'S TASK: Supplier Management module
 
 REQUIREMENTS:
-1. Supplier model (code, name, type: local/international, country, status: pending/approved/blacklisted)
-2. SupplierContact (name, email, phone, role, is_primary)
-3. SupplierCategory (what product categories they supply)
-4. SupplierDocument (contract, NDA, catalog, certificate — uses existing file_asset)
-5. SupplierEvaluation (periodic score: delivery 0-10, quality 0-10, price 0-10, total_score, evaluated_by, date)
-6. SupplierPerformance (auto-calculated from PO history once procurement is built):
-   - on_time_delivery_rate, order_count, rejection_rate
-7. AI search on: supplier name, category, products, country
-8. RBAC: procurement_officer can create/edit suppliers
+1. Supplier model: code (auto: SUP-001), name, type (Local/International/Manufacturer/Distributor),
+   country, city, address, tax_id, website, status (Pending/Approved/Blacklisted), notes
+2. SupplierContact: supplier_id, name, email, phone, position, is_primary
+3. SupplierCategory: supplier_id, category_name (what product types they supply, many-to-many)
+4. SupplierDocument: links to existing file_asset; document_type (Contract/NDA/Catalog/Certificate/License)
+5. SupplierEvaluation: supplier_id, evaluated_by, date, delivery_score (0-10), quality_score (0-10),
+   price_score (0-10), total_score (calculated average), notes
+6. SupplierPerformance view (derived from PO history once procurement exists):
+   - total_orders, on_time_delivery_rate, rejection_rate — start as nullable, populated later
+7. Search: PostgreSQL full-text on supplier name + country + category names (tsvector column)
+8. Tag suppliers (use existing tag_management)
+9. Attach documents via existing file_asset
+10. RBAC: procurement_officer can create/edit; others view only
 
-Please provide:
-A) All models
-B) All endpoints
-C) Performance calculation logic
-D) Frontend specification
+Please:
+A) All models with complete fields, types, constraints, indexes
+B) All API endpoints (include ?q= full-text search + ?status= filter on list)
+C) tsvector indexing approach for PostgreSQL
+D) Alembic migration notes
+E) Frontend specification: supplier list, supplier detail/profile, evaluation form, document tab
 ```
 
 ---
 
-### PROMPT 5 — Asset Management
+### PROMPT 2 — Material Master (Items Catalog) (Day 3)
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Existing: document_management, tag_management, RBAC, user/company, file assets, AI chat.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+Already built: Currency + ExchangeRate, Supplier Management.
+IMPORTANT: backend/buying_management/ already has partial item/cost/receipt models — review these first and extend rather than rewrite.
 
-WHAT IS ALREADY BUILT: Material Master, Warehouse, Procurement, Supplier Management
+TODAY'S TASK: Complete the Material Master module (central item/material catalog)
+
+REQUIREMENTS:
+1. ItemCategory model: tree structure (parent_id self-referential), code, name, description
+2. Unit model: code (KG, L, PCS, M, BOX, etc.), name, unit_type (Mass/Volume/Length/Count/Area)
+3. Item model:
+   - item_code (auto-generated or manual, unique per company)
+   - name, description (both indexed for full-text search)
+   - category_id, unit_id
+   - specs: JSONB (flexible key-value per category, e.g. pump: {flow_rate: "100 m3/h"})
+   - barcode, qr_code (optional, for scanning)
+   - item_type: Material / Spare Part / Consumable / Tool / Chemical / PPE
+   - is_active, is_critical (critical spare flag)
+   - lead_time_days (typical procurement lead time)
+4. ItemAlternative: item_id, alt_code, alt_name, supplier_id (vendor's code for this item)
+5. Full-text search: tsvector on item_code + name + description + specs (cast to text)
+6. Attach documents to items (datasheets, safety data sheets) via file_asset
+7. Tag items (critical spare, fast-moving, slow-moving, hazardous, etc.) via tag_management
+8. RBAC: warehouse_manager + procurement_officer can create/edit; others view
+9. Import from Excel (Celery task): accept uploaded Excel, parse rows, create items in bulk
+
+Please:
+A) All models (check buying_management/ first for what already exists)
+B) All API endpoints with pagination + ?q= full-text + ?category= + ?item_type= filters
+C) PostgreSQL tsvector indexing for items
+D) Excel import Celery task approach
+E) Alembic migration notes
+F) Frontend specification: item list (with filters), item detail, category tree, bulk import screen
+```
+
+---
+
+### PROMPT 3 — Warehouse Locations & Stock (Day 9-10, after procurement is complete)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Existing: document_management, tag_management, RBAC, user/company, file assets, AI chat.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+IMPORTANT: backend/property_management/ has a partial warehouse model — review it first.
+Already built: Currency, Supplier Management, Material Master, Procurement (MR→RFQ→PO→GRN).
+
+TODAY'S TASK: Warehouse Management module
+Built AFTER procurement so that GRN → StockMovement integration is immediately available.
+
+REQUIREMENTS:
+1. Warehouse model: code, name, type (Main/Secondary/Field/Transit), location/address, manager_id
+2. Zone model: warehouse_id, code, name, description
+3. StorageLocation model (shelf/bin): zone_id, code, name, capacity_unit, capacity_value, is_active
+4. StockItem model (current state — one row per item per location):
+   - item_id, storage_location_id
+   - quantity_on_hand (Decimal — derived from movements but stored for performance)
+   - quantity_reserved (reserved for work orders not yet consumed)
+   - quantity_available (computed: on_hand - reserved)
+   - min_level, max_level, reorder_point
+   - unit_cost (Decimal), unit_cost_currency_id (latest weighted average cost)
+   - unit_cost_base (in company base currency)
+5. StockMovement model (append-only — never update or delete):
+   - movement_number (auto: MOV-2026-00001)
+   - movement_type: RECEIPT / ISSUE / TRANSFER_OUT / TRANSFER_IN / ADJUSTMENT / RETURN / COUNT_ADJUSTMENT
+   - item_id, from_location_id (nullable), to_location_id (nullable)
+   - quantity (always positive)
+   - unit_cost, currency_id, unit_cost_base, exchange_rate_used (multi-currency)
+   - reference_type: GRN / WORK_ORDER / MANUAL / STOCK_COUNT
+   - reference_id (ID of the GRN or Work Order that caused this)
+   - performed_by (user), movement_date, notes
+6. StockCount model (physical inventory sessions):
+   - count_number (auto), warehouse_id, status: Open/In Progress/Posted, performed_by
+7. StockCountLine: count_id, item_id, location_id, system_quantity, counted_quantity, variance
+   - On post: auto-create COUNT_ADJUSTMENT StockMovements for variances
+8. Business logic:
+   - When GRN is finalized in procurement: auto-create RECEIPT StockMovements (service call)
+   - Prevent ISSUE if quantity_available < requested (raise HTTP 422 with clear message)
+   - After each movement: update StockItem.quantity_on_hand
+   - Celery daily task: check all items where quantity_on_hand <= reorder_point → create notification
+9. Full-text search on: item name, item code, location code, warehouse name
+10. RBAC: storekeeper can RECEIPT/ISSUE; warehouse_manager can ADJUSTMENT; both can TRANSFER
+
+Please provide:
+A) All models with complete fields, types, constraints, indexes
+B) All API endpoints including: stock by location, movements history, low-stock list
+C) How GRN triggers StockMovement (service function called from procurement module)
+D) Weighted average cost recalculation logic on each RECEIPT
+E) Celery low-stock alert task
+F) Alembic migration notes
+G) Frontend specification: warehouse map/tree, item stock view, movement history, stock count screen
+```
+
+---
+
+### PROMPT 4 — Procurement: MR + RFQ (Days 4-5)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+Already built: Currency + ExchangeRate, Supplier Management, Material Master.
+IMPORTANT: backend/buying_management/ has partial purchase models — review and extend, do not rewrite.
+Multi-currency: every amount field follows the 4-field pattern (amount, currency_id, amount_base, exchange_rate_used).
+
+TODAY'S TASK: First half of Procurement — Material Requisition and RFQ
+
+WORKFLOW (full):
+MaterialRequisition (MR) → RequestForQuotation (RFQ) → QuotationResponse → PurchaseOrder → GoodsReceiptNote → StockMovement IN
+This prompt covers: MR + RFQ + QuotationResponse.
+
+REQUIREMENTS:
+1. MaterialRequisition (MR):
+   - mr_number (auto: MR-2026-0001)
+   - requested_by (user), department_id
+   - needed_by_date, reason, priority: Normal/Urgent/Critical
+   - status: Draft / Submitted / Under Review / Approved / Rejected / Ordered / Closed
+   - notes
+2. MRItem: mr_id, item_id, quantity, unit_id, estimated_unit_cost (optional), currency_id, notes
+3. MR Approval workflow (state machine):
+   - Draft → Submitted (by requester)
+   - Submitted → Approved or Rejected (by dept_head or procurement_officer)
+   - Approved → Ordered (when PO is created from this MR)
+4. RequestForQuotation (RFQ):
+   - rfq_number (auto: RFQ-2026-0001)
+   - mr_id (optional — RFQ can exist without MR for blanket quotes)
+   - title, description, deadline_date, status: Draft / Sent / Closed / Cancelled
+5. RFQSupplier: rfq_id × supplier_id (sent to multiple suppliers), sent_at, response_status
+6. RFQItem: rfq_id, item_id, quantity, unit_id, specifications (text)
+7. QuotationResponse: rfq_id, supplier_id, received_at, valid_until, payment_terms, delivery_days, notes
+8. QuotationResponseItem: response_id, rfq_item_id, unit_price, currency_id, lead_time_days, notes
+   (also store: unit_price_base, exchange_rate_used)
+9. RFQ comparison: endpoint that returns all supplier responses side-by-side for one RFQ
+10. Full-text search on: MR number, reason, item names; RFQ number, title
+
+Please provide:
+A) All models with complete fields
+B) All API endpoints (MR CRUD + state transitions + RFQ CRUD + quotation comparison)
+C) State machine implementation approach for MR approval
+D) How RFQ links back to MR (one MR can generate one RFQ)
+E) Alembic migration notes
+F) Frontend specification: MR form, MR approval inbox, RFQ form, supplier quotation comparison table
+```
+
+---
+
+### PROMPT 5 — Procurement: PO + GRN (Days 6-7)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only.
+Already built: Currency, Supplier, Material Master, MR, RFQ, QuotationResponse.
+Multi-currency: every amount follows the 4-field pattern.
+IMPORTANT: backend/buying_management/ has partial receipt/process models — review before writing.
+
+TODAY'S TASK: Second half of Procurement — Purchase Order and Goods Receipt Note
+
+WORKFLOW:
+(MR → RFQ → QuotationResponse) → PurchaseOrder → GoodsReceiptNote → [triggers StockMovement IN]
+
+REQUIREMENTS:
+1. PurchaseOrder (PO):
+   - po_number (auto: PO-2026-0001)
+   - mr_id (optional), rfq_id (optional), supplier_id
+   - order_date, expected_delivery_date
+   - payment_terms (text), incoterms (EXW/FOB/CIF/DDP/etc.)
+   - currency_id, exchange_rate_used, amount_base (computed sum)
+   - status: Draft / Submitted / Approved / Sent to Supplier / Partially Received / Fully Received / Cancelled / Closed
+   - shipping_address, notes
+2. POItem: po_id, item_id, quantity, unit_id, unit_price, currency_id, unit_price_base, exchange_rate_used,
+   discount_pct, tax_pct, line_total, line_total_base, received_quantity (updated as GRNs come in)
+3. PO Approval workflow:
+   - Draft → Submitted → Approved (by finance_manager) → [if total_base > threshold] GM approval → Sent
+   - Approval threshold configurable per company (e.g., if PO base value > X → needs GM sign-off)
+4. GoodsReceiptNote (GRN):
+   - grn_number (auto: GRN-2026-0001)
+   - po_id, received_by (user), receipt_date
+   - delivery_note_number (supplier's delivery doc number)
+   - status: Draft / Posted (posted = finalised, creates movements)
+   - warehouse_id (where goods are being received)
+   - notes
+5. GRNItem: grn_id, po_item_id, item_id, received_quantity, accepted_quantity, rejected_quantity,
+   rejection_reason, storage_location_id (where to put accepted items)
+6. On GRN POST (status → Posted): call warehouse service to create StockMovement RECEIPT for each accepted GRNItem
+   - This is a service function call within the same process (not HTTP): warehouse_service.create_receipt_movement(grn_item)
+7. Partial delivery: one PO can have multiple GRNs. POItem.received_quantity updates on each GRN post.
+   PO status auto-updates: Partially Received vs Fully Received.
+8. Print PO as PDF: endpoint returns PDF-ready structured data (frontend renders or server generates)
+9. Full-text search on: PO number, supplier name, item names
+
+Please provide:
+A) All models
+B) All endpoints (PO CRUD + state transitions + GRN CRUD + post action)
+C) PO approval threshold logic
+D) Exact signature of the warehouse_service.create_receipt_movement() function
+E) How POItem.received_quantity and PO status stay in sync across multiple GRNs
+F) Alembic migration notes
+G) Frontend specification: PO form, PO approval screen, GRN entry screen, receiving dashboard
+```
+
+---
+
+### PROMPT 6 — Asset Management
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+Already built: Currency, Supplier, Material Master, Procurement (MR/RFQ/PO/GRN), Warehouse/Stock.
 
 TODAY'S TASK: Asset Management module
 Build the complete equipment registry for the petroleum facility.
@@ -765,26 +970,28 @@ REQUIREMENTS:
 5. AssetSpare (links Asset to Items in Material Master — spare parts for this asset)
 6. AssetDocument (manuals, P&IDs, drawings — uses existing file_asset)
 7. AssetHistory (lifecycle events: installed, modified, repaired, replaced — append-only log)
-8. AI search: tag_number, name, description, manufacturer, specs
+8. Full-text search: tsvector on tag_number + name + description + manufacturer
 9. RBAC: maintenance_engineer can create/edit, others view
 
 Please provide:
 A) All models with complete fields
 B) All endpoints (including tree/hierarchy endpoint)
 C) How AssetSpare links to Material Master
-D) AI search indexing strategy
+D) PostgreSQL tsvector indexing strategy
 E) Frontend specification: asset tree view, asset detail page, asset history
 ```
 
 ---
 
-### PROMPT 6 — Work Order Management
+### PROMPT 7 — Work Order Management
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: Material Master, Warehouse, Procurement, Supplier, Asset Management
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+Already built: Currency, Supplier, Material Master, Procurement, Warehouse/Stock, Asset Management.
 
 TODAY'S TASK: Work Order Management module — the core of the CMMS
 
@@ -821,26 +1028,28 @@ REQUIREMENTS:
 7. Approval: draft → maintenance_supervisor approves → starts
 8. Material reservation: before work starts, reserve items in warehouse
 9. Auto-calculate: MTTR, downtime hours
-10. AI search: asset tag, description, failure code, technician name
-11. /work-orders/ask endpoint for manager agent
+10. Full-text search: tsvector on wo_number + title + description + asset tag + failure codes
+11. /work-orders/ask endpoint for manager agent (natural language query via existing AI chat system)
 
 Please provide:
-A) Complete models
-B) All endpoints including state machine transitions
-C) How material consumption creates StockMovement
-D) Failure coding taxonomy
+A) Complete models with all fields
+B) All endpoints including state machine transition endpoints
+C) How material consumption triggers StockMovement OUT (service function)
+D) Failure coding taxonomy to implement (ISO 14224 for petroleum)
 E) Frontend specification: WO list, WO detail, job card print view, KPI widgets
 ```
 
 ---
 
-### PROMPT 7 — Maintenance Planning (PM Schedules)
+### PROMPT 8 — Maintenance Planning (PM Schedules)
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: Material Master, Warehouse, Procurement, Asset Management, Work Orders
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only.
+Already built: Currency, Supplier, Material Master, Procurement, Warehouse/Stock, Asset Management, Work Orders.
 
 TODAY'S TASK: Preventive Maintenance Planning module
 
@@ -867,7 +1076,7 @@ REQUIREMENTS:
    - belongs to MaintenanceTask
    - checklist_items: step number, description, response_type: OK/NOT_OK / Numeric / Text
 6. Celery Beat task: daily check of due PM schedules → auto-create WorkOrders
-7. AI search: "what PM tasks are due next week for Unit 3?"
+7. Full-text search on plan name + task description; filter by asset, due date range, status
 
 Please provide:
 A) All models
@@ -879,13 +1088,15 @@ E) Frontend specification: maintenance calendar, plan editor, checklist editor
 
 ---
 
-### PROMPT 8 — Notification & Workflow Engine
+### PROMPT 9 — Notification & Workflow Engine
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: All Phase 1 & 2 modules above
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only.
+Already built: All Phase 1 (procurement + warehouse) and Phase 2 (assets + work orders + PM) modules.
 
 TODAY'S TASK: Cross-cutting Notification & Workflow Engine
 
@@ -920,13 +1131,15 @@ E) Frontend specification: notification bell, notification list, approval inbox
 
 ---
 
-### PROMPT 9 — Employee & HR Module
+### PROMPT 10 — Employee & HR Module
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: All Phase 1 & 2 modules
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+Already built: All Phase 1 (procurement + warehouse) and Phase 2 (assets + work orders + PM + notifications).
 
 TODAY'S TASK: Human Resources module
 
@@ -950,7 +1163,7 @@ REQUIREMENTS:
 9. EmployeeTraining (employee × training × completion_date × score × certificate_file)
 10. EmployeeCertification (employee × cert × issue_date × expiry_date × is_valid)
 11. Celery: alert when certifications expire within 30 days
-12. AI: "which employees have expired safety certifications?"
+12. Full-text search on employee name, department, position, certifications
 13. RBAC: hr_manager full access, department_head sees own department, employee sees own data
 
 Please provide:
@@ -962,13 +1175,15 @@ D) Frontend specification: employee list, profile page, org chart, leave calenda
 
 ---
 
-### PROMPT 10 — Internal Communication (Letters & Messaging)
+### PROMPT 11 — Internal Communication (Letters & Messaging)
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: All Phase 1, 2, and 3 modules
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only. Search via pg_trgm + tsvector.
+Already built: All Phase 1, Phase 2, and Phase 3 (HR) modules.
 
 TODAY'S TASK: Internal Communication module
 
@@ -993,8 +1208,8 @@ REQUIREMENTS:
 5. InternalMessage (direct messaging, thread-based):
    - Thread model (participants list)
    - Message model (sender, thread, body, sent_at, is_read)
-6. All letters indexed in semantic search
-7. AI: "find all letters about asset P-1001" / "show urgent memos from last month"
+6. All letters indexed via tsvector for full-text search
+7. Search: by subject, body, sender, letter_number, date range
 8. Number series: configurable prefix per letter_type
 
 Please provide:
@@ -1007,13 +1222,15 @@ E) Frontend specification: letter inbox, compose letter, announcement board, dir
 
 ---
 
-### PROMPT 11 — HSE Module
+### PROMPT 12 — HSE Module
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: All previous modules
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only.
+Already built: All previous modules (procurement, warehouse, assets, work orders, PM, notifications, HR, letters).
 
 TODAY'S TASK: HSE (Health, Safety, Environment) module
 
@@ -1052,24 +1269,28 @@ REQUIREMENTS:
    - man_hours_worked, LTI_count, TRIR, LTIR, near_miss_count
 8. RBAC: hse_officer manages PTW and incidents, anyone can submit observations
 9. PTW gate on Work Orders: check if valid PTW exists before WO can go to In Progress
+10. Full-text search on: incident description, location, permit number
 
 Please provide:
-A) All models
+A) All models with complete fields
 B) All endpoints
-C) PTW-WorkOrder integration
+C) PTW-WorkOrder integration (how WO checks for valid PTW)
 D) TRIR/LTIR calculation logic
 E) Frontend specification: incident form, PTW issue screen, safety observation wall, HSE dashboard
 ```
 
 ---
 
-### PROMPT 12 — AI Manager Agent
+### PROMPT 13 — AI Manager Agent
 
 ```
 PROJECT CONTEXT:
-[Same as Prompt 1]
-
-WHAT IS ALREADY BUILT: ALL modules across all phases are implemented.
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Architecture: each feature area is its own app folder. Apps communicate via REST API only.
+Database: PostgreSQL only.
+ALL modules are implemented: procurement, warehouse, assets, work orders, PM, notifications, HR, letters, HSE.
+The existing AI system already has: core/agents/ skeleton, core/semantic_ask.py, per-module /ask endpoints.
 
 TODAY'S TASK: AI Manager Agent — cross-module natural language query system
 
