@@ -90,7 +90,7 @@ app.include_router(tag_router, tags=["system_tags"])
 app.include_router(financial_router, tags=["financial_management"])
 app.include_router(property_router, tags=["property_management"])
 app.include_router(purchase_router, tags=["purchase_management"])
-app.include_router(currency_router, tags=["currencies"])
+app.include_router(currency_router, prefix="/currencies", tags=["currencies"])
 app.include_router(tasks_router, tags=["tasks"])
 app.include_router(di_router)
 
