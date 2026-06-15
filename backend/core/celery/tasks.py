@@ -143,6 +143,93 @@ def mineru_process_pdf(
         raise
 
 
+@celery_app.task(name="stt.transcribe_audio", bind=True, max_retries=2)
+def transcribe_audio_task(self, asset_id: int, user_id: int, language: str | None = None):
+    """Download the audio asset and call the STT service synchronously.
+
+    Updates TaskResult row (keyed by celery_task_id == self.request.id)
+    with success payload or failure message.
+    """
+    import httpx
+    import tempfile
+    from pathlib import Path
+
+    celery_task_id = self.request.id
+
+    def _get_task(db):
+        from Models.task_result import TaskResult
+        return (
+            db.query(TaskResult)
+            .filter(TaskResult.celery_task_id == celery_task_id)
+            .first()
+        )
+
+    # Mark in_progress
+    with db_session() as db:
+        task = _get_task(db)
+        if task:
+            task.status = "in_progress"
+            db.commit()
+
+    try:
+        with db_session() as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise ValueError(f"User {user_id} not found")
+
+            manager = StorageManager(db)
+
+            from Models.file_asset import FileAsset
+            asset = db.query(FileAsset).filter(FileAsset.id == asset_id).first()
+            if not asset:
+                raise ValueError(f"Asset {asset_id} not found")
+
+            suffix = Path(asset.original_filename or "").suffix.lower() or ".audio"
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                target_path = Path(tmpdir) / f"asset_{asset_id}{suffix}"
+                manager.download_asset_to_path(
+                    asset_id=asset_id,
+                    user=user,
+                    target_path=target_path,
+                )
+                content = target_path.read_bytes()
+
+            filename = asset.original_filename or f"asset_{asset_id}{suffix}"
+            content_type = asset.content_type or "application/octet-stream"
+
+        # Call STT service (synchronous HTTP)
+        params = {}
+        if language:
+            params["language"] = language
+
+        with httpx.Client(timeout=300) as client:
+            response = client.post(
+                f"{settings.STT_URL}/transcribe",
+                files={"file": (filename, content, content_type)},
+                params=params,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        # Persist success
+        with db_session() as db:
+            task = _get_task(db)
+            if task:
+                task.status = "success"
+                task.result_json = result
+                db.commit()
+
+    except Exception as exc:
+        with db_session() as db:
+            task = _get_task(db)
+            if task:
+                task.status = "failure"
+                task.error_message = str(exc)
+                db.commit()
+        raise
+
+
 @celery_app.task(name="chat.generate_title")
 def chat_generate_title(chat_id: int, first_user_question: str):
     try:

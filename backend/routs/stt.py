@@ -1,11 +1,14 @@
-import tempfile
+import uuid
 from pathlib import Path
+from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from Models import User
+from Models.task_result import TaskResult
 from db.init_db import get_db
 from deps import require_permission
 from schemas.asset import AssetCompleteUploadIn, AssetUploadUrlCreate, AssetUploadUrlOut
@@ -15,6 +18,12 @@ from storage.manager import StorageManager
 settings = get_settings()
 
 router = APIRouter()
+
+
+class TranscribeAsyncResponse(BaseModel):
+    task_id: str
+    status: str = "pending"
+    message: str = "Audio queued for transcription. Poll GET /tasks/{task_id} for result."
 
 ALLOWED_AUDIO_CONTENT_TYPES = {
     "audio/mpeg",
@@ -103,13 +112,25 @@ def create_audio_transcribe_upload_url(
     )
 
 
-@router.post("/transcribe/complete-upload/{asset_id}", status_code=status.HTTP_201_CREATED)
-async def complete_audio_transcribe_upload(
+@router.post(
+    "/transcribe/complete-upload/{asset_id}",
+    response_model=TranscribeAsyncResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def complete_audio_transcribe_upload(
     asset_id: int,
     payload: AssetCompleteUploadIn,
+    language: Optional[str] = Query(None, description="ISO-639 language code hint, e.g. 'fa', 'en'"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("stt:use")),
 ):
+    """Accept a pre-uploaded audio asset and queue it for async STT.
+
+    Returns 202 immediately with a task_id.
+    Frontend polls  GET /tasks/{task_id}  for completion.
+    """
+    from core.celery.celery_app import celery_app
+
     manager = StorageManager(db)
     asset = manager.complete_upload(
         asset_id=asset_id,
@@ -121,18 +142,22 @@ async def complete_audio_transcribe_upload(
     _validate_audio_filename(asset.original_filename)
     _validate_audio_size(asset.size_bytes)
 
-    suffix = Path(asset.original_filename or "").suffix.lower() or ".audio"
-    with tempfile.TemporaryDirectory() as tmpdir:
-        target_path = Path(tmpdir) / f"asset_{asset.id}{suffix}"
-        manager.download_asset_to_path(
-            asset_id=asset.id,
-            user=current_user,
-            target_path=target_path,
-        )
-        content = target_path.read_bytes()
-
-    return await _send_audio_to_stt(
-        filename=asset.original_filename or f"asset_{asset.id}{suffix}",
-        content_type=asset.content_type,
-        content=content,
+    # Create a TaskResult row before dispatching so the task_id is stable
+    task_record = TaskResult(
+        id=uuid.uuid4(),
+        task_type="stt_transcription",
+        status="pending",
+        created_by_user_id=current_user.id,
     )
+    db.add(task_record)
+    db.flush()  # assigns id without committing
+
+    # Dispatch Celery task; capture celery_task_id on the record
+    celery_result = celery_app.send_task(
+        "stt.transcribe_audio",
+        args=[asset.id, current_user.id, language],
+    )
+    task_record.celery_task_id = celery_result.id
+    db.commit()
+
+    return TranscribeAsyncResponse(task_id=str(task_record.id))

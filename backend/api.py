@@ -21,7 +21,10 @@ from tag_management.routes import tag_router
 from document_intelligence.routes import router as di_router
 from financial_management.routes import financial_router
 from property_management.routes import property_router
-from buying_management.routes import buying_router
+# buying_management removed — Phase 0.2; replaced by purchase_management below
+from purchase_management.routes import purchase_router
+from shared.currency.routes import router as currency_router
+from routs.tasks import router as tasks_router
 from db.session import SessionLocal
 from components.embedding_service import get_or_create_embedding_config, regenerate_missing_embeddings
 from financial_management.services import safe_embed_text
@@ -86,7 +89,9 @@ app.include_router(model_router, tags=["models"])
 app.include_router(tag_router, tags=["system_tags"])
 app.include_router(financial_router, tags=["financial_management"])
 app.include_router(property_router, tags=["property_management"])
-app.include_router(buying_router, tags=["buying_management"])
+app.include_router(purchase_router, tags=["purchase_management"])
+app.include_router(currency_router, tags=["currencies"])
+app.include_router(tasks_router, tags=["tasks"])
 app.include_router(di_router)
 
 

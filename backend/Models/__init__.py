@@ -11,6 +11,7 @@ from .image_chunk import ImageChunk
 from .ai_model import ChatAIModels
 from .embedding_config import EmbeddingConfig
 from .file_asset import FileAsset, FileAssetStatus
+from .task_result import TaskResult
 
 from model_management.models import (
     ManagedModel,
@@ -41,16 +42,9 @@ from property_management.models import (
     WarehouseItem,
 )
 
-from buying_management.models import (
-    BuyingCostAllocationMethod,
-    BuyingCostType,
-    BuyingProcess,
-    BuyingProcessCost,
-    BuyingProcessItem,
-    BuyingProcessReceiptLink,
-    BuyingProcessStatus,
-    BuyingReceiptPurpose,
-)
+# buying_management removed in Phase 0.2 — replaced by purchase_management
+# The buying_management/ folder remains on disk but is no longer imported.
+# Tables were dropped in migration a2_phase_0_2_purchase.
 
 from document_intelligence.models import (
     DocumentIntelligenceJob,
@@ -80,6 +74,7 @@ __all__ = [
     "EmbeddingConfig",
     "FileAsset",
     "FileAssetStatus",
+    "TaskResult",
     "CommentType",
     "DocumentStatusType",
     "Chat",
@@ -101,14 +96,6 @@ __all__ = [
     "FinancialDirection",
     "WarehouseItem",
     "OwnedProperty",
-    "BuyingCostAllocationMethod",
-    "BuyingCostType",
-    "BuyingProcess",
-    "BuyingProcessCost",
-    "BuyingProcessItem",
-    "BuyingProcessReceiptLink",
-    "BuyingProcessStatus",
-    "BuyingReceiptPurpose",
     "DocumentIntelligenceJob",
     "DocumentPageArtifact",
     "DocumentMethodRun",
