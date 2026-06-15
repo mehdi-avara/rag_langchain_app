@@ -27,7 +27,6 @@ RUN pip install --no-cache-dir -r requirements_celery.txt \
 
 # App code (backend)
 FROM deps AS backend
-RUN pip install mineru[core]==2.6.4
 
 COPY . .
 EXPOSE 8000

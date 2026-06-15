@@ -1,5 +1,5 @@
 from pathlib import Path
-from mineru.utils.enum_class import MakeMode
+from components.stand_alone_functions.page_find_logic.mineru_types import MakeMode
 import json
 
 from settings import get_settings

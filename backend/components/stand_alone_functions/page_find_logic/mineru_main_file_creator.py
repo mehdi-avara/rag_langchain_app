@@ -2,10 +2,14 @@ import re
 # from loguru import logger
 from typing import Dict, List, Tuple
 
-from mineru.utils.config_reader import get_latex_delimiter_config
-from mineru.backend.pipeline.para_split import ListLineTag
-from mineru.utils.enum_class import BlockType, ContentType, MakeMode
-from mineru.utils.language import detect_lang
+from components.stand_alone_functions.page_find_logic.mineru_types import (
+    get_latex_delimiter_config,
+    ListLineTag,
+    BlockType,
+    ContentType,
+    MakeMode,
+    detect_lang,
+)
 import tiktoken
 
 

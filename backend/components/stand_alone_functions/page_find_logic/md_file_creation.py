@@ -3,7 +3,7 @@ impelimented module code
 https://github.com/opendatalab/MinerU/blob/master/mineru/backend/pipeline/pipeline_middle_json_mkcontent.py
 Convert MinerU middle-level JSON (pdf_info) to Markdown and optionally compare with an existing MD file.
 """
-from mineru.utils.enum_class import BlockType, ContentType, MakeMode
+from components.stand_alone_functions.page_find_logic.mineru_types import BlockType, ContentType, MakeMode
 from components.stand_alone_functions.page_find_logic.mineru_main_file_creator import union_make
 
 
