@@ -142,7 +142,8 @@ Access control is a first-class concern, not an afterthought. Rules:
 - Cross-module Celery tasks run as system (no user permission check inside the task);
   the dispatching route is responsible for verifying the user's permission before dispatching
 - The shared RBAC system (already in `routs/`) provides `has_permission()` and `require_permission()`
-- The full RBAC permission naming convention is defined in Section 6 (RBAC and Access Control)
+- The full RBAC permission naming convention and complete permission list for all modules is defined in Section 6 (RBAC and Access Control)
+- Convention: `{module}:{sub-resource}:{action}` (three parts) or `{module}:{action}` (two parts) — matches existing `financial_management:receipts:read` pattern in `db/seed_rbac.py`
 
 ---
 
@@ -1161,98 +1162,355 @@ Standard: `?page=1&size=20&sort=created_at&order=desc&status=active`
 
 ### RBAC and Access Control (every module)
 
-Access control is **critically important** and is not an afterthought. Every module owns its own
-permission definitions. The shared RBAC middleware enforces them. This two-layer design means:
+Access control is **critically important** and is not an afterthought.
 
-- **Module layer**: declares what permissions exist and checks them on each route
-- **Shared RBAC layer**: stores role-permission mappings and exposes the `has_permission()` function
+#### What already exists (do not rebuild)
 
-#### How it works across the system
+`deps.py` already has:
+- `get_current_user()` — JWT decode + user load
+- `require_permission(name)` — returns a FastAPI dependency that raises 403 if the user lacks the permission
+- `require_permissions(*names)` — same but for multiple required permissions
+- `get_user_permissions(user)` — returns the full set of permission names for a user
+
+`Models/rbac.py` already has:
+- `Permission(name, resource, action, description)` — one row per permission string
+- `Role(name, company_id, is_system, is_active)` — company-scoped or system-wide
+- `role_permission` association table
+- `user_role` association table
+
+`db/seed_rbac.py` is the pattern for seeding permissions and roles at startup.
+
+#### Permission naming convention — matches existing code exactly
+
+The existing system uses three parts: **`{module}:{sub-resource}:{action}`**
 
 ```
-Request arrives → FastAPI dependency (get_current_user) → RBAC middleware checks permission
-     │
-     ├── IF user has required permission → route handler runs
-     └── IF not → 403 Forbidden, route never executes
+name (Permission.name)     resource (Permission.resource)    action (Permission.action)
+─────────────────────────  ───────────────────────────────   ──────────────────────────
+financial_management:receipts:read   financial_management.receipts   read
+financial_management:cards:create    financial_management.cards      create
+documents:versions:manage            documents.versions              manage
+users:roles:manage                   users.roles                     manage
 ```
 
-#### Every module must:
+When the module has only one primary entity (no sub-resources needed), use two parts:
+```
+documents:read      resource=documents      action=read
+buying_management:create   resource=buying_management   action=create
+```
 
-1. **Declare its permissions** in `{module}/permissions.py`:
-   ```python
-   # purchase_management/permissions.py
-   PURCHASE_PERMISSIONS = [
-       "purchase:read",
-       "purchase:write",
-       "purchase:approve",
-       "purchase:delete",
-       "purchase:search",
-   ]
-   ```
+**Rule: use three parts when different roles need different access to different resource types within the same module.**
+Use two parts when all entities in the module share the same access pattern.
 
-2. **Register permissions** in the module's Alembic migration (seed data):
-   ```python
-   # Insert permissions into the permissions table on migration
-   for perm in PURCHASE_PERMISSIONS:
-       op.execute(f"INSERT INTO permissions (name) VALUES ('{perm}') ON CONFLICT DO NOTHING")
-   ```
-
-3. **Protect every route** with the RBAC dependency:
-   ```python
-   @router.post("/purchase/orders")
-   def create_order(
-       ...,
-       _: None = Depends(require_permission("purchase:write"))
-   ):
-   ```
-
-4. **Never trust the caller** — even internal Celery tasks that trigger writes in another module
-   run as system (no user context), and the route that dispatched the task already validated
-   the user's permission before dispatching.
-
-#### Permission naming convention (to be finalised in next planning step)
-
-Current working convention: `{module}:{action}`
-Examples: `purchase:read`, `purchase:approve`, `warehouse:write`, `maintenance:close_work_order`
-
-For modules with multiple distinct resource types that need separate gates, use:
-`{module}:{resource}:{action}`
-Examples: `hse:incident:write`, `hse:permit:approve`, `hr:leave:approve`
-
-> **Note**: The exact naming convention will be documented in a dedicated RBAC specification
-> before Phase 1 implementation begins. See next planning session.
-
-#### Part-specific (record-level) access — future phase
-
-In Phases 0–3, access control is at the **module + action** level:
-a user either can or cannot write to `purchase_management` as a whole.
-
-In a future phase (after Phase 3), **record-level access** will be added, for example:
-- A purchase manager in the **Ahvaz facility** can only see POs belonging to their facility
-- A maintenance engineer can only close work orders assigned to them
-- A warehouse operator can only move stock in their designated warehouse location
-
-The permission system is designed to accommodate this from day one:
-- Every primary entity model will include a `scope_id` or `facility_id` column (nullable now, enforced later)
-- The `require_permission()` dependency accepts an optional `scope_checker` callback that can be plugged in without changing the route signature
-- Until record-level control is activated, `scope_checker` is None and the check is skipped
-
-This means record-level access can be turned on per module, per deployment, without a code rewrite.
-
-#### What each role can do (to be configured per deployment, not hard-coded):
-
-Roles are configurable by the company admin. The system seeds reasonable defaults:
-
-| Role | Default module access |
+Standard actions (use exactly these strings — no invented verbs):
+| Action | Meaning |
 |---|---|
-| `system_admin` | All permissions on all modules |
-| `purchase_manager` | `purchase:*`, `supplier:read` |
-| `warehouse_manager` | `warehouse:*`, `purchase:read` |
-| `maintenance_engineer` | `maintenance:write`, `asset:read`, `work_order:write` |
-| `maintenance_manager` | `maintenance:*`, `asset:*`, `work_order:*` |
-| `hr_manager` | `hr:*` |
-| `hse_officer` | `hse:*` |
-| `viewer` | `*:read` on all modules |
+| `read` | GET list + GET detail |
+| `create` | POST (new record) |
+| `update` | PATCH / PUT (edit existing) |
+| `delete` | DELETE / soft-delete |
+| `search` | POST /search (keyword + semantic + hybrid) |
+| `ask` | POST /ask (AI natural language query) |
+| `approve` | Workflow approval gate (submit / approve / reject) |
+| `manage` | Combined create+update+delete on a sub-resource (when splitting is unnecessary) |
+| `summary` | GET aggregated totals / KPI dashboard endpoint |
+| `use` | Service invocation (e.g. STT — not CRUD) |
+
+#### Every module must: declare → seed → protect
+
+**1. Declare permissions in `{module}/permissions.py`:**
+```python
+# purchase_management/permissions.py
+PERMISSIONS = [
+    ("purchase_management:orders:read",    "purchase_management.orders",  "read",    "View purchase orders"),
+    ("purchase_management:orders:create",  "purchase_management.orders",  "create",  "Create purchase orders"),
+    ("purchase_management:orders:update",  "purchase_management.orders",  "update",  "Edit purchase orders"),
+    ("purchase_management:orders:delete",  "purchase_management.orders",  "delete",  "Delete/cancel purchase orders"),
+    ("purchase_management:orders:approve", "purchase_management.orders",  "approve", "Approve or reject purchase orders"),
+    ("purchase_management:orders:search",  "purchase_management.orders",  "search",  "Search purchase orders"),
+    ("purchase_management:orders:ask",     "purchase_management.orders",  "ask",     "Ask AI about purchase orders"),
+    ("purchase_management:phases:manage",  "purchase_management.phases",  "manage",  "Create/update delivery phases"),
+    ("purchase_management:costs:manage",   "purchase_management.costs",   "manage",  "Add/update additional costs"),
+    ("purchase_management:summary",        "purchase_management",         "summary", "View procurement totals"),
+]
+```
+
+**2. Seed permissions in the module's Alembic migration:**
+```python
+# In the upgrade() function — runs once when migration is applied
+from db.seed_rbac import get_or_create_permission
+from sqlalchemy.orm import Session
+
+def upgrade():
+    # ... table DDL first ...
+    bind = op.get_bind()
+    session = Session(bind=bind)
+    from purchase_management.permissions import PERMISSIONS
+    for name, resource, action, description in PERMISSIONS:
+        get_or_create_permission(session, name, resource, action, description)
+    session.commit()
+```
+
+**3. Protect every route with the existing `require_permission()` dependency:**
+```python
+from deps import require_permission
+
+@router.post("/purchase/orders")
+def create_order(
+    ...,
+    current_user: User = Depends(require_permission("purchase_management:orders:create"))
+):
+    ...
+
+@router.patch("/purchase/orders/{id}/approval")
+def approve_order(
+    ...,
+    current_user: User = Depends(require_permission("purchase_management:orders:approve"))
+):
+    ...
+```
+
+No route is left unprotected — even read-only list and GET detail endpoints require `{module}:read`.
+
+**4. Cross-module Celery tasks run as system** — no `require_permission()` inside the task.
+The route that dispatches the task already verified the user's permission before dispatching.
+
+---
+
+#### Complete permission list — all CMMS modules
+
+Each module seeds these into `permissions` on migration. Copy the tuple format from `db/seed_rbac.py`.
+
+**Phase 0 — Foundation**
+
+`shared/currency/`:
+```
+currencies:read          currencies       read     View currencies and exchange rates
+currencies:create        currencies       create   Add a currency
+currencies:manage        currencies       manage   Manage currencies (admin only)
+exchange_rates:create    exchange_rates   create   Enter an exchange rate
+exchange_rates:read      exchange_rates   read     View exchange rate history
+```
+
+`purchase_management/`:
+```
+purchase_management:orders:read      purchase_management.orders    read     View purchase orders
+purchase_management:orders:create    purchase_management.orders    create   Create purchase orders
+purchase_management:orders:update    purchase_management.orders    update   Edit purchase orders
+purchase_management:orders:delete    purchase_management.orders    delete   Delete/cancel purchase orders
+purchase_management:orders:approve   purchase_management.orders    approve  Approve or reject purchase orders
+purchase_management:orders:search    purchase_management.orders    search   Search purchase orders
+purchase_management:orders:ask       purchase_management.orders    ask      Ask AI about purchase orders
+purchase_management:phases:manage    purchase_management.phases    manage   Create/update delivery phases
+purchase_management:costs:manage     purchase_management.costs     manage   Add/update additional costs
+purchase_management:summary          purchase_management           summary  View procurement totals
+```
+
+---
+
+**Phase 1 — Commerce & Warehouse**
+
+`supplier_management/`:
+```
+supplier_management:read     supplier_management   read     View suppliers
+supplier_management:create   supplier_management   create   Add suppliers
+supplier_management:update   supplier_management   update   Edit suppliers
+supplier_management:delete   supplier_management   delete   Delete suppliers
+supplier_management:search   supplier_management   search   Search suppliers
+supplier_management:ask      supplier_management   ask      Ask AI about suppliers
+```
+
+`material_management/`:
+```
+material_management:read     material_management   read     View material master items
+material_management:create   material_management   create   Create items
+material_management:update   material_management   update   Edit items
+material_management:delete   material_management   delete   Delete items
+material_management:search   material_management   search   Search items
+material_management:ask      material_management   ask      Ask AI about materials
+material_management:import   material_management   import   Bulk import items via Excel
+```
+
+`requisition_management/`:
+```
+requisition_management:read      requisition_management   read     View material requisitions
+requisition_management:create    requisition_management   create   Create requisitions
+requisition_management:update    requisition_management   update   Edit requisitions
+requisition_management:delete    requisition_management   delete   Delete/cancel requisitions
+requisition_management:approve   requisition_management   approve  Approve or reject requisitions
+requisition_management:search    requisition_management   search   Search requisitions
+```
+
+`rfq_management/`:
+```
+rfq_management:read      rfq_management   read     View RFQs and quotation responses
+rfq_management:create    rfq_management   create   Create RFQs
+rfq_management:update    rfq_management   update   Edit RFQs
+rfq_management:delete    rfq_management   delete   Delete RFQs
+rfq_management:approve   rfq_management   approve  Select winning quotation
+rfq_management:search    rfq_management   search   Search RFQs
+```
+
+`goods_receipt_management/`:
+```
+goods_receipt_management:read     goods_receipt_management   read     View GRNs
+goods_receipt_management:create   goods_receipt_management   create   Create GRNs
+goods_receipt_management:update   goods_receipt_management   update   Edit GRNs
+goods_receipt_management:approve  goods_receipt_management   approve  Confirm GRN receipt
+goods_receipt_management:search   goods_receipt_management   search   Search GRNs
+```
+
+`warehouse_management/`:
+```
+warehouse_management:locations:read      warehouse_management.locations   read     View warehouse/zone/shelf/bin
+warehouse_management:locations:manage    warehouse_management.locations   manage   Create/edit locations
+warehouse_management:stock:read          warehouse_management.stock       read     View stock levels
+warehouse_management:stock:manage        warehouse_management.stock       manage   Adjust stock manually
+warehouse_management:movements:read      warehouse_management.movements   read     View stock movement history
+warehouse_management:movements:create    warehouse_management.movements   create   Record manual stock movement
+warehouse_management:search              warehouse_management             search   Search stock/items
+warehouse_management:summary             warehouse_management             summary  View stock valuation totals
+```
+
+---
+
+**Phase 2 — Maintenance**
+
+`asset_management/`:
+```
+asset_management:read     asset_management   read     View assets (plant/system/asset hierarchy)
+asset_management:create   asset_management   create   Create assets
+asset_management:update   asset_management   update   Edit assets
+asset_management:delete   asset_management   delete   Delete assets
+asset_management:search   asset_management   search   Search assets
+asset_management:ask      asset_management   ask      Ask AI about assets
+```
+
+`work_order_management/`:
+```
+work_order_management:read     work_order_management   read     View work orders
+work_order_management:create   work_order_management   create   Create work orders
+work_order_management:update   work_order_management   update   Edit work orders
+work_order_management:delete   work_order_management   delete   Delete work orders
+work_order_management:approve  work_order_management   approve  Approve work orders
+work_order_management:close    work_order_management   close    Close completed work orders
+work_order_management:search   work_order_management   search   Search work orders
+work_order_management:ask      work_order_management   ask      Ask AI about work orders
+work_order_management:summary  work_order_management   summary  View maintenance KPIs
+```
+
+`pm_management/` (Preventive Maintenance):
+```
+pm_management:read     pm_management   read     View PM plans and schedules
+pm_management:create   pm_management   create   Create PM plans
+pm_management:update   pm_management   update   Edit PM plans
+pm_management:delete   pm_management   delete   Delete PM plans
+pm_management:search   pm_management   search   Search PM plans
+```
+
+`inspection_management/`:
+```
+inspection_management:read     inspection_management   read     View inspection checklists and results
+inspection_management:create   inspection_management   create   Create checklists
+inspection_management:update   inspection_management   update   Edit checklists and record results
+inspection_management:delete   inspection_management   delete   Delete checklists
+inspection_management:search   inspection_management   search   Search inspection records
+```
+
+---
+
+**Phase 3 — HR & Communication**
+
+`hr_management/`:
+```
+hr_management:employees:read      hr_management.employees   read     View employees
+hr_management:employees:create    hr_management.employees   create   Add employees
+hr_management:employees:update    hr_management.employees   update   Edit employee records
+hr_management:employees:delete    hr_management.employees   delete   Delete employee records
+hr_management:employees:search    hr_management.employees   search   Search employees
+hr_management:leave:read          hr_management.leave       read     View leave requests
+hr_management:leave:create        hr_management.leave       create   Submit leave requests
+hr_management:leave:approve       hr_management.leave       approve  Approve/reject leave requests
+hr_management:training:read       hr_management.training    read     View training and certifications
+hr_management:training:manage     hr_management.training    manage   Create/update training records
+hr_management:summary             hr_management             summary  HR dashboards and org chart
+```
+
+`communication_management/`:
+```
+communication_management:letters:read     communication_management.letters   read     Read internal letters
+communication_management:letters:create   communication_management.letters   create   Write letters
+communication_management:letters:update   communication_management.letters   update   Edit draft letters
+communication_management:letters:delete   communication_management.letters   delete   Delete letters
+communication_management:letters:search   communication_management.letters   search   Search letters
+communication_management:letters:ask      communication_management.letters   ask      Ask AI about letters
+communication_management:announcements:read     communication_management.announcements   read     Read announcements
+communication_management:announcements:manage   communication_management.announcements   manage   Create/edit announcements
+```
+
+`hse_management/`:
+```
+hse_management:incidents:read      hse_management.incidents   read     View HSE incidents
+hse_management:incidents:create    hse_management.incidents   create   Report an incident
+hse_management:incidents:update    hse_management.incidents   update   Edit incident records
+hse_management:incidents:close     hse_management.incidents   close    Close an investigation
+hse_management:incidents:search    hse_management.incidents   search   Search incidents
+hse_management:incidents:ask       hse_management.incidents   ask      Ask AI about incidents
+hse_management:permits:read        hse_management.permits     read     View permits to work
+hse_management:permits:create      hse_management.permits     create   Issue a permit
+hse_management:permits:approve     hse_management.permits     approve  Approve/reject/close permits
+hse_management:summary             hse_management             summary  HSE statistics dashboard
+```
+
+---
+
+#### Record-level (part-specific) access — future phase
+
+In Phases 0–3, permissions are at the **module + sub-resource + action** level.
+A user either can or cannot create purchase orders across the whole system.
+
+After Phase 3, **record-level scoping** will be layered on top without changing permission names.
+The `require_permission()` dependency in `deps.py` will accept an optional `scope_checker`:
+
+```python
+# Future — deps.py extension (backward compatible: scope_checker defaults to None)
+def require_permission(permission_name: str, scope_checker=None):
+    def checker(request: Request, current_user: User = Depends(get_current_user)) -> User:
+        # 1. Check permission name (already works today)
+        permissions = get_user_permissions(current_user)
+        if permission_name not in permissions:
+            raise HTTPException(403, "Permission denied")
+        # 2. Check record scope (only when activated)
+        if scope_checker is not None:
+            scope_checker(request, current_user)   # raises 403 if out of scope
+        return current_user
+    return checker
+```
+
+Examples of scopes that will be added:
+- `facility_scope_checker` — user can only access records belonging to their facility/site
+- `assignee_scope_checker` — maintenance engineer can only close WOs assigned to them
+- `department_scope_checker` — HR officer can only see employees in their department
+
+Until scopes are activated, `scope_checker=None` and no record-level check runs — existing routes are untouched.
+
+---
+
+#### Seeded roles and their default permissions
+
+Roles are company-configurable. These are the system defaults seeded at startup.
+Admins can create custom roles and assign any combination of permissions.
+
+| System Role | Default permissions |
+|---|---|
+| `admin` | All permissions |
+| `purchase_manager` | `purchase_management:orders:*`, `purchase_management:phases:manage`, `purchase_management:costs:manage`, `purchase_management:summary`, `supplier_management:read`, `material_management:read`, `currencies:read`, `exchange_rates:read` |
+| `warehouse_manager` | `warehouse_management:*`, `goods_receipt_management:*`, `purchase_management:orders:read`, `material_management:read` |
+| `maintenance_engineer` | `work_order_management:read`, `work_order_management:create`, `work_order_management:update`, `work_order_management:close`, `asset_management:read`, `pm_management:read`, `inspection_management:*` |
+| `maintenance_manager` | `work_order_management:*`, `asset_management:*`, `pm_management:*`, `inspection_management:*`, `work_order_management:summary` |
+| `hr_manager` | `hr_management:*` |
+| `hse_officer` | `hse_management:*` |
+| `viewer` | All `:read` and `:search` permissions across all modules |
 
 ---
 
@@ -1269,7 +1527,7 @@ Each module follows the same internal structure:
   ├── Services (business logic)
   ├── Routes (FastAPI APIRouter)
   ├── search/ subfolder (keyword ILIKE + pgvector semantic + hybrid — Section 2.1)
-  ├── RBAC permissions registered (module:action naming convention)
+  ├── RBAC permissions declared in {module}/permissions.py + seeded in migration (Section 6)
   ├── AI /ask endpoint
   └── Frontend spec
 ```
