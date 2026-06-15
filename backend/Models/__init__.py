@@ -52,6 +52,16 @@ from buying_management.models import (
     BuyingReceiptPurpose,
 )
 
+from document_intelligence.models import (
+    DocumentIntelligenceJob,
+    DocumentPageArtifact,
+    DocumentMethodRun,
+    DocumentSegment,
+    DocumentSegmentSuggestion,
+    DIModelCreationSuggestion,
+    DocumentIntelligenceLabel,
+)
+
 __all__ = [
     "Company",
     "User",
@@ -99,4 +109,11 @@ __all__ = [
     "BuyingProcessReceiptLink",
     "BuyingProcessStatus",
     "BuyingReceiptPurpose",
+    "DocumentIntelligenceJob",
+    "DocumentPageArtifact",
+    "DocumentMethodRun",
+    "DocumentSegment",
+    "DocumentSegmentSuggestion",
+    "DIModelCreationSuggestion",
+    "DocumentIntelligenceLabel",
 ]
