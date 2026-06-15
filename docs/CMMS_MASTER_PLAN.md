@@ -312,13 +312,15 @@ def build_searchable_text(entity) -> str:
 
 ### Phase 0 — Foundation Fixes & Purchase Management (Do First, Before Any New Module)
 > Target: Make the existing system stable, correct, and ready for the frontend team to start work.
-> All changes in Phase 0 are **backward compatible** — no existing routes change.
+> Phase 0.1 (Celery) has no breaking changes. Phase 0.2 (purchase_management) is a **clean rewrite** —
+> buying_management is deleted and replaced entirely. No backward compatibility required: no other team
+> has begun implementation against it. Phase 0.3 (currency) is a new shared module, purely additive.
 
 | # | Task | Type | Priority |
 |---|---|---|---|
 | 0.1 | **Heavy processing → Celery** (STT, image embedding) | Refactor, no route change | P0 |
-| 0.2 | **purchase_management** — properly complete buying_management | Feature completion | P0 |
-| 0.3 | **Multi-currency completion** — backward-compatible | Feature completion | P0 |
+| 0.2 | **purchase_management** — clean replacement of buying_management | **Clean rewrite (breaking)** | P0 |
+| 0.3 | **Multi-currency foundation** — new shared module | New module (additive) | P0 |
 | 0.4 | **Frontend spec for Phase 0** | Spec | P0 |
 
 ---
@@ -358,84 +360,139 @@ AFTER:  POST /stt/transcribe → dispatches Celery task → returns 202 + {task_
 
 ---
 
-#### Phase 0.2 — Purchase Management (Complete buying_management)
+#### Phase 0.2 — Purchase Management (Clean Rewrite — buying_management deleted)
 
-**Current state of buying_management:**
-- `BuyingProcess`: has supplier_name (plain text, not a FK), currency fields, status flow,
-  `affects_warehouse` flag, `warehouse_applied_at`
-- `BuyingProcessItem`: links to `model_management.ManagedModel` (the AI model catalog — wrong for CMMS)
-- `BuyingProcessCost`: additional costs (shipping, customs, tax, etc.) — well designed
-- `BuyingProcessReceiptLink`: links to financial receipts for payment tracking — well designed
-- **Missing**: proper supplier entity, material items (not AI models), approval workflow,
-  GRN concept, internal phase/stage tracking
+**Decision: buying_management is completely removed and replaced with purchase_management.**
+No other team has implemented against it. There is no transition period and no aliases.
+The old module folder, tables, and routes are deleted. The new module is built from scratch, clean.
 
-**Rename: buying_management → purchase_management**
-This IS a breaking change on the route prefix (`/buying/...` → `/purchase/...`).
-**⚠️ BREAKING CHANGE — requires user approval before implementation.**
-Options:
-  A) Keep old routes + add new prefix as alias (safest — both work during transition)
-  B) Rename routes and update frontend in the same release
-Recommended: Option A during Phase 0, remove old prefix in Phase 1.
+**What was wrong with buying_management (do NOT carry forward):**
+- `BuyingProcessItem` links to `model_management.ManagedModel` — the AI model catalog. Wrong entity.
+  Items in a purchase order are materials/spare parts/consumables, not AI models.
+- `affects_warehouse` Boolean flag on `BuyingProcess` — couples purchase to warehouse logic directly.
+  In a modular monolith, the correct pattern is: purchase emits a Celery event; warehouse module listens.
+- Route prefix `/buying/` — replaced by `/purchase/`.
+- `BuyingProcess` model name — replaced by `PurchaseOrder`.
+- Free-text `currency`/`base_currency` string fields — replaced by proper currency_id FKs
+  (using the `Currency` table built in Phase 0.3 which runs first).
 
-**What to add in Phase 0 (backward compatible additions only):**
+**New module: `backend/purchase_management/`**
 
-1. `PurchasePhase` model — internal stages/sub-steps inside a purchase:
-   A purchase can have multiple phases (e.g. "Initial Order", "Second Delivery", "Spare Parts").
-   Each phase has its own items, costs, and status. The parent `BuyingProcess` becomes a
-   `PurchaseOrder` container that can hold 1..N phases.
-   ```
-   PurchaseOrder (was BuyingProcess)
-     └── PurchasePhase (new) — one or more phases
-           ├── PurchasePhaseItem (was BuyingProcessItem — but linked to Item catalog, not AI model)
-           └── PurchasePhaseCost (same as BuyingProcessCost)
-   ```
-   **Backward compatible**: `BuyingProcess` table stays, `BuyingProcessItem` stays.
-   New `purchase_phases` table is additive. Old endpoints still work.
+Data model (clean, no legacy carryover):
+```
+PurchaseOrder
+  ├── reference_number (auto: PO-2026-0001)
+  ├── supplier_id FK → suppliers.id  (NULL until Phase 1 Supplier module; use supplier_name as fallback)
+  ├── supplier_name (VARCHAR, kept for Phase 0 before Supplier module exists)
+  ├── currency_id FK → currencies.id
+  ├── base_currency_id FK → currencies.id
+  ├── exchange_rate_used (Numeric 28,10)
+  ├── status: draft | ordered | shipped | received | closed | cancelled
+  ├── approval_status: draft | pending | approved | rejected
+  ├── description, description_embedding (Vector 1024 — for semantic search)
+  ├── created_by_user_id, approved_by_user_id
+  └── created_at, updated_at
 
-2. `supplier_id` FK column on `BuyingProcess` — nullable, added alongside existing `supplier_name`.
-   When Supplier Management is built in Phase 1, this FK gets populated. Until then, `supplier_name`
-   (free text) continues to work. **Backward compatible**: nullable FK, no existing data changes.
+PurchasePhase  (one PO has 1..N phases — partial shipments, milestones, etc.)
+  ├── purchase_order_id FK → purchase_orders.id
+  ├── phase_number (1, 2, 3...)
+  ├── title, description
+  ├── status: draft | ordered | shipped | received | closed
+  ├── currency_id FK → currencies.id (inherits from PO if null)
+  ├── exchange_rate_used
+  └── created_at, updated_at
 
-3. `reference_number` column — auto-generated PO number (PO-2026-0001). Nullable for existing records.
-   **Backward compatible**: nullable.
+PurchasePhaseItem  (items inside a phase — materials, not AI models)
+  ├── phase_id FK → purchase_phases.id
+  ├── item_name (free text in Phase 0; FK to Item catalog in Phase 1)
+  ├── item_code (optional SKU/part number)
+  ├── quantity (Numeric), unit (str: "pcs", "kg", "m", etc.)
+  ├── unit_price (Numeric), currency_id FK
+  ├── unit_price_base (Numeric), base_currency_id FK
+  ├── exchange_rate_used (Numeric)
+  ├── line_total (Numeric), line_total_base (Numeric)
+  └── notes
 
-4. `approval_status` column — Draft/Pending/Approved/Rejected. Defaults to 'draft' for existing.
-   **Backward compatible**: has default.
+PurchaseOrderCost  (additional costs: freight, customs, tax, insurance)
+  ├── purchase_order_id FK → purchase_orders.id
+  ├── cost_type: freight | customs | tax | insurance | other
+  ├── description, amount (Numeric), currency_id FK
+  ├── amount_base (Numeric), base_currency_id FK
+  ├── exchange_rate_used
+  └── allocation_method: per_item | per_value | manual
 
-5. New search endpoint: `POST /buying/processes/search` with keyword|semantic|hybrid modes.
-   Follows Section 2.1 search pattern. Additive — does not change existing `/buying/processes` GET.
+PurchaseOrderReceiptLink  (links payment receipts from financial_management)
+  ├── purchase_order_id FK → purchase_orders.id
+  ├── financial_receipt_id (INT — stored as plain ID, not a FK import)
+  └── linked_at, linked_by_user_id
+```
 
-**What to implement:**
-- Alembic migration: add nullable columns to `buying_processes`, create `purchase_phases` table
-- New routes alongside existing ones (no routes removed)
-- Search subfolder: `buying_management/search/`
-- Frontend spec for the updated purchase list and detail views
+**Route prefix: `/purchase/`** (not `/buying/`)
+
+New endpoints:
+- `POST   /purchase/orders` — create PO
+- `GET    /purchase/orders` — list with filters (status, date range, supplier)
+- `GET    /purchase/orders/{id}` — detail with phases
+- `PATCH  /purchase/orders/{id}` — update
+- `DELETE /purchase/orders/{id}` — soft delete (status → cancelled)
+- `PATCH  /purchase/orders/{id}/approval` — submit/approve/reject
+- `POST   /purchase/orders/{id}/phases` — add phase
+- `GET    /purchase/orders/{id}/phases` — list phases
+- `PATCH  /purchase/orders/{id}/phases/{phase_id}` — update phase
+- `POST   /purchase/orders/{id}/phases/{phase_id}/items` — add item to phase
+- `PATCH  /purchase/orders/{id}/phases/{phase_id}/items/{item_id}` — update item
+- `POST   /purchase/orders/{id}/costs` — add additional cost
+- `POST   /purchase/orders/{id}/receipt-links` — link payment receipt
+- `POST   /purchase/orders/search` — search (keyword | semantic | hybrid)
+- `GET    /purchase/orders/{id}/summary` — totals by currency + base currency
+
+**Cross-module communication (warehouse):**
+When a phase reaches status `received`, `purchase_management` dispatches a Celery task:
+`notify_warehouse_of_purchase_receipt.delay(phase_id)`.
+The warehouse module's Celery task reads the phase items and creates warehouse intake records.
+No direct model imports between modules.
+
+**Search subfolder: `purchase_management/search/`**
+- Keyword: ILIKE on `reference_number`, `supplier_name`, `description`
+- Semantic: pgvector on `description_embedding`
+- Hybrid: merge by purchase_order_id
+
+**Permissions:** `purchase:read`, `purchase:write`, `purchase:approve`, `purchase:delete`
+
+**Alembic migration:**
+- Drop `buying_processes`, `buying_process_items`, `buying_process_costs`, `buying_process_receipt_links` tables
+- Create `purchase_orders`, `purchase_phases`, `purchase_phase_items`, `purchase_order_costs`, `purchase_order_receipt_links` tables
+- **Note**: run Phase 0.3 migration first so `currencies.id` FK is available
 
 ---
 
-#### Phase 0.3 — Multi-Currency Completion (Backward Compatible)
+#### Phase 0.3 — Multi-Currency Foundation (New Shared Module — Run Before Phase 0.2)
 
-**Current state:**
-`BuyingProcess` and `BuyingProcessItem` already have `currency`, `base_currency`,
-`exchange_rate_to_base` fields. `FinancialReceipt` has `currency`, `base_currency`,
-`exchange_rate_to_base`, `base_amount`. So partial multi-currency already exists.
+> **Run this migration before Phase 0.2.** purchase_management uses currency_id FKs from day one.
 
-**What is missing:**
-- No `Currency` master table (currencies are free-text strings like "USD", "IRT" today)
-- No `ExchangeRate` table (rates are entered manually per-transaction today — which is fine for now)
-- Company has no `base_currency_id` FK
+**What is missing today:**
+- No `Currency` master table (currencies are free-text strings in financial_management)
+- No `ExchangeRate` table (rates entered manually per-transaction)
+- No `base_currency_id` on `Company`
 
-**Phase 0 approach (backward compatible):**
-1. Add `Currency` table with standard ISO codes — pre-populate with the currencies already in use
-   (IRT, IRR, USD, AED, IQD, CNY from `FinancialCurrency` enum in financial_management/models.py)
-2. Add `ExchangeRate` table for storing rates with effective dates
-3. Add nullable `base_currency_id` FK to `Company` — existing rows get NULL (no breakage)
-4. Keep the free-text `currency` / `base_currency` string fields on all existing tables
-   (do NOT migrate them to FKs in Phase 0 — that would be a breaking change for Phase 1)
-5. Add `GET /currencies` and `POST /currencies/exchange-rates` endpoints (additive)
-6. The `shared/currency.py` module holds the Currency service functions
+**What to build: `backend/shared/currency/` — new shared module**
 
-**Breaking change check: NONE** — all additions, no existing fields changed.
+1. `Currency` table — pre-populate with all currencies currently in use:
+   IRT, IRR, USD, AED, IQD, CNY (from `FinancialCurrency` enum) + common additions (EUR, GBP, TRY)
+2. `ExchangeRate` table — from/to currency, rate (Numeric 28,10), effective_date, source (manual/api)
+3. `Company` model — add nullable `base_currency_id FK → currencies.id`
+4. `shared/currency/services.py` — `get_rate(db, from_code, to_code, on_date)`, `convert(db, amount, ...)`
+5. `shared/currency/routes.py` — register under `/currencies/`
+6. Existing free-text `currency` / `base_currency` string fields on `financial_receipts` are **not** changed.
+   These old tables stay as-is. Only new modules (starting with purchase_management) use currency_id FKs.
+
+**Endpoints:**
+- `GET  /currencies` — list active currencies
+- `POST /currencies` — create currency (admin only)
+- `GET  /currencies/exchange-rates` — list rates (filter by from/to/date range)
+- `POST /currencies/exchange-rates` — add a rate (finance_manager permission)
+
+**Breaking change check: NONE** — new module, new tables, nullable FK on companies only.
 
 ---
 
@@ -447,20 +504,21 @@ SCREENS TO BUILD:
 1. Purchase Order List (/purchases)
    - List all purchase orders with status badges
    - Columns: PO number, supplier name, date, currency, total, status, phase count
-   - Filter by status
-   - Search bar (calls POST /buying/processes/search with mode selector: keyword/semantic/hybrid)
+   - Filter by status, approval status
+   - Search bar (calls POST /purchase/orders/search with mode selector: keyword/semantic/hybrid)
    - "New Purchase" button
 
 2. Purchase Order Detail (/purchases/:id)
    - Header: PO number, supplier, dates, status, approval status
-   - Tabs: Phases | Costs | Payments | Documents
+   - Tabs: Phases | Costs | Payments | Summary
    - Phases tab: list of phases, each expandable to show items
-   - Add Phase button (calls POST /buying/processes/:id/phases)
-   - Items within phase: item name, qty, unit price, currency, line total in base currency
+   - Add Phase button (calls POST /purchase/orders/:id/phases)
+   - Items within phase: item name, item code, qty, unit, unit price, currency, line total in base currency
 
 3. New/Edit Purchase Order (modal or page)
-   - Fields: title, supplier name (free text in Phase 0, FK in Phase 1), date, currency, exchange rate, description
-   - Currency dropdown from GET /currencies
+   - Fields: reference_number (auto-generated), supplier name (free text in Phase 0, FK in Phase 1),
+     date, currency dropdown (from GET /currencies), exchange rate, description
+   - On submit: POST /purchase/orders
 
 4. Task Status Poller (shared component)
    - Polls GET /tasks/:task_id every 2 seconds
@@ -1130,8 +1188,9 @@ Existing Celery setup: core/celery/celery_app.py + core/celery/tasks.py (mineru_
 STT route: routs/stt.py — currently calls external STT API synchronously inside the request cycle.
 Document processing: routs/documents.py → complete_document_upload already dispatches mineru_process_pdf.delay ✓
 
-RULE: No route URL, request body, or auth requirement changes. Only the internal execution path changes.
-RULE: All changes must be backward compatible — existing clients see the same API surface.
+RULE: Route URL and request body schema do not change. Only the internal execution path changes.
+RULE: Response schema changes — callers that expected a synchronous result must be updated to poll.
+      This is acceptable: the frontend has not shipped yet and can be updated in the same release.
 
 TODAY'S TASK: Move heavy processing to Celery without changing any routes.
 
@@ -1148,11 +1207,11 @@ WHAT NEEDS TO CHANGE:
 4. core/celery/tasks.py — add transcribe_audio_task(asset_id, user_id, language) Celery task
    that calls the STT service and writes result to TaskResult.
 
-BACKWARD COMPATIBILITY CHECK (document explicitly):
+CHANGE IMPACT:
 - STT route URL: unchanged ✓
 - STT request body: unchanged ✓
-- STT response: adds task_id + status fields, existing fields become nullable while processing ✓
-  (breaking if caller expects immediate result — flag this to user for approval)
+- STT response schema: CHANGES — was synchronous result, now returns {task_id, status: "queued"}.
+  Frontend must be updated to poll GET /tasks/{task_id} for the result. This is expected.
 - New /tasks/ endpoint: purely additive ✓
 - TaskResult table: new table, no existing data affected ✓
 
@@ -1167,65 +1226,120 @@ F) What you could add next (suggestions list)
 
 ---
 
-### PROMPT -2 — Phase 0: Purchase Management Completion
+### PROMPT -2 — Phase 0: Purchase Management (Clean Rewrite)
 
 ```
 PROJECT CONTEXT:
 We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
 Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
-Architecture: modular monolith. No cross-module model imports. Celery for cross-module writes.
-Database: PostgreSQL + pgvector. Search: keyword (ILIKE) + semantic (pgvector) + hybrid.
-Existing buying_management has: BuyingProcess, BuyingProcessItem (linked to ManagedModel — needs fix),
-BuyingProcessCost, BuyingProcessReceiptLink. Routes: /buying/processes/... with CRUD + summary.
-RULE: All changes must be backward compatible. No existing routes removed. New columns are nullable or have defaults.
-BREAKING CHANGE (requires user approval before implementing): route prefix rename /buying → /purchase.
+Architecture: modular monolith targeting future microservice extraction.
+Rules: no cross-module model imports; Celery for cross-module writes; each module owns its migrations.
+Database: PostgreSQL + pgvector. Search: keyword (ILIKE) + semantic (pgvector <=> operator) + hybrid.
+Existing relevant modules: financial_management (financial_receipts table + /financial/receipts routes),
+property_management (warehouse), shared/currency/ (Currency + ExchangeRate tables — built in Phase 0.3).
 
-ARCHITECTURAL GOAL: Modular monolith → future microservices (see rules above).
-Every module must implement search/ subfolder (keyword + semantic + hybrid) per financial_management/search/ pattern.
+TODAY'S TASK: Delete buying_management entirely and build purchase_management as a clean new module.
+No backward compatibility with buying_management — no other team has implemented against it.
+The old folder, tables, and routes are gone. Build fresh.
 
-TODAY'S TASK: Complete purchase_management as Phase 0 — additive changes only.
+WHAT WAS WRONG WITH buying_management (do NOT replicate):
+- BuyingProcessItem linked to model_management.ManagedModel — an AI model catalog. Items in a PO
+  are materials/spare parts/consumables. This FK is semantically wrong.
+- affects_warehouse Boolean flag on BuyingProcess — wrong pattern. Warehouse interaction must go
+  through a Celery event, not a flag on the purchase model.
+- Route prefix /buying/. Replace with /purchase/.
 
-REQUIREMENTS:
-1. PurchasePhase model (new table: purchase_phases):
-   - purchase_order_id FK → buying_processes.id
+NEW MODULE: backend/purchase_management/
+
+MODELS (all new — no legacy):
+1. PurchaseOrder (table: purchase_orders)
+   - id, reference_number (auto: PO-2026-0001), title, description
+   - supplier_id (INT nullable — FK to suppliers.id populated when Phase 1 Supplier module exists)
+   - supplier_name (VARCHAR — fallback for Phase 0 before Supplier module)
+   - currency_id FK → currencies.id, base_currency_id FK → currencies.id
+   - exchange_rate_used (Numeric 28,10)
+   - status: draft | ordered | shipped | received | closed | cancelled
+   - approval_status: draft | pending | approved | rejected
+   - description_embedding (Vector 1024 — nullable, for semantic search)
+   - created_by_user_id, approved_by_user_id, created_at, updated_at
+
+2. PurchasePhase (table: purchase_phases)
+   - id, purchase_order_id FK → purchase_orders.id
    - phase_number (1, 2, 3...), title, description
-   - status: draft/ordered/shipped/received/closed
-   - currency, exchange_rate_to_base (inherits from parent if null)
+   - status: draft | ordered | shipped | received | closed
+   - currency_id FK → currencies.id (inherits from PO if null)
+   - exchange_rate_used (Numeric 28,10)
+   - expected_delivery_date, actual_delivery_date
    - created_at, updated_at
-   (This allows one PO to have multiple delivery phases — e.g. partial shipments)
-2. PurchasePhaseItem (new table: purchase_phase_items — replaces BuyingProcessItem role for new data):
-   - phase_id FK, item_name (free text in Phase 0; FK to Item catalog in Phase 1), quantity,
-     unit_price, currency, exchange_rate_to_base, unit_price_base, line_total, line_total_base
-3. Add to buying_processes table (nullable columns, backward compatible):
-   - reference_number (VARCHAR, nullable) — PO number, auto-generated on first use
-   - supplier_id (INT, nullable FK to suppliers table — populated in Phase 1 when Supplier module exists)
-   - approval_status (VARCHAR, default 'draft'): draft/pending/approved/rejected
-4. search/ subfolder for buying_management:
-   - Keyword on: title, supplier_name, reference_number, description
-   - Semantic: embed title + description + supplier_name
-   - embedding column: add to buying_processes
-5. New endpoints (all additive):
-   - POST /buying/processes/{id}/phases — create a phase
-   - GET  /buying/processes/{id}/phases — list phases for a PO
-   - PATCH /buying/processes/{id}/phases/{phase_id} — update phase
-   - POST /buying/processes/{id}/phases/{phase_id}/items — add item to phase
-   - POST /buying/processes/search — search with mode: keyword|semantic|hybrid
-   - PATCH /buying/processes/{id}/approval-status — submit for approval / approve / reject
 
-BACKWARD COMPATIBILITY:
-- All existing /buying/processes/* routes: UNCHANGED ✓
-- BuyingProcess table: only nullable columns added ✓
-- BuyingProcessItem: not changed (existing data stays) ✓
-- New tables: purely additive ✓
-- Route prefix /buying → /purchase: ⚠️ BREAKING — implement /purchase as alias first, remove /buying in Phase 1 after frontend migration
+3. PurchasePhaseItem (table: purchase_phase_items)
+   - id, phase_id FK → purchase_phases.id
+   - item_name (VARCHAR — free text in Phase 0; FK to Item catalog added in Phase 1)
+   - item_code (VARCHAR nullable — SKU / part number)
+   - quantity (Numeric), unit (VARCHAR: "pcs", "kg", "m", "L", etc.)
+   - unit_price (Numeric), currency_id FK → currencies.id
+   - unit_price_base (Numeric), base_currency_id FK → currencies.id
+   - exchange_rate_used (Numeric 28,10)
+   - line_total (Numeric), line_total_base (Numeric)
+   - notes (Text nullable)
+
+4. PurchaseOrderCost (table: purchase_order_costs)
+   - id, purchase_order_id FK → purchase_orders.id
+   - cost_type: freight | customs | tax | insurance | other
+   - description, amount (Numeric), currency_id FK → currencies.id
+   - amount_base (Numeric), base_currency_id FK → currencies.id
+   - exchange_rate_used, allocation_method: per_item | per_value | manual
+
+5. PurchaseOrderReceiptLink (table: purchase_order_receipt_links)
+   - id, purchase_order_id FK → purchase_orders.id
+   - financial_receipt_id (INT — stored as plain ID, NOT an ORM FK to financial_management model)
+   - linked_at, linked_by_user_id
+
+ROUTES (prefix: /purchase/):
+- POST   /purchase/orders                           — create PO
+- GET    /purchase/orders                           — list (filter: status, approval_status, date range)
+- GET    /purchase/orders/{id}                      — detail with phases
+- PATCH  /purchase/orders/{id}                      — update
+- DELETE /purchase/orders/{id}                      — soft delete (status → cancelled)
+- PATCH  /purchase/orders/{id}/approval             — submit/approve/reject
+- POST   /purchase/orders/{id}/phases               — add phase
+- GET    /purchase/orders/{id}/phases               — list phases
+- PATCH  /purchase/orders/{id}/phases/{phase_id}    — update phase status/dates
+- POST   /purchase/orders/{id}/phases/{phase_id}/items          — add item
+- PATCH  /purchase/orders/{id}/phases/{phase_id}/items/{item_id} — update item
+- POST   /purchase/orders/{id}/costs                — add additional cost
+- POST   /purchase/orders/{id}/receipt-links        — link payment receipt
+- GET    /purchase/orders/{id}/summary              — totals by currency + base currency
+- POST   /purchase/orders/search                    — keyword | semantic | hybrid search
+
+CROSS-MODULE (warehouse notification via Celery — no direct model import):
+When a PurchasePhase status changes to "received":
+  notify_warehouse_of_receipt.delay(phase_id=phase.id)
+The warehouse Celery task reads phase items via a DB query and creates intake records.
+purchase_management never imports from property_management.
+
+PERMISSIONS: purchase:read, purchase:write, purchase:approve, purchase:delete
+
+SEARCH (purchase_management/search/ subfolder — follow financial_management/search/ pattern):
+- repository.py: keyword ILIKE on reference_number, supplier_name, title, description
+               semantic pgvector <=> on description_embedding
+- service.py: mode routing (keyword | semantic | hybrid), merge by purchase_order_id
+- routes.py: POST /purchase/orders/search — accepts {query, ids, mode, limit}
+
+ALEMBIC MIGRATION ORDER:
+1. Drop old tables: buying_process_receipt_links, buying_process_costs, buying_process_items, buying_processes
+2. Create new tables in order: purchase_orders, purchase_phases, purchase_phase_items,
+   purchase_order_costs, purchase_order_receipt_links
+Note: currencies table must already exist (Phase 0.3 migration runs first).
 
 Please provide:
-A) New models (PurchasePhase, PurchasePhaseItem) with all fields
-B) Migration plan (what columns added to buying_processes, what new tables)
-C) All new endpoints
-D) search/ subfolder structure for buying_management
-E) Frontend spec: purchase list, purchase detail with phases tab, search
-F) What you could add next (suggestions list)
+A) All 5 models with complete field definitions
+B) Full Alembic migration (drop old tables, create new)
+C) Routes file structure (router, all endpoints, schemas)
+D) purchase_management/search/ — repository.py, service.py, routes.py
+E) Celery task stub for notify_warehouse_of_receipt
+F) Permissions list to register in RBAC
+G) What you could add next (suggestions list)
 ```
 
 ---
@@ -1236,11 +1350,12 @@ F) What you could add next (suggestions list)
 PROJECT CONTEXT:
 We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
 Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
-Existing currency situation: buying_management and financial_management already store currency as
-free-text strings (currency="USD", base_currency="IRT", exchange_rate_to_base=Numeric).
+Existing currency situation: financial_management stores currency as free-text strings
+(currency="USD", base_currency="IRT", exchange_rate_to_base=Numeric).
 The FinancialCurrency enum in financial_management/models.py has: IRT, IRR, USD, AED, IQD, CNY.
-RULE: All changes must be backward compatible. Free-text currency strings on existing tables stay.
-No existing column is removed or made into a FK in this phase.
+NOTE: The old buying_management module has been deleted (Phase 0.2 clean rewrite).
+Free-text currency strings on financial_receipts stay as-is — do not retrofit old tables.
+purchase_management (built in Phase 0.2) uses currency_id FKs from day one and depends on this module.
 
 TODAY'S TASK: Add Currency master table and ExchangeRate table as a new shared foundation.
 Place in backend/shared/currency/ (shared module, not owned by any one domain module).
@@ -1268,11 +1383,12 @@ REQUIREMENTS:
    - POST /currencies/exchange-rates — add a rate (finance_manager permission)
 6. Register shared routes in api.py (additive only)
 
-BACKWARD COMPATIBILITY:
-- No existing tables changed except companies (nullable FK added) ✓
+IMPACT:
+- No existing tables changed except companies (nullable FK added — safe) ✓
 - No existing endpoints changed ✓
-- Free-text currency strings on buying_processes, financial_receipts stay as-is ✓
-- Phase 1 will add proper currency_id FKs to new modules (not retrofit old ones yet)
+- Free-text currency strings on financial_receipts stay as-is ✓
+- purchase_management (Phase 0.2) uses currency_id FKs from day one — depends on this running first ✓
+- All future new modules (Phase 1+) use currency_id FKs — never free-text strings again
 
 Please provide:
 A) All models with fields
