@@ -14,7 +14,7 @@ The existing codebase is a production-ready RAG system. Every new module builds 
 | `document_management` | Upload, version, chunk, embed documents |
 | `tag_management` | Tag any entity; tag-based search |
 | `model_management` | AI model configs, document linking, ask/chat |
-| `buying_management` | Items master, costs, purchase receipts, processes (partial — needs completion) |
+| `buying_management` | **Deleted in Phase 0.2** — replaced by `purchase_management` (clean rewrite) |
 | `financial_management` | Financial receipts, cards, customers |
 | `property_management` | Properties catalog, warehouse skeleton (partial) |
 | `routs/` | Auth, users, company, RBAC, chat, assets, STT |
@@ -100,6 +100,49 @@ only the status code changes from 200 to 202 and a `task_id` is added.
 At the end of each implemented module, the system produces a "What you could add next" list —
 features that would naturally extend what was just built. This is surfaced to the user so they
 can decide what to prioritize without needing to ask.
+
+**Rule 10 — Celery Task Standards (every task must follow this).**
+All Celery tasks must be written to the following standard without exception:
+```python
+@app.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,   # seconds between retries
+    acks_late=True,           # task is only acknowledged after it completes (prevents silent loss)
+    reject_on_worker_lost=True
+)
+def my_task(self, ...):
+    try:
+        # ... work ...
+        TaskResult.mark_done(task_id, result)
+    except (TransientError, ConnectionError) as exc:
+        raise self.retry(exc=exc)   # retries up to max_retries
+    except Exception as exc:
+        TaskResult.mark_failed(task_id, str(exc))
+        raise                        # do not swallow permanent failures
+```
+- `TaskResult` row must be written (status: done | failed) before the task exits — always.
+- Routes that dispatch a task must also write the initial `TaskResult` row (status: queued) atomically with the dispatch, so the polling endpoint never returns 404.
+- A Celery Beat job runs daily to delete `TaskResult` rows older than 30 days (prevents unbounded table growth).
+- Cross-module Celery tasks (e.g. `notify_warehouse_of_receipt`) run as system — no `current_user` permission check inside the task. Authorization is verified by the route that dispatches the task, before dispatching.
+
+**Rule 11 — API Versioning.**
+Routes have no `/api/` prefix — they start directly with the module name (e.g., `/purchase/orders`, `/warehouse/items`).
+No version prefix is applied in Phases 0–3.
+Versioning will be introduced in Phase 4 when microservice extraction begins,
+at which point service boundaries are locked and breaking changes require a version bump.
+Until then, breaking changes in Phase 0–3 are handled by explicit user approval + same-release frontend update.
+
+**Rule 12 — Every module owns its RBAC permissions (non-negotiable).**
+Access control is a first-class concern, not an afterthought. Rules:
+- Every module declares its permissions in `{module}/permissions.py`
+- Every route is protected by a `require_permission("{module}:{action}")` FastAPI dependency
+- Permissions are seeded into the DB in the module's Alembic migration
+- No route is ever left unprotected — even read-only endpoints require `{module}:read`
+- Cross-module Celery tasks run as system (no user permission check inside the task);
+  the dispatching route is responsible for verifying the user's permission before dispatching
+- The shared RBAC system (already in `routs/`) provides `has_permission()` and `require_permission()`
+- The full RBAC permission naming convention is defined in Section 6 (RBAC and Access Control)
 
 ---
 
@@ -316,12 +359,16 @@ def build_searchable_text(entity) -> str:
 > buying_management is deleted and replaced entirely. No backward compatibility required: no other team
 > has begun implementation against it. Phase 0.3 (currency) is a new shared module, purely additive.
 
-| # | Task | Type | Priority |
-|---|---|---|---|
-| 0.1 | **Heavy processing → Celery** (STT, image embedding) | Refactor, no route change | P0 |
-| 0.2 | **purchase_management** — clean replacement of buying_management | **Clean rewrite (breaking)** | P0 |
-| 0.3 | **Multi-currency foundation** — new shared module | New module (additive) | P0 |
-| 0.4 | **Frontend spec for Phase 0** | Spec | P0 |
+**Prompt execution order (migration dependency): run Prompt 0.3 → 0.2 → 0.1**
+Prompt 0.3 creates the `currencies` table. Prompt 0.2 (purchase_management) has FK to it — it must exist first.
+Prompt 0.1 (Celery) is independent and can run any time, but do it last to keep Phase 0 coherent.
+
+| # | Prompt | Task | Type | Priority |
+|---|---|---|---|---|
+| 0.3 | `Prompt 0.3` | **Multi-currency foundation** — new shared module | New module (additive) | P0 |
+| 0.2 | `Prompt 0.2` | **purchase_management** — clean replacement of buying_management | **Clean rewrite (breaking)** | P0 |
+| 0.1 | `Prompt 0.1` | **Heavy processing → Celery** (STT, image embedding) | Refactor, no route change | P0 |
+| 0.4 | — | **Frontend spec for Phase 0** | Spec | P0 |
 
 ---
 
@@ -393,7 +440,11 @@ PurchaseOrder
   ├── created_by_user_id, approved_by_user_id
   └── created_at, updated_at
 
-PurchasePhase  (one PO has 1..N phases — partial shipments, milestones, etc.)
+PurchasePhase  (one PO has 1..N phases — each phase = one physical delivery batch)
+  DEFINITION: A phase represents a physical shipment arriving at the facility.
+  One PO can have multiple phases when goods arrive in separate deliveries.
+  Approval gates belong on PurchaseOrder (approval_status), NOT on phases.
+  Phases do not represent milestones, contract stages, or document checkpoints.
   ├── purchase_order_id FK → purchase_orders.id
   ├── phase_number (1, 2, 3...)
   ├── title, description
@@ -653,51 +704,67 @@ to the next phase. This gives managers visibility into what was just built witho
 
 ---
 
-## 4. Multi-Currency Support
+## 4. Multi-Currency Support (Authoritative Spec — see Prompt 0.3 for implementation)
+
+> **This section is the authoritative reference for multi-currency.** Prompt 0.3 implements it.
+> All other sections that mention currency defer to this spec.
 
 Multi-currency must be built **from the very beginning** because retrofitting it later is very expensive.
 It applies to: Procurement (PO, GRN), Financial Management, Supplier invoices, Inventory valuation.
 
-### Currency Model (shared, belongs in a `core_config` or `financial_management` app)
+### Where the Currency module lives
+
+`backend/shared/currency/` — a shared module, not owned by any single domain module.
+
+> **Future microservice note:** `shared/currency/` is imported by every module. When extracting
+> modules to microservices in Phase 4, `shared/currency/` becomes either (a) a shared library
+> packaged alongside every service, or (b) a dedicated Currency service that others call via HTTP.
+> Decide at Phase 4. Until then, treat it as an importable library — it has no external dependencies.
+
+### Data Model
 
 ```
-Currency
-  - code: ISO 4217 (USD, EUR, IRR, AED, GBP, ...)
-  - name
-  - symbol
-  - decimal_places
-  - is_active
+Currency (table: currencies)
+  - code: ISO 4217 VARCHAR(10), unique (USD, EUR, IRR, IRT, AED, IQD, CNY, GBP, TRY, ...)
+  - name, symbol
+  - decimal_places (INT — USD=2, IRR=0)
+  - is_active (Boolean)
+  Pre-populated: IRT, IRR, USD, AED, IQD, CNY (from existing FinancialCurrency enum)
 
-ExchangeRate
-  - from_currency_id
-  - to_currency_id
-  - rate (Decimal, high precision)
-  - effective_date
-  - source: Manual / API
-  - created_by
+ExchangeRate (table: exchange_rates)
+  - from_currency_id FK → currencies.id
+  - to_currency_id FK → currencies.id
+  - rate: Numeric(28, 10) — high precision, never loses rounding at any scale
+  - effective_date (DATE) — rate is valid from this date; use closest rate ≤ transaction date
+  - source: 'manual' | 'api'
+  - created_by_user_id, created_at
 ```
 
-### Rules that apply to every money field:
+### Rules that apply to every money field in every module:
 
-1. **Every monetary amount is stored as two fields:**
-   - `amount` — the value in the transaction currency
-   - `currency_id` — which currency
-   - `amount_base` — the equivalent in the company's base currency (for reporting)
-   - `exchange_rate_used` — the rate applied at time of transaction (never recalculated later)
+1. **Every monetary amount uses four fields** (never store money as a single bare Numeric):
+   - `amount` — value in the transaction currency
+   - `currency_id FK → currencies.id` — which currency
+   - `amount_base` — equivalent in the company's base currency (for reporting + aggregation)
+   - `exchange_rate_used` — rate applied at transaction time, stored permanently (never recalculated)
 
-2. **Company base currency** is set once in Company settings (e.g., IRR or USD). All reports aggregate in base currency.
+2. **Company base currency** is set once on the `Company` model (`base_currency_id FK → currencies.id`).
+   All reports and dashboards aggregate in base currency.
 
-3. **Exchange rates** are entered manually (or fetched via API in future). When a PO is created in a foreign currency, the system applies the current rate and stores it permanently on that PO.
+3. **Exchange rates** are entered manually (or fetched via API in future). When a PO is created in a
+   foreign currency, the system applies the closest rate ≤ today and stores it on the record permanently.
 
-4. **Rounding** follows each currency's decimal_places (USD = 2, IRR = 0, etc.)
+4. **Rounding** follows `currency.decimal_places` (USD = 2, IRR = 0, IRT = 0, etc.)
+
+5. **Old tables** (`financial_receipts`) keep their free-text currency strings — do not retrofit.
+   New modules (Phase 0.2 onward) always use `currency_id` FKs — never free-text currency strings.
 
 ### Where multi-currency applies:
-- `PurchaseOrder` — supplier invoices often in foreign currency
-- `POItem` — unit_price + currency
-- `GoodsReceiptNote` — landed cost in transaction currency
-- `SupplierEvaluation` — price comparison normalized to base currency
-- `financial_management` receipts and cards — already partially implemented, needs currency fields
-- Inventory valuation (FIFO/weighted average cost) — always stored with currency
+- `PurchaseOrder` / `PurchasePhase` / `PurchasePhaseItem` — built in Phase 0.2 (uses currency_id FKs from day one)
+- `GoodsReceiptNote` — Phase 1 (landed cost in transaction currency)
+- `SupplierEvaluation` — price comparison normalised to base currency
+- `financial_management` receipts — existing free-text fields stay; currency_id FKs added in Phase 4 refactor
+- Inventory valuation (FIFO/weighted average cost) — Phase 1 (always stored with currency)
 
 ---
 
@@ -1063,15 +1130,20 @@ A conversational agent that a manager can ask questions and get cross-module ans
 
 ## 6. Shared Technical Requirements
 
-### Full-Text Search (every module must have this)
+### Search (every module must have this — see Section 2.1 for the complete standard)
 ```
-GET /warehouse/items/?q=hydraulic+pump+seal
-GET /work-orders/?q=pump+P-1001+bearing+failure
-GET /employees/?q=instrument+engineer+certification
+POST /purchase/orders/search    → {query, mode: "keyword"|"semantic"|"hybrid", limit}
+POST /warehouse/items/search    → same pattern
+POST /work-orders/search        → same pattern
+GET  /warehouse/items/?q=...    → quick shortcut, calls keyword search internally
 ```
-Implementation: PostgreSQL `tsvector` column on each searchable entity, updated via trigger or on save.
-Enable `pg_trgm` extension for fuzzy matching (`ILIKE '%term%'` with GIN index).
-When Elasticsearch or vector search is added later: plug in alongside, same `?q=` interface, no breaking changes.
+Implementation standard (as established in Section 2.1 and implemented in `financial_management/search/`):
+- **Keyword**: `ILIKE '%query%'` across meaningful text columns — fast, no index required to start.
+  Add a `pg_trgm` GIN index on high-traffic tables once query volume warrants it.
+- **Semantic**: pgvector `<=>` cosine distance on `embedding` column (Vector 1024, Jina embeddings).
+- **Hybrid**: run both, merge and deduplicate by entity ID.
+- Do NOT use `tsvector` / `tsquery` — the existing implementation uses ILIKE and that is the project standard.
+  If full-text ranking becomes a priority, it can be added as an optional enhancement in Phase 4 without changing the search interface.
 
 ### Document Attachment (every module must have this)
 Every entity should support: `POST /assets/{entity_type}/{entity_id}/documents`
@@ -1087,95 +1159,204 @@ Log: user_id, action, entity_type, entity_id, old_value, new_value, timestamp
 ### Pagination + Filtering (every list endpoint)
 Standard: `?page=1&size=20&sort=created_at&order=desc&status=active`
 
----
+### RBAC and Access Control (every module)
 
-## 7. Implementation Order — Day by Day Structure
+Access control is **critically important** and is not an afterthought. Every module owns its own
+permission definitions. The shared RBAC middleware enforces them. This two-layer design means:
 
-Each "day" = one focused implementation session.
-Each session follows this pattern:
+- **Module layer**: declares what permissions exist and checks them on each route
+- **Shared RBAC layer**: stores role-permission mappings and exposes the `has_permission()` function
+
+#### How it works across the system
 
 ```
-Day N: [Module Name]
-  ├── Models (SQLAlchemy)
+Request arrives → FastAPI dependency (get_current_user) → RBAC middleware checks permission
+     │
+     ├── IF user has required permission → route handler runs
+     └── IF not → 403 Forbidden, route never executes
+```
+
+#### Every module must:
+
+1. **Declare its permissions** in `{module}/permissions.py`:
+   ```python
+   # purchase_management/permissions.py
+   PURCHASE_PERMISSIONS = [
+       "purchase:read",
+       "purchase:write",
+       "purchase:approve",
+       "purchase:delete",
+       "purchase:search",
+   ]
+   ```
+
+2. **Register permissions** in the module's Alembic migration (seed data):
+   ```python
+   # Insert permissions into the permissions table on migration
+   for perm in PURCHASE_PERMISSIONS:
+       op.execute(f"INSERT INTO permissions (name) VALUES ('{perm}') ON CONFLICT DO NOTHING")
+   ```
+
+3. **Protect every route** with the RBAC dependency:
+   ```python
+   @router.post("/purchase/orders")
+   def create_order(
+       ...,
+       _: None = Depends(require_permission("purchase:write"))
+   ):
+   ```
+
+4. **Never trust the caller** — even internal Celery tasks that trigger writes in another module
+   run as system (no user context), and the route that dispatched the task already validated
+   the user's permission before dispatching.
+
+#### Permission naming convention (to be finalised in next planning step)
+
+Current working convention: `{module}:{action}`
+Examples: `purchase:read`, `purchase:approve`, `warehouse:write`, `maintenance:close_work_order`
+
+For modules with multiple distinct resource types that need separate gates, use:
+`{module}:{resource}:{action}`
+Examples: `hse:incident:write`, `hse:permit:approve`, `hr:leave:approve`
+
+> **Note**: The exact naming convention will be documented in a dedicated RBAC specification
+> before Phase 1 implementation begins. See next planning session.
+
+#### Part-specific (record-level) access — future phase
+
+In Phases 0–3, access control is at the **module + action** level:
+a user either can or cannot write to `purchase_management` as a whole.
+
+In a future phase (after Phase 3), **record-level access** will be added, for example:
+- A purchase manager in the **Ahvaz facility** can only see POs belonging to their facility
+- A maintenance engineer can only close work orders assigned to them
+- A warehouse operator can only move stock in their designated warehouse location
+
+The permission system is designed to accommodate this from day one:
+- Every primary entity model will include a `scope_id` or `facility_id` column (nullable now, enforced later)
+- The `require_permission()` dependency accepts an optional `scope_checker` callback that can be plugged in without changing the route signature
+- Until record-level control is activated, `scope_checker` is None and the check is skipped
+
+This means record-level access can be turned on per module, per deployment, without a code rewrite.
+
+#### What each role can do (to be configured per deployment, not hard-coded):
+
+Roles are configurable by the company admin. The system seeds reasonable defaults:
+
+| Role | Default module access |
+|---|---|
+| `system_admin` | All permissions on all modules |
+| `purchase_manager` | `purchase:*`, `supplier:read` |
+| `warehouse_manager` | `warehouse:*`, `purchase:read` |
+| `maintenance_engineer` | `maintenance:write`, `asset:read`, `work_order:write` |
+| `maintenance_manager` | `maintenance:*`, `asset:*`, `work_order:*` |
+| `hr_manager` | `hr:*` |
+| `hse_officer` | `hse:*` |
+| `viewer` | `*:read` on all modules |
+
+---
+
+## 7. Implementation Order — Phase by Phase
+
+Each phase is a self-contained deliverable. Work through the prompts in the listed order within each phase.
+Each module follows the same internal structure:
+
+```
+[Module Name]
+  ├── Models (SQLAlchemy + pgvector embedding column)
   ├── Alembic migration
-  ├── Schemas (Pydantic)
+  ├── Schemas (Pydantic request/response)
   ├── Services (business logic)
-  ├── Routes (FastAPI endpoints)
-  ├── Tests
-  ├── AI integration (semantic indexing + /ask endpoint)
+  ├── Routes (FastAPI APIRouter)
+  ├── search/ subfolder (keyword ILIKE + pgvector semantic + hybrid — Section 2.1)
+  ├── RBAC permissions registered (module:action naming convention)
+  ├── AI /ask endpoint
   └── Frontend spec
 ```
 
-### Recommended Day Order:
+---
 
-**Week 1 — Buying / Procurement (complete buying_management first)**
-- Day 1: Currency model + Exchange Rate + Company base currency setting
-- Day 2: Supplier Management (vendor registry, contacts, categories, documents)
-- Day 3: Material Master (Items, Categories, Units) — review + complete existing buying_management items
-- Day 4: Material Requisition (MR) + MR approval workflow
-- Day 5: Request for Quotation (RFQ) + Quotation Response from suppliers
+### Phase 0 — Foundation (Do Before Everything Else)
 
-**Week 2 — Procurement (continued) then Warehouse**
-- Day 6: Purchase Order (PO) + multi-currency + PO approval workflow
-- Day 7: Goods Receipt Note (GRN) — what physically arrived vs what was ordered
-- Day 8: Procurement reports + full-text search (PostgreSQL tsvector)
-- Day 9: Warehouse Locations (Warehouse, Zone, Shelf, Bin)
-- Day 10: Stock (StockItem) + StockMovement (GRN auto-triggers IN movement)
+Run prompts in this order (currency must exist before purchase_management):
 
-**Week 3 — Asset & Work Orders**
-- Day 11: Asset Management (Plant, System, Asset)
-- Day 12: Work Order core (CM work orders)
-- Day 13: Work Order Labor + Material tracking
-- Day 14: Work Order approval workflow
-- Day 15: Work Order AI search + reports
+| Order | Prompt | What gets built |
+|---|---|---|
+| 1st | Prompt 0.3 | `shared/currency/` — Currency + ExchangeRate tables, `/currencies` endpoints |
+| 2nd | Prompt 0.2 | `purchase_management/` — PurchaseOrder + Phases, replaces buying_management entirely |
+| 3rd | Prompt 0.1 | Celery refactor — STT async, TaskResult model, `GET /tasks/{task_id}` polling |
 
-**Week 4 — Maintenance Planning**
-- Day 16: Maintenance Plans + Tasks
-- Day 17: PM Schedules + Celery auto-generation
-- Day 18: Inspection Checklists
-- Day 19: Notification Engine (Phase 1)
-- Day 20: Maintenance KPI endpoints
+---
 
-**Week 5 — HR**
-- Day 21: Department + Position + Employee
-- Day 22: Leave Management
-- Day 23: Training & Certification
-- Day 24: Employee documents + org chart API
+### Phase 1 — Commerce & Warehouse
 
-**Week 6 — Communication & HSE**
-- Day 25: Internal Letters + Messaging
-- Day 26: Announcements
-- Day 27: HSE Incidents + Investigations
-- Day 28: Permit to Work
-- Day 29: HSE Statistics API
+| Prompt | Module | Key entities |
+|---|---|---|
+| Prompt 1 | `supplier_management` | Supplier, Contact, SupplierCategory, SupplierEvaluation |
+| Prompt 2 | `material_management` | Item (Material Master), ItemCategory, Unit of Measure, ItemAlternative |
+| Prompt 3 | `requisition_management` | MaterialRequisition, RequisitionItem, approval workflow |
+| Prompt 4 | `rfq_management` | RequestForQuotation, QuotationResponse (multi-supplier) |
+| Prompt 5 | `goods_receipt_management` | GoodsReceiptNote (GRN), GRN Items, links to PurchasePhase |
+| Prompt 6 | `warehouse_management` | Warehouse, Zone, Shelf, Bin, StockItem, StockMovement |
+| Prompt 7 | Phase 1 KPIs | Procurement dashboards: PO cycle time, GRN vs PO variance, stock value |
 
-**Week 7 — AI Agent**
-- Day 30: Agent tool registry
-- Day 31: Cross-module query routing
-- Day 32: Manager Dashboard API
-- Day 33: Agent response formatting
-- Day 34: End-to-end agent testing
+---
+
+### Phase 2 — Maintenance
+
+| Prompt | Module | Key entities |
+|---|---|---|
+| Prompt 8 | `asset_management` | Plant, System, Asset (hierarchy), AssetSpare, AssetHistory |
+| Prompt 9 | `work_order_management` | WorkOrder (CM), WorkOrderTask, Labor tracking, Material tracking |
+| Prompt 10 | `work_order_management` (cont.) | WO approval workflow, WO close, MTTR/downtime KPIs |
+| Prompt 11 | `pm_management` | MaintenancePlan, MaintenanceTask, TaskFrequency, PMSchedule (Celery auto-gen) |
+| Prompt 12 | `inspection_management` | InspectionChecklist, ChecklistItem (Pass/Fail/Measure), execution records |
+| Prompt 13 | Phase 2 KPIs | Asset KPIs: MTBF, MTTR, OEE, maintenance backlog, PM compliance |
+
+---
+
+### Phase 3 — HR & Communication
+
+| Prompt | Module | Key entities |
+|---|---|---|
+| Prompt 14 | `hr_management` | Department, Position, Employee, org chart |
+| Prompt 15 | `hr_management` (cont.) | Leave Management, Training & Certification, Employee documents |
+| Prompt 16 | `communication_management` | Internal Letters, Announcements, Message threads |
+| Prompt 17 | `hse_management` | HSE Incident, Investigation, Permit to Work, HSE statistics |
+| Prompt 18 | Phase 3 KPIs | HR dashboards: headcount, leave utilisation, training compliance, HSE incident rate |
+
+---
+
+### Phase 4 — Full Platform + AI Agent
+
+| Prompt | Module | What gets built |
+|---|---|---|
+| Prompt 19 | Notification Engine | Cross-module event → notification routing (bell + email via Celery) |
+| Prompt 20 | AI Manager Agent | Agent tool registry, cross-module `/ask` routing, natural language queries |
+| Prompt 21 | Manager Dashboard API | Unified KPI aggregation endpoint consumed by the frontend dashboard |
+| Prompt 22 | Module Refactor | Fix cross-module violations in existing code (buying_management remnants, tag_management, Models/__init__.py) |
+| Prompt 23 | Route Versioning | Add version prefix to routes, microservice extraction prep, service boundary lock |
 
 ---
 
 ## 8. Prompts for Each Implementable Module
 
-Use the following prompts when starting each day's session.
-Each prompt is self-contained — it gives me full context about the project so I can plan that module's implementation in detail.
+Use prompts in the order defined in Section 7. Each prompt is self-contained — copy it into a new chat session with full project context so the implementation can be planned and coded in detail.
 
 **Every prompt already includes the modular monolith rules. The implementation must follow them:**
 - No cross-module SQLAlchemy model imports
 - No calling another module's route functions
-- Cross-module writes via Celery tasks (not direct service calls)
+- Cross-module writes via Celery tasks only (not direct service calls)
 - Shared types in `backend/shared/` only
-- Each module's migrations are independent
-- All additions are backward compatible — no existing route or field removed without explicit user approval
-- Heavy operations (>200ms) go to Celery; route returns 202 + task_id
+- Each module owns its migrations independently
+- Heavy operations (>200ms) go to Celery; route returns 202 + task_id (see Rule 10)
+- Every module includes a `search/` subfolder (keyword ILIKE + pgvector semantic + hybrid — Section 2.1)
+- Every module declares its RBAC permissions (see RBAC Architecture below)
 - At the end of each module plan: include a "What you could add next" suggestions list
 
 ---
 
-### PROMPT -1 — Phase 0: Heavy Processing → Celery (Do First)
+### Prompt 0.1 — Phase 0: Heavy Processing → Celery (Run Third)
 
 ```
 PROJECT CONTEXT:
@@ -1226,7 +1407,7 @@ F) What you could add next (suggestions list)
 
 ---
 
-### PROMPT -2 — Phase 0: Purchase Management (Clean Rewrite)
+### Prompt 0.2 — Phase 0: Purchase Management (Clean Rewrite — Run Second)
 
 ```
 PROJECT CONTEXT:
@@ -1318,7 +1499,10 @@ When a PurchasePhase status changes to "received":
 The warehouse Celery task reads phase items via a DB query and creates intake records.
 purchase_management never imports from property_management.
 
-PERMISSIONS: purchase:read, purchase:write, purchase:approve, purchase:delete
+PERMISSIONS (declare in purchase_management/permissions.py, seed in Alembic migration):
+  purchase:read, purchase:write, purchase:approve, purchase:delete, purchase:search
+Every route must use: Depends(require_permission("purchase:write")) etc.
+No route is left unprotected — including read-only list and detail endpoints.
 
 SEARCH (purchase_management/search/ subfolder — follow financial_management/search/ pattern):
 - repository.py: keyword ILIKE on reference_number, supplier_name, title, description
@@ -1327,10 +1511,17 @@ SEARCH (purchase_management/search/ subfolder — follow financial_management/se
 - routes.py: POST /purchase/orders/search — accepts {query, ids, mode, limit}
 
 ALEMBIC MIGRATION ORDER:
-1. Drop old tables: buying_process_receipt_links, buying_process_costs, buying_process_items, buying_processes
+PRECONDITION: Prompt 0.3 migration (currencies table) must already be applied before running this.
+1. Drop old tables in order: buying_process_receipt_links, buying_process_costs,
+   buying_process_items, buying_processes
 2. Create new tables in order: purchase_orders, purchase_phases, purchase_phase_items,
    purchase_order_costs, purchase_order_receipt_links
-Note: currencies table must already exist (Phase 0.3 migration runs first).
+
+ADDITIONAL CLEANUP (do alongside migration — server will not start without this):
+- Remove `buying_management` import from `backend/Models/__init__.py`
+  (this file imports all models for Alembic discovery; the old table is gone so the import breaks)
+- Remove `buying_management/` folder entirely after migration is confirmed applied
+- Update any reference to /buying/ prefix in api.py router registration → /purchase/
 
 Please provide:
 A) All 5 models with complete field definitions
@@ -1344,7 +1535,7 @@ G) What you could add next (suggestions list)
 
 ---
 
-### PROMPT -3 — Phase 0: Multi-Currency Foundation
+### Prompt 0.3 — Phase 0: Multi-Currency Foundation (Run First)
 
 ```
 PROJECT CONTEXT:
@@ -1473,7 +1664,7 @@ We are building a CMMS for the petroleum industry on top of an existing RAG/KMS 
 Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
 Architecture: each feature area is its own app folder. Apps communicate via REST API only.
 Existing: document_management, tag_management, RBAC, user/company, file assets, AI chat.
-Database: PostgreSQL + pgvector (semantic search already in use via JinaAPIEmbeddings + Vector(1024) columns). Search via pg_trgm + tsvector (enable pg_trgm extension in migration).
+Database: PostgreSQL + pgvector (semantic search already in use via JinaAPIEmbeddings + Vector(1024) columns). Keyword search: ILIKE on text columns (project standard — do NOT use tsvector). Semantic search: pgvector <=> cosine distance. Hybrid: merge both by entity ID. See Section 2.1 of master plan for the complete search pattern.
 
 ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
 This project is built as a modular monolith. Every module must be independently extractable into a
@@ -1498,15 +1689,15 @@ REQUIREMENTS:
    price_score (0-10), total_score (calculated average), notes
 6. SupplierPerformance view (derived from PO history once procurement exists):
    - total_orders, on_time_delivery_rate, rejection_rate — start as nullable, populated later
-7. Search: PostgreSQL full-text on supplier name + country + category names (tsvector column)
+7. Search: keyword ILIKE on supplier name, country, category names + semantic pgvector on description_embedding (see Section 2.1 search pattern — do NOT use tsvector)
 8. Tag suppliers (use existing tag_management)
 9. Attach documents via existing file_asset
 10. RBAC: procurement_officer can create/edit; others view only
 
 Please:
 A) All models with complete fields, types, constraints, indexes
-B) All API endpoints (include ?q= full-text search + ?status= filter on list)
-C) tsvector indexing approach for PostgreSQL
+B) All API endpoints (include ?q= shortcut + ?status= filter on list)
+C) search/ subfolder (repository.py ILIKE keyword + pgvector semantic + service.py hybrid — follow Section 2.1)
 D) Alembic migration notes
 E) Frontend specification: supplier list, supplier detail/profile, evaluation form, document tab
 ```
@@ -1552,7 +1743,7 @@ REQUIREMENTS:
    - is_active, is_critical (critical spare flag)
    - lead_time_days (typical procurement lead time)
 4. ItemAlternative: item_id, alt_code, alt_name, supplier_id (vendor's code for this item)
-5. Full-text search: tsvector on item_code + name + description + specs (cast to text)
+5. Search: keyword ILIKE on item_code, name, description, specs + semantic pgvector on description_embedding (Section 2.1 pattern)
 6. Attach documents to items (datasheets, safety data sheets) via file_asset
 7. Tag items (critical spare, fast-moving, slow-moving, hazardous, etc.) via tag_management
 8. RBAC: warehouse_manager + procurement_officer can create/edit; others view
@@ -1560,8 +1751,8 @@ REQUIREMENTS:
 
 Please:
 A) All models (check buying_management/ first for what already exists)
-B) All API endpoints with pagination + ?q= full-text + ?category= + ?item_type= filters
-C) PostgreSQL tsvector indexing for items
+B) All API endpoints with pagination + ?q= shortcut + ?category= + ?item_type= filters
+C) search/ subfolder (ILIKE keyword + pgvector semantic — Section 2.1 pattern)
 D) Excel import Celery task approach
 E) Alembic migration notes
 F) Frontend specification: item list (with filters), item detail, category tree, bulk import screen
@@ -1818,14 +2009,14 @@ REQUIREMENTS:
 5. AssetSpare (links Asset to Items in Material Master — spare parts for this asset)
 6. AssetDocument (manuals, P&IDs, drawings — uses existing file_asset)
 7. AssetHistory (lifecycle events: installed, modified, repaired, replaced — append-only log)
-8. Full-text search: tsvector on tag_number + name + description + manufacturer
+8. Search: keyword ILIKE on tag_number, name, description, manufacturer + semantic pgvector on description_embedding (Section 2.1 pattern)
 9. RBAC: maintenance_engineer can create/edit, others view
 
 Please provide:
 A) All models with complete fields
 B) All endpoints (including tree/hierarchy endpoint)
 C) How AssetSpare links to Material Master
-D) PostgreSQL tsvector indexing strategy
+D) search/ subfolder for assets (ILIKE keyword + pgvector semantic — Section 2.1 pattern)
 E) Frontend specification: asset tree view, asset detail page, asset history
 ```
 
@@ -1888,7 +2079,7 @@ REQUIREMENTS:
 7. Approval: draft → maintenance_supervisor approves → starts
 8. Material reservation: before work starts, reserve items in warehouse
 9. Auto-calculate: MTTR, downtime hours
-10. Full-text search: tsvector on wo_number + title + description + asset tag + failure codes
+10. Search: keyword ILIKE on wo_number, title, description, asset tag, failure codes + semantic pgvector on description_embedding (Section 2.1 pattern)
 11. /work-orders/ask endpoint for manager agent (natural language query via existing AI chat system)
 
 Please provide:
@@ -2112,8 +2303,8 @@ REQUIREMENTS:
 5. InternalMessage (direct messaging, thread-based):
    - Thread model (participants list)
    - Message model (sender, thread, body, sent_at, is_read)
-6. All letters indexed via tsvector for full-text search
-7. Search: by subject, body, sender, letter_number, date range
+6. Search: keyword ILIKE on subject, body, sender name, letter_number + semantic pgvector on body_embedding (Section 2.1 pattern)
+7. Search filters: by date range, sender, recipient, status, letter type
 8. Number series: configurable prefix per letter_type
 
 Please provide:
