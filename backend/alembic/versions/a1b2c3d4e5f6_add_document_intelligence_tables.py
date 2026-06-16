@@ -58,6 +58,7 @@ def upgrade() -> None:
         "ix_document_intelligence_jobs_document_id",
         "document_intelligence_jobs",
         ["document_id"],
+        if_not_exists=True,
     )
 
     # ------------------------------------------------------------------
@@ -93,6 +94,7 @@ def upgrade() -> None:
         "ix_document_page_artifacts_document_id",
         "document_page_artifacts",
         ["document_id"],
+        if_not_exists=True,
     )
 
     # ------------------------------------------------------------------
@@ -121,6 +123,7 @@ def upgrade() -> None:
         "ix_document_method_runs_job_id",
         "document_method_runs",
         ["job_id"],
+        if_not_exists=True,
     )
 
     # ------------------------------------------------------------------
@@ -170,11 +173,13 @@ def upgrade() -> None:
         "ix_di_segments_job_document",
         "document_segments",
         ["job_id", "document_id"],
+        if_not_exists=True,
     )
     op.create_index(
         "ix_document_segments_document_id",
         "document_segments",
         ["document_id"],
+        if_not_exists=True,
     )
 
     # ------------------------------------------------------------------
@@ -210,6 +215,7 @@ def upgrade() -> None:
         "ix_document_segment_suggestions_segment_id",
         "document_segment_suggestions",
         ["segment_id"],
+        if_not_exists=True,
     )
 
     # ------------------------------------------------------------------
@@ -256,11 +262,13 @@ def upgrade() -> None:
         "ix_di_model_creation_suggestions_job_id",
         "di_model_creation_suggestions",
         ["job_id"],
+        if_not_exists=True,
     )
     op.create_index(
         "ix_di_model_creation_suggestions_document_id",
         "di_model_creation_suggestions",
         ["document_id"],
+        if_not_exists=True,
     )
 
     # ------------------------------------------------------------------
@@ -296,6 +304,7 @@ def upgrade() -> None:
         "ix_document_intelligence_labels_document_id",
         "document_intelligence_labels",
         ["document_id"],
+        if_not_exists=True,
     )
 
 

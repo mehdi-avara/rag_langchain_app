@@ -10,10 +10,10 @@ services:
       - redis_data:/data
 
   backend:
-    image: rag_langchain_app-backend
-    # build:
-      # context: ./backend
-      # target: backend
+    # image: rag_langchain_app-backend
+    build:
+      context: ./backend
+      target: backend
     env_file: .env
     environment:
       files_dir: /app/uploaded_files
