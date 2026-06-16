@@ -22,6 +22,8 @@ services:
       STT_URL: http://stt:8010
       postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       TIKTOKEN_CACHE_DIR: /app/.tiktoken-cache
+    command: >
+      sh -c "alembic upgrade head && uvicorn api:app --host 0.0.0.0 --port 8000"
     depends_on:
       - postgres
       # - elastic

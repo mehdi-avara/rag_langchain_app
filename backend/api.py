@@ -95,13 +95,6 @@ app.include_router(tasks_router, tags=["tasks"])
 app.include_router(di_router)
 
 
-# @app.on_event("startup")
-# def run_migrations() -> None:
-#     from alembic.config import Config
-#     from alembic import command
-#     alembic_cfg = Config("./alembic.ini")
-#     command.upgrade(alembic_cfg, "head")
-
 
 @app.on_event("startup")
 def sync_embedding_config() -> None:
