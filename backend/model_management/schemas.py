@@ -39,7 +39,7 @@ class ModelOut(BaseModel):
     receipt_ids: List[int] = Field(default_factory=list)
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ModelListOut(BaseModel):
@@ -54,7 +54,7 @@ class ModelListOut(BaseModel):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ModelDocLinkCreate(BaseModel):
@@ -90,7 +90,7 @@ class ModelDocLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ModelCommentLinkOut(BaseModel):
@@ -101,7 +101,7 @@ class ModelCommentLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ModelReceiptLinkOut(BaseModel):
@@ -112,7 +112,7 @@ class ModelReceiptLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ModelDocumentOut(BaseModel):

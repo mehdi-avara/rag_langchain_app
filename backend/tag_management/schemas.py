@@ -33,7 +33,7 @@ class TagOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TagTreeOut(BaseModel):
@@ -44,7 +44,7 @@ class TagTreeOut(BaseModel):
     children: List["TagTreeOut"] = Field(default_factory=list)
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TagModelLinkCreate(BaseModel):
@@ -60,7 +60,7 @@ class TagModelLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TagModelOut(BaseModel):
@@ -119,7 +119,7 @@ class TagDocLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TagCommentLinkCreate(BaseModel):
@@ -150,7 +150,7 @@ class TagCommentLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TagCommentOut(BaseModel):
@@ -173,7 +173,7 @@ class TagReceiptLinkOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TagReceiptOut(BaseModel):

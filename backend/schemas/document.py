@@ -16,7 +16,7 @@ class DocumentOut(BaseModel):
     
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ChunkOut(BaseModel):
     id: int
