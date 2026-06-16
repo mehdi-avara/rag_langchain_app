@@ -26,6 +26,7 @@ from purchase_management.routes import purchase_router
 from shared.currency.routes import router as currency_router
 from routs.tasks import router as tasks_router
 from db.session import SessionLocal
+from db.init_db import seed_default_user
 from components.embedding_service import get_or_create_embedding_config, regenerate_missing_embeddings
 from financial_management.services import safe_embed_text
 from core.exceptions import register_exception_handlers
@@ -94,6 +95,13 @@ app.include_router(currency_router, prefix="/currencies", tags=["currencies"])
 app.include_router(tasks_router, tags=["tasks"])
 app.include_router(di_router)
 
+
+
+@app.on_event("startup")
+def seed_default_user_on_startup() -> None:
+    # Schema is created by Alembic migrations (entrypoint runs `alembic upgrade
+    # head`); this only seeds the default admin user, once, at startup.
+    seed_default_user()
 
 
 @app.on_event("startup")

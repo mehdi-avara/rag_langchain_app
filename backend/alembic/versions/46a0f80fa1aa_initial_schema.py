@@ -65,6 +65,19 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_permissions_id'), 'permissions', ['id'], unique=False)
     op.create_index(op.f('ix_permissions_name'), 'permissions', ['name'], unique=True)
+    op.create_table('currencies',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('code', sa.String(length=10), nullable=False),
+    sa.Column('name', sa.String(length=100), nullable=False),
+    sa.Column('symbol', sa.String(length=10), nullable=True),
+    sa.Column('decimal_places', sa.Integer(), nullable=False),
+    sa.Column('is_active', sa.Boolean(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_currencies')),
+    sa.UniqueConstraint('code', name='uq_currencies_code')
+    )
+    op.create_index('ix_currencies_code', 'currencies', ['code'], unique=False)
+    op.create_index('ix_currencies_is_active', 'currencies', ['is_active'], unique=False)
     # ------------------------------------------------------------------
     # users ↔ file_assets are circular: users.profile_asset_id → file_assets
     # and file_assets.owner_id → users. Create users without the FK to
@@ -282,6 +295,23 @@ def upgrade() -> None:
     )
     op.create_index('ix_chats_company_id', 'chats', ['company_id'], unique=False)
     op.create_index(op.f('ix_chats_id'), 'chats', ['id'], unique=False)
+    op.create_table('exchange_rates',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('from_currency_id', sa.Integer(), nullable=False),
+    sa.Column('to_currency_id', sa.Integer(), nullable=False),
+    sa.Column('rate', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('effective_date', sa.Date(), nullable=False),
+    sa.Column('source', sa.String(length=20), nullable=False),
+    sa.Column('created_by_user_id', sa.Integer(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['created_by_user_id'], ['users.id'], name=op.f('fk_exchange_rates_created_by_user_id_users'), ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['from_currency_id'], ['currencies.id'], name=op.f('fk_exchange_rates_from_currency_id_currencies'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['to_currency_id'], ['currencies.id'], name=op.f('fk_exchange_rates_to_currency_id_currencies'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_exchange_rates'))
+    )
+    op.create_index('ix_exchange_rates_effective_date', 'exchange_rates', ['effective_date'], unique=False)
+    op.create_index('ix_exchange_rates_from_currency_id', 'exchange_rates', ['from_currency_id'], unique=False)
+    op.create_index('ix_exchange_rates_to_currency_id', 'exchange_rates', ['to_currency_id'], unique=False)
     # ------------------------------------------------------------------
     # documents ↔ document_versions are circular: documents.current_version_id
     # → document_versions and document_versions.document_id → documents.
@@ -846,6 +876,10 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_documents_original_asset_id'), table_name='documents')
     op.drop_index(op.f('ix_documents_current_version_id'), table_name='documents')
     op.drop_table('documents')
+    op.drop_index('ix_exchange_rates_to_currency_id', table_name='exchange_rates')
+    op.drop_index('ix_exchange_rates_from_currency_id', table_name='exchange_rates')
+    op.drop_index('ix_exchange_rates_effective_date', table_name='exchange_rates')
+    op.drop_table('exchange_rates')
     op.drop_index(op.f('ix_chats_id'), table_name='chats')
     op.drop_index('ix_chats_company_id', table_name='chats')
     op.drop_table('chats')
@@ -899,6 +933,9 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_profile_asset_id'), table_name='users')
     op.drop_index(op.f('ix_users_company_id'), table_name='users')
     op.drop_table('users')
+    op.drop_index('ix_currencies_is_active', table_name='currencies')
+    op.drop_index('ix_currencies_code', table_name='currencies')
+    op.drop_table('currencies')
     op.drop_index(op.f('ix_permissions_name'), table_name='permissions')
     op.drop_index(op.f('ix_permissions_id'), table_name='permissions')
     op.drop_table('permissions')

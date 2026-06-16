@@ -35,7 +35,10 @@ class Currency(Base):
     )
 
     id = Column(Integer, primary_key=True)
-    code = Column(String(10), nullable=False, unique=True, index=True)
+    # Uniqueness and indexing are declared explicitly in __table_args__
+    # (uq_currencies_code / ix_currencies_code); avoid column-level
+    # unique=/index= here, which would create a duplicate ix_currencies_code.
+    code = Column(String(10), nullable=False)
     name = Column(String(100), nullable=False)
     symbol = Column(String(10), nullable=True)
     decimal_places = Column(Integer, nullable=False, default=2)

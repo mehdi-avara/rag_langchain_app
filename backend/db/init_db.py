@@ -1,43 +1,48 @@
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from passlib.hash import bcrypt  
+"""Database session dependency and one-time data seeding.
 
-from db.base import Base
+Schema creation is owned exclusively by Alembic migrations. This module no
+longer issues DDL (no ``Base.metadata.create_all``) and must never do so on a
+per-request basis. ``get_db`` is re-exported from :mod:`db.session` so existing
+imports (``from db.init_db import get_db``) keep working against the single,
+canonical engine/sessionmaker.
+"""
+from passlib.hash import bcrypt
+
+from db.session import SessionLocal, get_db  # re-exported for existing imports
 from Models import User
 from settings import get_settings
 
 settings = get_settings()
 
-def init_db():
-    engine = create_engine(settings.postgres_url,pool_pre_ping=True)
+__all__ = ["get_db", "seed_default_user"]
 
-    # Create pgvector extension
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-        conn.commit()
-    
-    Base.metadata.create_all(engine, checkfirst=True)
-    Session = sessionmaker(bind=engine)
-    db = Session()
 
-    # Add default user if not exists
-    default_username = settings.default_username
-    default_password = settings.default_password
-    default_firstname = settings.default_firstname
+def seed_default_user() -> None:
+    """Create the default admin user if it doesn't already exist.
 
-    user = db.query(User).filter_by(username=default_username).first()
-    if not user:
-        hashed_pw = bcrypt.hash(default_password)
-        user = User(username=default_username, First_name=default_firstname, pw_hash=hashed_pw, role="admin")
-        db.add(user)
-        db.commit()
-
-    return db
-
-def get_db():
-    """Dependency for FastAPI endpoints"""
-    db = init_db()
+    Idempotent. Intended to be called once at application startup (see the
+    startup hook in ``api.py``), never inside a request handler.
+    """
+    db = SessionLocal()
     try:
-        yield db
+        existing = (
+            db.query(User)
+            .filter_by(username=settings.default_username)
+            .first()
+        )
+        if not existing:
+            db.add(
+                User(
+                    username=settings.default_username,
+                    First_name=settings.default_firstname,
+                    pw_hash=bcrypt.hash(settings.default_password),
+                    role="admin",
+                )
+            )
+            db.commit()
     finally:
-        db.close() 
+        db.close()
+
+
+if __name__ == "__main__":
+    seed_default_user()
