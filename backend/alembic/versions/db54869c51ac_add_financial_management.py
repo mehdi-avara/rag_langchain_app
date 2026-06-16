@@ -78,8 +78,8 @@ def upgrade() -> None:
     )
     op.create_index('ix_financial_receipt_files_receipt_id', 'financial_receipt_files', ['receipt_id'], unique=False)
     op.create_index('ix_financial_receipt_files_user_id', 'financial_receipt_files', ['user_id'], unique=False)
-    op.drop_table('role_permissions')
-    op.drop_table('user_roles')
+    op.execute("DROP TABLE IF EXISTS role_permissions")
+    op.execute("DROP TABLE IF EXISTS user_roles")
     op.alter_column('permissions', 'resource',
                existing_type=sa.VARCHAR(length=50),
                nullable=False)
@@ -140,7 +140,7 @@ def downgrade() -> None:
     op.alter_column('permissions', 'resource',
                existing_type=sa.VARCHAR(length=50),
                nullable=True)
-    op.create_table('user_roles',
+    op.create_table('user_roles',  # only existed on old servers
     sa.Column('user_id', sa.INTEGER(), autoincrement=False, nullable=False),
     sa.Column('role_id', sa.INTEGER(), autoincrement=False, nullable=False),
     sa.ForeignKeyConstraint(['role_id'], ['roles.id'], name=op.f('user_roles_role_id_fkey'), ondelete='CASCADE'),
