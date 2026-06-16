@@ -46,7 +46,7 @@ def upgrade() -> None:
     sa.Column('owner_id', sa.Integer(), nullable=False),
     sa.Column('credit_card_id', sa.Integer(), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('description_embedding', pgvector.sqlalchemy.vector.VECTOR(dim=1024), nullable=True),
+    sa.Column('description_embedding', pgvector.sqlalchemy.Vector(dim=1024), nullable=True),
     sa.Column('tracking_number', sa.String(), nullable=True),
     sa.Column('amount', sa.Numeric(precision=14, scale=2), nullable=False),
     sa.Column('direction', sa.String(), nullable=False),
