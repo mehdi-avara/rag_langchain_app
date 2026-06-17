@@ -9,13 +9,38 @@ canonical engine/sessionmaker.
 from passlib.hash import bcrypt
 
 from db.session import SessionLocal, get_db  # re-exported for existing imports
-from Models import User
+from Models import Company, User
 from Models.rbac import Role
 from settings import get_settings
 
 settings = get_settings()
 
 __all__ = ["get_db", "seed_default_user"]
+
+
+
+def _get_or_create_default_company(db) -> Company:
+    """Return the default company, creating it if it does not exist yet.
+
+    The default admin must belong to a company: ``CurrentUserOut.company_id``
+    is a required int and most endpoints scope by ``users.company_id``, so a
+    NULL leaves the seeded admin unable to load ``/user`` (500) or read
+    ``/company/settings`` (403). Idempotent via the unique ``slug``.
+    """
+    company = (
+        db.query(Company)
+        .filter(Company.slug == settings.DEFAULT_COMPANY_SLUG)
+        .first()
+    )
+    if company is None:
+        company = Company(
+            name=settings.DEFAULT_COMPANY_NAME,
+            slug=settings.DEFAULT_COMPANY_SLUG,
+            is_active=True,
+        )
+        db.add(company)
+        db.flush()
+    return company
 
 
 def seed_default_user() -> None:
@@ -32,6 +57,8 @@ def seed_default_user() -> None:
     """
     db = SessionLocal()
     try:
+        company = _get_or_create_default_company(db)
+
         user = (
             db.query(User)
             .filter_by(username=settings.default_username)
@@ -39,6 +66,7 @@ def seed_default_user() -> None:
         )
         if user is None:
             user = User(
+                company_id=company.id,
                 username=settings.default_username,
                 First_name=settings.default_firstname,
                 pw_hash=bcrypt.hash(settings.default_password),
@@ -46,6 +74,9 @@ def seed_default_user() -> None:
             )
             db.add(user)
             db.flush()
+        elif user.company_id is None:
+            # Backfill admins created before this seeding assigned a company.
+            user.company_id = company.id
 
         admin_role = (
             db.query(Role)

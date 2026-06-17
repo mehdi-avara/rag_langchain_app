@@ -43,6 +43,7 @@ def upgrade() -> None:
     sa.Column('slug', sa.String(length=120), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('base_currency', sa.String(length=12), nullable=False),
+    sa.Column('base_currency_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_companies'))
     )

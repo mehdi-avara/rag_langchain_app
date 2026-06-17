@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024
     ALLOWED_UPLOAD_CONTENT_TYPES: str = "application/pdf,image/png,image/jpeg,image/webp,text/plain,application/zip,audio/mpeg,audio/wav,video/mp4"
 
+    DEFAULT_COMPANY_NAME = "Javidan parto electron"
+    DEFAULT_COMPANY_SLUG = "JPE"
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
