@@ -632,7 +632,10 @@ API CALLS NEEDED:
 | 2.2 | **Work Order Management** (CM + PM work orders) | P0 |
 | 2.3 | **Maintenance Planning** (PM schedules, checklists) | P0 |
 | 2.4 | **Notification & Workflow Engine** | P1 |
-| 2.5 | **Maintenance KPI Dashboard** | P1 |
+| 2.5 | **Defect / Fault Reporting** (flag that a tag has a problem; link the failed asset) | P0 |
+| 2.6 | **Maintenance KPI Dashboard** (KPIs + charts + Excel/PDF export) | P1 |
+
+> **Note on permits & access control:** reporting a fault lives here in Phase 2. The **work-permit and access-grant workflow** that follows a fault (technician requests access → **HSE team + Manager team** dual approval before work can start) is built in **Phase 4 — HSE module (4.2)** as an extension of Permit-to-Work, and gates Work Orders there. Phase 2 raises the fault and links the work order; Phase 4 governs who may act on it.
 
 ### Phase 3 — Human Resources (Third Delivery)
 > Target users: HR managers, Department heads
@@ -706,26 +709,50 @@ See **Section 12.16 (slash `//` quick tools)** and **Section 12.17 (group chat)*
 After each delivery phase is complete, a **KPI & Reporting sub-phase** is added before handing off
 to the next phase. This gives managers visibility into what was just built without waiting until the end.
 
-| After Phase | Reporting Sprint | What managers can see |
+| After Phase | Reporting Sprint | What managers can see (summary page + charts + export) |
 |---|---|---|
-| Phase 0 | Phase 0-R | Purchase order summary, spend by currency, open POs |
+| Phase 0 | Phase 0-R | **Financial summary dashboard** (see below), purchase order summary, spend by currency, open POs |
 | Phase 1 | Phase 1-R | Inventory levels, low stock alerts, procurement cycle time, spend by supplier |
-| Phase 2 | Phase 2-R | Work order backlog, MTTR, asset failure rates, PM compliance %, maintenance cost |
+| Phase 2 | Phase 2-R | Work order backlog, MTTR, asset failure rates, PM compliance %, **critical tags with open faults**, maintenance cost |
 | Phase 3 | Phase 3-R | Headcount by department, leave utilization, expiring certifications |
-| Phase 4 | Phase 4-R | Cross-module executive dashboard, full AI manager agent |
+| Phase 4 | Phase 4-R | Cross-module executive dashboard, HSE/permit KPIs, full AI manager agent |
 
-**Each reporting sprint delivers:**
-1. A set of `GET /reports/{module}/...` endpoints that aggregate data and return structured JSON
-2. A `GET /kpi/{module}` endpoint returning the top 5-8 KPIs as key-value pairs (for dashboard widgets)
-3. A `/ask` endpoint on each module so the AI agent can answer natural-language questions
-4. Frontend spec: which widgets and charts to build, what each calls
+**Each reporting sprint delivers (all built on the shared conventions in 4.6 / 4.7):**
+1. A set of `GET /reports/{module}/{name}` endpoints that aggregate data and return the **chart-ready shape** from 4.7 (`chart_type`, `x`, `series`, `unit`) — each with a recommended chart type.
+2. A `GET /kpi/{module}` endpoint returning the top 5-8 KPIs as `{ key, label, value, unit, trend }` cards (for dashboard widgets).
+3. A **summary page** for the module: KPI cards on top, charts below, a filter bar (period + relevant dimensions), and an **Export button** (xlsx / csv / pdf) wired to the Export Engine (4.6) so any view on screen can be downloaded.
+4. **Per-module export endpoints** (`POST /{module}/{entity}/export`) on every list/report from 4.6 — Excel is the default and primary format.
+5. A `/ask` endpoint on each module so the AI agent can answer natural-language questions and trigger an export from chat.
+6. Frontend spec: which KPI cards, which charts (with recommended type), and where the export/period controls sit.
 
 **Example KPIs for Phase 0-R (Purchase Management):**
-- Total open POs and their combined value (in base currency)
-- Average time from PO creation to received status
-- Spend by currency this month vs last month
-- POs by status breakdown (draft / pending approval / ordered / received)
-- Top 5 suppliers by spend (from supplier_name, upgrades to supplier FK in Phase 1)
+- Total open POs and their combined value (in base currency) — *KPI card*
+- Average time from PO creation to received status — *KPI card, trend vs last month*
+- Spend by currency this month vs last month — *grouped/stacked bar*
+- POs by status breakdown (draft / pending approval / ordered / received) — *donut*
+- Top 5 suppliers by spend (from supplier_name, upgrades to supplier FK in Phase 1) — *horizontal bar*
+- Export: open-POs list and spend breakdown to xlsx/pdf
+
+#### Phase 0-R — Financial Summary & Charts Dashboard (the financial "summary page")
+
+The existing `financial_management` module (receipts, cards, customers) gets a first-class **summary page with financial diagrams** — the "page for showing summary and these kinds of things, and financial data diagrams" requirement. It ships in Phase 0-R because the data already exists; it does not wait for later phases.
+
+**Endpoints (chart-data shape from 4.7, all accept `?from=&to=&group_by=&currency_id=`):**
+- `GET /kpi/financial` — KPI cards: total income, total expense, net cash position, receivables outstanding, this-month vs last-month deltas, all in **base currency** (Section 4 multi-currency rules apply).
+- `GET /reports/financial/cashflow` — income vs expense over time → **line** (two series).
+- `GET /reports/financial/by-category` — spend/income composition → **donut**.
+- `GET /reports/financial/by-currency` — exposure per currency (original + base) → **stacked bar**.
+- `GET /reports/financial/top-customers` — top customers/counterparties by value → **horizontal bar**.
+- `GET /reports/financial/receivables-aging` — outstanding by age bucket (0–30/31–60/61–90/90+) → **bar**.
+
+**Summary page layout (frontend spec):**
+- Row of KPI cards (income, expense, net, receivables) with up/down trend chips.
+- Cashflow line chart (default period = last 12 months, `group_by=month`).
+- Two side-by-side: category donut + currency stacked bar.
+- Receivables aging bar + top-customers bar.
+- Filter bar (date range, currency) + **Export to Excel / PDF** button (whole dashboard or per-chart data).
+
+**RBAC:** `financial:read` to view, `financial:export` to download; sensitive figures stay role-gated.
 
 ---
 
@@ -833,6 +860,39 @@ A first-class application logging system for the whole backend. **This is techni
 - **No secrets/PII in logs** — redact tokens, passwords, national IDs.
 - Replaces ad-hoc use of the existing `logs/` directory with a proper, central configuration.
 - **Where it's built:** Phase 0 foundation (it underpins every other module). The AI-specific tracing/usage in Section 12.20 sits on top of this and ships with the Assistant Core.
+
+### 4.6 Export Engine (build once — used by every list, report, and dashboard)
+
+A single shared export service so **every module gets xlsx / csv / pdf export for free** instead of re-implementing it. This is the "export to Excel and other great things" requirement, made reusable.
+
+- **Where it lives:** `backend/shared/export/` — a shared module (Section 2 rules: shared code lives in `shared/`, never in one module imported by another).
+- **Three formats, one contract:**
+  - **xlsx** — styled spreadsheet (headers, frozen header row, column widths, number/currency formatting, one sheet per dataset). Generated with `openpyxl`.
+  - **csv** — raw UTF-8 (BOM) data for analysts pulling into other tools.
+  - **pdf** — printable report/summary (title block, company logo, filters applied, table or KPI sheet). Generated with a server-side HTML→PDF renderer.
+- **Standard endpoint pattern (every module adds this next to its list/search endpoints):**
+  ```
+  POST /{module}/{entity}/export   body: { format: "xlsx"|"csv"|"pdf", filters: {...}, columns: [...] }
+  → 202 + { task_id }      (export runs in Celery — Rule 5: heavy work is async)
+  GET  /tasks/{task_id}    → { status, download_url }   (reuses the Phase 0.1 task poller)
+  ```
+  Small exports (< ~1k rows) may return the file inline; anything larger goes through Celery and the `download_url` points at a short-lived `FileAsset`.
+- **Reuses existing infrastructure:** filters/columns mirror each module's `search` request schema (Section 2.1), so export === "run this search, then serialize". The result file is stored as a `FileAsset` and is itself attachable/searchable.
+- **RBAC:** export requires the same read permission as the underlying list (`{module}:read`); a separate `{module}:export` permission is seeded so admins can withhold bulk export from roles that may view single records (KEEP_IN_MIND: every endpoint is permission-protected and seeded).
+- **AI/assistant:** export is exposed as a module tool (Section 12.4) so "export this month's open work orders to Excel" works from chat as a draft-and-confirm action (Section 12.5). Ties into §12.14 (future document generation) — templates can reuse the same dataset layer.
+- **Audit:** every export logs who exported what (entity, filters, format) via the Audit Log (4.3) — bulk data leaving the system is a security-relevant event.
+
+### 4.7 Dashboard & Chart-Data Convention (build once — used by every KPI page)
+
+The reporting sprints (Section "KPI & Reporting Phases") and the financial/maintenance/HSE dashboards all consume the **same chart-data shape**, so the frontend builds one set of chart components and points them at any module.
+
+- **Two endpoint kinds per module:**
+  - `GET /kpi/{module}` — the top 5–8 KPIs as `{ key, label, value, unit, trend }` cards (single numbers + up/down vs previous period).
+  - `GET /reports/{module}/{name}` — a chart-ready series: `{ chart_type, x: [...], series: [{ name, data: [...] }], unit }`.
+- **`chart_type` is recommended by the backend** (per the decision to specify *data endpoints + recommended chart types*, leaving the library to the frontend): `line` (trend over time), `bar`/`stacked_bar` (breakdown/compare), `pie`/`donut` (composition), `gauge` (single value vs target), `table` (raw rows). The frontend may override.
+- **Period + filter params** are standard on every report endpoint: `?from=&to=&group_by=day|week|month&currency_id=` (currency only where money is involved — Section 4).
+- **Every dashboard has an Export button** wired to the Export Engine (4.6): the same filters produce an xlsx/pdf of what's on screen.
+- **Caching:** aggregation endpoints are read-heavy; cache per (company, params) with short TTL and invalidate on the relevant module event.
 
 ---
 
@@ -1059,6 +1119,62 @@ Covered in section 4 above. Implement from Phase 2 onward.
 
 ---
 
+#### Module 2.5 — Defect / Fault Reporting
+
+**What it does:**
+Lets anyone with access report that **a tag has a problem** — and pinpoint that a specific asset under that tag (e.g., the pump used in that tag) has failed. This is the entry point of the maintenance loop: a fault is raised, becomes visible on the KPI dashboard, and can be turned into a Work Order. (Per the domain decision, "tag" here means a **`tag_management` tag** — the central object users interact with — optionally linked to an Asset.)
+
+**Entities:**
+- `DefectReport`
+  - `defect_number` (auto: DEF-2026-0001)
+  - `tag_id` → references a `tag_management` tag (via that module's service, not a model import — Section 2 rules)
+  - `asset_id` (optional) → the specific failed equipment under the tag (the "pump that is used in that tag is failed")
+  - `severity`: Low / Medium / High / Critical
+  - `status`: Open / Acknowledged / In Progress / Resolved / Closed / Rejected
+  - `description`, `description_embedding` (Vector 1024 — semantic search, Section 2.1)
+  - `reported_by`, `reported_at`
+  - `work_order_id` (optional — set when a WO is raised to fix it)
+  - `photos` (FileAsset attachments)
+- `DefectComment` (follow-up notes / status changes, audit-logged)
+
+**Key features:**
+- **Criticality lives on the tag** (admin-defined tag metadata, Section 12.10 JSONB) — so "critical tags with an open fault" is computable by joining open `DefectReport`s to tags flagged critical.
+- Raising a Work Order from a defect links them (`work_order_id`); closing the WO can auto-resolve the defect (Celery event, not a direct write).
+- Search: keyword ILIKE on `defect_number`, description, tag name, asset tag + semantic on `description_embedding`.
+- Export (4.6): defect register to xlsx/csv/pdf, filtered by status/severity/tag.
+- **The fault does NOT start work by itself** — actual work is gated by the permit/access workflow in HSE (Phase 4.2). A defect can sit "Open" until a permit is granted.
+- AI: "show all open critical faults" / "which tags have unresolved problems this week?"
+
+**Endpoints:** `POST /defects`, `GET /defects` (filter by tag/asset/status/severity), `GET /defects/{id}`, `PATCH /defects/{id}` (status), `POST /defects/{id}/comments`, `POST /defects/search`, `POST /defects/export`.
+**Permissions:** `defect:read`, `defect:write`, `defect:resolve`, `defect:export` (all seeded in `seed_rbac.py`).
+
+---
+
+#### Module 2.6 — Maintenance KPI Dashboard
+
+**What it does:**
+The maintenance "get a view of the product at a glance" page — KPI cards + charts + Excel/PDF export, built on the shared conventions (4.7 chart data, 4.6 export).
+
+**KPI cards (`GET /kpi/maintenance`):**
+- **Number of critical tags with an open fault** (the headline maintenance KPI) — *KPI card, trend vs last week*
+- Open work-order backlog (by priority) — *KPI card*
+- MTTR (mean time to repair) and MTBF — *KPI cards with trend*
+- PM compliance % (PMs done on time ÷ PMs due) — *gauge vs target*
+- Overdue work orders — *KPI card*
+
+**Charts (`GET /reports/maintenance/...`, chart-data shape 4.7):**
+- `/reports/maintenance/backlog-trend` — open WOs over time → **line**
+- `/reports/maintenance/wo-by-status` — WO status breakdown → **donut**
+- `/reports/maintenance/faults-by-criticality` — open defects by tag criticality (A/B/C) → **stacked bar**
+- `/reports/maintenance/top-failing-tags` — tags/assets with most faults this period → **horizontal bar**
+- `/reports/maintenance/pm-compliance` — compliance % over time → **line with target band**
+- `/reports/maintenance/maintenance-cost` — labor + material cost over time, base currency → **bar**
+
+**Summary page:** KPI cards row (critical-tags-with-faults first), backlog line + status donut, faults-by-criticality + top-failing-tags, PM-compliance line, cost bar. Filter bar (period, unit/plant, criticality) + **Export to Excel / PDF**.
+**Permissions:** `maintenance:read`, `maintenance:export`.
+
+---
+
 ### PHASE 3 — Human Resources
 
 #### Module 3.1 — Employee Management
@@ -1128,15 +1244,49 @@ Covered in section 4 above. Implement from Phase 2 onward.
 - `IncidentInvestigation` (root cause analysis)
 - `PermitToWork` (hot work, confined space, electrical isolation, height)
 - `PTWStep` (steps completed on permit)
+- `WorkAccessRequest` — **the "I want to fix this" request** (see workflow below)
+- `WorkAccessApproval` — one per required approver group (HSE, Manager)
 - `RiskAssessment` (job safety analysis)
 - `SafetyObservation` (positive or negative safety behavior observed)
 - `HSEStatistic` (weekly/monthly KPIs: TRIR, LTI days, etc.)
 
 **Key features:**
 - Permit to Work is a critical safety gate before maintenance work begins
+- **People who hold the permit-issuer role can create/issue permits** (RBAC-gated)
 - PTW can be linked to a Work Order (WO cannot start without valid PTW)
 - Incident reports are confidential (role-restricted access)
 - AI: "what is our TRIR for Q1?" or "show all open hot work permits"
+
+**Work-permit & access-grant workflow (the maintenance "request access to fix it" flow):**
+This is the back half of the loop that starts with a Phase 2 Defect Report (Module 2.5). A fault is open on a tag; someone wants to fix the failed asset; they must be granted access by **both the HSE team and the Manager team** before work can begin.
+
+```
+DefectReport (Phase 2: "tag X has a problem, pump under it failed")
+        │
+        ▼
+WorkAccessRequest  (technician/supervisor: "I want to fix this")
+   ├── defect_id (optional link to the Phase 2 fault)
+   ├── work_order_id (optional)
+   ├── tag_id, asset_id
+   ├── requested_by, requested_at, reason / scope of work
+   ├── required_permit_types (hot work, confined space, ...)
+   └── status: Requested → (HSE + Manager approve) → Granted → Active → Closed
+                       └→ Rejected (by either group, with reason)
+        │
+        ▼  dual approval — BOTH groups required, order-independent
+   WorkAccessApproval(group = HSE,      approver, decision, decided_at, note)
+   WorkAccessApproval(group = MANAGER,  approver, decision, decided_at, note)
+        │
+        ▼  only when both = Approved
+   PermitToWork issued + linked  →  Work Order may go to In Progress
+```
+
+- **Dual approval via the Approval Workflow Engine (4.2):** the workflow has two parallel approver groups — `hse_team` and `manager_team`. The request is `Granted` only when **both** approve; **either** can reject (with a reason), which blocks the work.
+- **Gate on Work Orders:** a WO tied to this access request cannot transition to `In Progress` until status = `Granted` and a valid `PermitToWork` exists (extends the existing "WO cannot start without valid PTW" rule).
+- **Notifications (4.1):** request raised → notify HSE + Manager queues; each decision → notify requester; granted → notify maintenance.
+- **RBAC:** `hse:permit_approve` (HSE team), `maintenance:access_approve` (Manager team), `maintenance:access_request` (anyone who may request). All seeded; the agent inherits exactly the caller's rights (§12.11) — it can *draft* a request but only an authorized human approves.
+- **Audit (4.3):** who requested, who approved/rejected each group, and when — fully logged.
+- AI: "request access to fix the failed pump on tag X" (draft-and-confirm) / "what access requests are waiting on HSE approval?"
 
 ---
 
@@ -1620,11 +1770,15 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt 10 | `work_order_management` (cont.) | WO approval workflow, WO close, MTTR/downtime KPIs |
 | Prompt 11 | `pm_management` | MaintenancePlan, MaintenanceTask, TaskFrequency, PMSchedule (Celery auto-gen) |
 | Prompt 12 | `inspection_management` | InspectionChecklist, ChecklistItem (Pass/Fail/Measure), execution records |
-| Prompt 13 | Phase 2 KPIs | Asset KPIs: MTBF, MTTR, OEE, maintenance backlog, PM compliance |
+| Prompt 14 (§8) | `defect_management` | DefectReport, DefectComment — "a tag has a problem; the pump under it failed" → links to WO |
+| Prompt 13 | Phase 2 KPIs | Asset KPIs: MTBF, MTTR, OEE, maintenance backlog, PM compliance, **critical tags with open faults** |
+| Prompt 15 (§8) | `shared/export` + dashboards | Excel/CSV/PDF export + KPI/chart-data endpoints (build once, used by the maintenance dashboard and every later module) |
 
-> **Phase 2-AI (parallel track).** Register tool sets for assets, work orders, PM, and inspections into the
+> **Phase 2-AI (parallel track).** Register tool sets for assets, work orders, PM, inspections, and defects into the
 > Assistant Core (Section 12.4/12.13) — e.g. "raise a work order for pump P-1001", "what PM is due next week",
-> "how many CM WOs did P-1001 have this year". Full test suite per Section 12.12.
+> "report a fault on tag X", "export open critical faults to Excel". Full test suite per Section 12.12.
+> **Defect/Fault Reporting (Module 2.5)** and the **Export Engine (4.6) + dashboard convention (4.7)** are detailed
+> in §8 Prompts 14 and 15. The permit/access-grant approval that follows a fault is in **Phase 4 (HSE, 4.2)**.
 
 ---
 
@@ -1650,9 +1804,14 @@ Run prompts in this order (currency must exist before purchase_management):
 |---|---|---|
 | Prompt 19 | Notification Engine | Cross-module event → notification routing (bell + email via Celery) |
 | Prompt 20 | AI Manager Agent | **Now the mature state of the Assistant Core (Section 12)** — cross-module orchestration over the per-phase tool registry, manager dashboard synthesis, report formatting. Not a from-scratch build. |
-| Prompt 21 | Manager Dashboard API | Unified KPI aggregation endpoint consumed by the frontend dashboard |
+| Prompt 21 | Manager Dashboard API | Unified KPI aggregation endpoint consumed by the frontend dashboard (built on 4.7 chart-data + 4.6 export) |
 | Prompt 22 | Module Refactor | Fix cross-module violations in existing code (buying_management remnants, tag_management, Models/__init__.py) |
 | Prompt 23 | Route Versioning | Add version prefix to routes, microservice extraction prep, service boundary lock |
+
+> **HSE permit & access-grant workflow (Phase 4.2).** The HSE module (see §8 Prompt 12) adds the
+> `WorkAccessRequest` + dual-approval (`WorkAccessApproval`: HSE team **and** Manager team) flow that follows a
+> Phase 2 DefectReport. A Work Order cannot start until a valid PTW exists **and** the access request is Granted
+> by both groups. HSE also ships KPI/chart + Excel/PDF export per 4.6/4.7.
 
 > **Phase 4-AI (parallel track).** Finalize cross-module orchestration in the Assistant Core: multi-tool
 > synthesis with cited sources, the manager dashboard aggregation, and (when designed) the future
@@ -2685,25 +2844,45 @@ REQUIREMENTS:
    - isolation_points (list of what was isolated)
    - JSA_attached (Job Safety Analysis document)
 4. PTWChecklistItem (pre-work checks that must all be completed)
-5. RiskAssessment:
+5. WorkAccessRequest (the "I want to fix this" request that follows a Phase 2 DefectReport):
+   - defect_id (optional, from Phase 2), work_order_id (optional), tag_id, asset_id
+   - requested_by, requested_at, scope_of_work, required_permit_types
+   - status: Requested / Granted / Active / Closed / Rejected
+6. WorkAccessApproval (DUAL approval — one row per required group):
+   - access_request_id
+   - approver_group: HSE | MANAGER
+   - approver_user_id, decision: Approved | Rejected, decided_at, note
+   - Rule: request becomes Granted only when BOTH groups (HSE and MANAGER) have Approved;
+           a Rejected from EITHER group blocks it. Use the Approval Workflow Engine (4.2).
+7. RiskAssessment:
    - hazard, likelihood (1-5), severity (1-5), risk_score (calculated)
    - control_measures, residual_risk_score
-6. SafetyObservation (anyone can report):
+8. SafetyObservation (anyone can report):
    - type: Positive / Unsafe Act / Unsafe Condition
    - location, description, photo
    - reported_by
-7. HSEStatistic (auto-calculated weekly/monthly):
+9. HSEStatistic (auto-calculated weekly/monthly):
    - man_hours_worked, LTI_count, TRIR, LTIR, near_miss_count
-8. RBAC: hse_officer manages PTW and incidents, anyone can submit observations
-9. PTW gate on Work Orders: check if valid PTW exists before WO can go to In Progress
-10. Full-text search on: incident description, location, permit number
+10. RBAC: hse_officer manages PTW and incidents; hse_team approves the HSE side of access
+    requests (hse:permit_approve); manager_team approves the manager side
+    (maintenance:access_approve); maintenance:access_request lets a technician raise one;
+    anyone can submit observations. All permissions seeded in seed_rbac.py.
+11. PTW + access gate on Work Orders: a WO cannot go to In Progress unless (a) a valid PTW exists
+    AND (b) its WorkAccessRequest status = Granted (both HSE and Manager approved)
+12. KPI + export: GET /kpi/hse (open permits, pending access requests by group, TRIR, LTIR,
+    overdue corrective actions) and GET /reports/hse/... (chart-data shape 4.7); every register
+    (incidents, permits, access requests) supports POST /{entity}/export to xlsx/csv/pdf (4.6)
+13. Full-text search on: incident description, location, permit number, access-request scope
 
 Please provide:
 A) All models with complete fields
-B) All endpoints
-C) PTW-WorkOrder integration (how WO checks for valid PTW)
+B) All endpoints (including access-request create + per-group approve/reject + status transitions)
+C) PTW + dual-approval gate on Work Orders (how WO checks for valid PTW AND a Granted access request)
 D) TRIR/LTIR calculation logic
-E) Frontend specification: incident form, PTW issue screen, safety observation wall, HSE dashboard
+E) Dual-approval state machine (HSE + Manager, both required, either can reject) on the Approval Engine
+F) KPI/chart-data endpoints and the export endpoints (per 4.6 / 4.7)
+G) Frontend specification: incident form, PTW issue screen, access-request + dual-approval inbox,
+   safety observation wall, HSE dashboard (KPI cards + charts + Excel/PDF export)
 ```
 
 ---
@@ -2762,6 +2941,99 @@ C) All endpoints
 D) LLM prompt template for tool selection
 E) How each module's /ask endpoint should be structured for agent compatibility
 F) Frontend specification: manager chat interface, dashboard overview, report generation
+```
+
+---
+
+### PROMPT 14 — Defect / Fault Reporting (Phase 2)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+Database: PostgreSQL + pgvector (JinaAPIEmbeddings + Vector(1024) columns). Search per Section 2.1.
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES (rules 1–6 as in every prompt):
+NEVER import another module's model; use its service functions. Cross-module writes via Celery.
+Shared types in backend/shared/ only. Independent Alembic migrations. Models/__init__.py = discovery only.
+Already built: Asset Management, Work Orders, PM, tag_management (existing). 
+
+TODAY'S TASK: Defect / Fault Reporting — the entry point of the maintenance loop.
+"A tag has a problem, and a specific asset under it (e.g. the pump) has failed."
+NOTE: "tag" = a tag_management tag (the central user-facing object), optionally linked to an Asset.
+
+REQUIREMENTS:
+1. DefectReport model:
+   - defect_number (auto: DEF-2026-0001)
+   - tag_id (reference a tag_management tag via that module's SERVICE — no model import)
+   - asset_id (optional — the failed equipment under the tag)
+   - severity: Low/Medium/High/Critical
+   - status: Open/Acknowledged/In Progress/Resolved/Closed/Rejected
+   - description, description_embedding (Vector 1024)
+   - reported_by, reported_at, work_order_id (optional), photos (FileAsset)
+2. DefectComment (notes + status changes, audit-logged)
+3. Criticality of a tag is admin-defined tag metadata (Section 12.10 JSONB) — read it via the
+   tag_management service to compute "critical tags with an open fault".
+4. Raising a Work Order from a defect links them; closing the WO auto-resolves the defect
+   via a Celery event (no direct cross-module write).
+5. The fault does NOT start work — actual work is gated by the HSE permit/access workflow (Phase 4.2).
+6. Search (Section 2.1): keyword ILIKE on defect_number, description, tag name, asset tag + semantic.
+7. Export (shared Export Engine 4.6): POST /defects/export → xlsx/csv/pdf.
+8. /defects/ask endpoint for the manager agent.
+
+Please provide:
+A) All models with fields
+B) All endpoints (CRUD, status transitions, comments, search, export)
+C) How tag criticality is read from tag_management (service contract) for the KPI
+D) Defect → Work Order linkage and the auto-resolve Celery event
+E) Permissions to seed: defect:read, defect:write, defect:resolve, defect:export
+F) Frontend spec: report-a-fault form, defect register (filter by tag/status/severity), defect detail
+```
+
+---
+
+### PROMPT 15 — Export Engine + Dashboard/Chart-Data Framework (shared, build once)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
+This is a SHARED foundation used by every module (see master plan 4.6 Export Engine, 4.7 Dashboard
+& Chart-Data Convention, and the "KPI & Reporting Phases" section).
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH (rules 1–6 as in every prompt). This lives in backend/shared/.
+
+TODAY'S TASK: Build the reusable Export Engine and the dashboard/chart-data conventions so every
+module gets Excel/CSV/PDF export and standard KPI + chart endpoints for free.
+
+REQUIREMENTS:
+1. backend/shared/export/ — one service, three formats:
+   - xlsx (openpyxl: header styling, frozen header row, column widths, number/currency formatting)
+   - csv (UTF-8 with BOM)
+   - pdf (server-side HTML→PDF: title block, company logo, applied filters, table or KPI sheet)
+2. Standard export endpoint pattern that any module mounts next to its list/search:
+   POST /{module}/{entity}/export  body { format, filters, columns }  → 202 + { task_id }
+   Runs in Celery (Rule 5). Reuse the Phase 0.1 GET /tasks/{task_id} poller; result stored as FileAsset
+   with a short-lived download_url. Small exports (<~1k rows) may return inline.
+   filters/columns reuse the module's existing search request schema (Section 2.1) — export = search + serialize.
+3. Dashboard/chart-data convention (4.7):
+   - GET /kpi/{module} → [{ key, label, value, unit, trend }]  (5–8 KPI cards)
+   - GET /reports/{module}/{name} → { chart_type, x:[...], series:[{name,data:[...]}], unit }
+   - chart_type recommended by backend: line | bar | stacked_bar | pie | donut | gauge | table
+   - standard params on report endpoints: ?from=&to=&group_by=day|week|month&currency_id=
+   - short-TTL caching per (company, params), invalidated on the module's events.
+4. RBAC: export requires {module}:read; seed a separate {module}:export permission so bulk export
+   can be withheld. Every export is audit-logged (who exported what, filters, format).
+5. Assistant integration: expose export as a module tool (12.4) usable via draft-and-confirm (12.5),
+   e.g. "export this month's open work orders to Excel".
+
+Please provide:
+A) shared/export/ design (service interface, format adapters, FileAsset storage, Celery task)
+B) The reusable endpoint mixin/helper modules add to get export + kpi + reports with minimal code
+C) The chart-data response schema (Pydantic) and one worked example per chart_type
+D) Caching + invalidation approach
+E) Permission seeding pattern for {module}:export across all modules
+F) Frontend spec: reusable KPI-card, chart, filter-bar, and Export(xlsx/csv/pdf) components
 ```
 
 ---

@@ -1,0 +1,14 @@
+---
+description: Canonical project instructions for the CMMS backend (applies to all work)
+alwaysApply: true
+---
+
+Read `AGENTS.md` at the repository root first — it is the canonical instruction set for every AI
+assistant on this project. It lists the docs you must read before doing any work and the top rules.
+
+Before any task:
+- Read `AGENTS.md`, then the relevant role plan (`docs/CMMS_BACKEND_PLAN.md` or `docs/CMMS_AI_PLAN.md`),
+  and `docs/KEEP_IN_MIND.md`.
+- Follow the shared rules in `docs/CMMS_MASTER_PLAN.md`.
+
+Do not duplicate instructions here — keep this file a pointer so there is a single source of truth.
