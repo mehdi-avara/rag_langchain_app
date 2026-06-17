@@ -1,7 +1,13 @@
 # CMMS Master Plan — Petroleum Industry Platform
-> Last updated: 2026-06-14
+> Last updated: 2026-06-17
 > Base system: RAG / Knowledge Management (FastAPI + PostgreSQL + Celery)
 > Database: **PostgreSQL + pgvector extension** (semantic search via pgvector is already in use — Elasticsearch / ChromaDB not needed)
+>
+> **This is the shared architecture contract.** Two role-specific working plans derive from it and reference it for shared rules:
+> - `CMMS_BACKEND_PLAN.md` — the **backend developer's** track (domain modules + cross-cutting infra).
+> - `CMMS_AI_PLAN.md` — the **AI developer's** track (the `assistant/` package + per-phase AI tracks).
+>
+> The seam between the two is the **Module Tool Contract (Section 12.4)**: the backend dev exposes service functions; the AI dev wraps them. Keep this file as the single source of truth for shared rules so the two plans don't drift.
 
 ---
 
