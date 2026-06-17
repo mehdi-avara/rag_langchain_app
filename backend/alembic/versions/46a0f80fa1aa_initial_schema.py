@@ -783,6 +783,119 @@ def upgrade() -> None:
     op.create_index('ix_financial_receipt_files_asset_id', 'financial_receipt_files', ['asset_id'], unique=False)
     op.create_index('ix_financial_receipt_files_receipt_id', 'financial_receipt_files', ['receipt_id'], unique=False)
     op.create_index('ix_financial_receipt_files_user_id', 'financial_receipt_files', ['user_id'], unique=False)
+    # ------------------------------------------------------------------
+    # purchase_management — depends on companies, currencies, users; the
+    # tables reference each other (orders → phases/items/costs/receipt_links).
+    # supplier_id and financial_receipt_id are intentionally plain integers
+    # (no FK) to keep the module decoupled.
+    # ------------------------------------------------------------------
+    op.create_table('purchase_orders',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('company_id', sa.Integer(), nullable=False),
+    sa.Column('reference_number', sa.String(length=50), nullable=False),
+    sa.Column('title', sa.String(length=255), nullable=True),
+    sa.Column('supplier_id', sa.Integer(), nullable=True),
+    sa.Column('supplier_name', sa.String(length=255), nullable=True),
+    sa.Column('currency_id', sa.Integer(), nullable=False),
+    sa.Column('base_currency_id', sa.Integer(), nullable=False),
+    sa.Column('exchange_rate_used', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('status', sa.String(length=20), nullable=False),
+    sa.Column('approval_status', sa.String(length=20), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('description_embedding', pgvector.sqlalchemy.Vector(dim=1024), nullable=True),
+    sa.Column('created_by_user_id', sa.Integer(), nullable=True),
+    sa.Column('approved_by_user_id', sa.Integer(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['approved_by_user_id'], ['users.id'], name=op.f('fk_purchase_orders_approved_by_user_id_users'), ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['base_currency_id'], ['currencies.id'], name=op.f('fk_purchase_orders_base_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['company_id'], ['companies.id'], name=op.f('fk_purchase_orders_company_id_companies'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['created_by_user_id'], ['users.id'], name=op.f('fk_purchase_orders_created_by_user_id_users'), ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['currency_id'], ['currencies.id'], name=op.f('fk_purchase_orders_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_purchase_orders')),
+    sa.UniqueConstraint('company_id', 'reference_number', name='uq_po_company_reference')
+    )
+    op.create_index('ix_purchase_orders_approval_status', 'purchase_orders', ['approval_status'], unique=False)
+    op.create_index('ix_purchase_orders_company_id', 'purchase_orders', ['company_id'], unique=False)
+    op.create_index('ix_purchase_orders_created_by_user_id', 'purchase_orders', ['created_by_user_id'], unique=False)
+    op.create_index(op.f('ix_purchase_orders_reference_number'), 'purchase_orders', ['reference_number'], unique=False)
+    op.create_index('ix_purchase_orders_status', 'purchase_orders', ['status'], unique=False)
+    op.create_index(op.f('ix_purchase_orders_supplier_id'), 'purchase_orders', ['supplier_id'], unique=False)
+    op.create_index(op.f('ix_purchase_orders_supplier_name'), 'purchase_orders', ['supplier_name'], unique=False)
+    op.create_table('purchase_phases',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('purchase_order_id', sa.Integer(), nullable=False),
+    sa.Column('phase_number', sa.Integer(), nullable=False),
+    sa.Column('title', sa.String(length=255), nullable=True),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('status', sa.String(length=20), nullable=False),
+    sa.Column('currency_id', sa.Integer(), nullable=True),
+    sa.Column('exchange_rate_used', sa.Numeric(precision=28, scale=10), nullable=True),
+    sa.Column('expected_delivery_date', sa.DateTime(), nullable=True),
+    sa.Column('actual_delivery_date', sa.DateTime(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['currency_id'], ['currencies.id'], name=op.f('fk_purchase_phases_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['purchase_order_id'], ['purchase_orders.id'], name=op.f('fk_purchase_phases_purchase_order_id_purchase_orders'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_purchase_phases'))
+    )
+    op.create_index('ix_purchase_phases_purchase_order_id', 'purchase_phases', ['purchase_order_id'], unique=False)
+    op.create_index('ix_purchase_phases_status', 'purchase_phases', ['status'], unique=False)
+    op.create_table('purchase_phase_items',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('phase_id', sa.Integer(), nullable=False),
+    sa.Column('item_name', sa.String(length=255), nullable=False),
+    sa.Column('item_code', sa.String(length=100), nullable=True),
+    sa.Column('quantity', sa.Numeric(precision=18, scale=4), nullable=False),
+    sa.Column('unit', sa.String(length=30), nullable=False),
+    sa.Column('unit_price', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('currency_id', sa.Integer(), nullable=False),
+    sa.Column('unit_price_base', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('base_currency_id', sa.Integer(), nullable=False),
+    sa.Column('exchange_rate_used', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('line_total', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('line_total_base', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('notes', sa.Text(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['base_currency_id'], ['currencies.id'], name=op.f('fk_purchase_phase_items_base_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['currency_id'], ['currencies.id'], name=op.f('fk_purchase_phase_items_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['phase_id'], ['purchase_phases.id'], name=op.f('fk_purchase_phase_items_phase_id_purchase_phases'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_purchase_phase_items'))
+    )
+    op.create_index(op.f('ix_purchase_phase_items_item_code'), 'purchase_phase_items', ['item_code'], unique=False)
+    op.create_index('ix_purchase_phase_items_phase_id', 'purchase_phase_items', ['phase_id'], unique=False)
+    op.create_table('purchase_order_costs',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('purchase_order_id', sa.Integer(), nullable=False),
+    sa.Column('cost_type', sa.String(length=30), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('amount', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('currency_id', sa.Integer(), nullable=False),
+    sa.Column('amount_base', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('base_currency_id', sa.Integer(), nullable=False),
+    sa.Column('exchange_rate_used', sa.Numeric(precision=28, scale=10), nullable=False),
+    sa.Column('allocation_method', sa.String(length=20), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['base_currency_id'], ['currencies.id'], name=op.f('fk_purchase_order_costs_base_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['currency_id'], ['currencies.id'], name=op.f('fk_purchase_order_costs_currency_id_currencies'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['purchase_order_id'], ['purchase_orders.id'], name=op.f('fk_purchase_order_costs_purchase_order_id_purchase_orders'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_purchase_order_costs'))
+    )
+    op.create_index('ix_purchase_order_costs_purchase_order_id', 'purchase_order_costs', ['purchase_order_id'], unique=False)
+    op.create_table('purchase_order_receipt_links',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('purchase_order_id', sa.Integer(), nullable=False),
+    sa.Column('financial_receipt_id', sa.Integer(), nullable=False),
+    sa.Column('linked_at', sa.DateTime(), nullable=False),
+    sa.Column('linked_by_user_id', sa.Integer(), nullable=True),
+    sa.ForeignKeyConstraint(['linked_by_user_id'], ['users.id'], name=op.f('fk_purchase_order_receipt_links_linked_by_user_id_users'), ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['purchase_order_id'], ['purchase_orders.id'], name=op.f('fk_purchase_order_receipt_links_purchase_order_id_purchase_orders'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_purchase_order_receipt_links'))
+    )
+    op.create_index('ix_po_receipt_links_financial_receipt_id', 'purchase_order_receipt_links', ['financial_receipt_id'], unique=False)
+    op.create_index('ix_po_receipt_links_purchase_order_id', 'purchase_order_receipt_links', ['purchase_order_id'], unique=False)
     # ### end Alembic commands ###
 
 
@@ -790,6 +903,25 @@ def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
     # Drop in reverse dependency order (leaf tables first, root tables last).
+    op.drop_index('ix_po_receipt_links_purchase_order_id', table_name='purchase_order_receipt_links')
+    op.drop_index('ix_po_receipt_links_financial_receipt_id', table_name='purchase_order_receipt_links')
+    op.drop_table('purchase_order_receipt_links')
+    op.drop_index('ix_purchase_order_costs_purchase_order_id', table_name='purchase_order_costs')
+    op.drop_table('purchase_order_costs')
+    op.drop_index('ix_purchase_phase_items_phase_id', table_name='purchase_phase_items')
+    op.drop_index(op.f('ix_purchase_phase_items_item_code'), table_name='purchase_phase_items')
+    op.drop_table('purchase_phase_items')
+    op.drop_index('ix_purchase_phases_status', table_name='purchase_phases')
+    op.drop_index('ix_purchase_phases_purchase_order_id', table_name='purchase_phases')
+    op.drop_table('purchase_phases')
+    op.drop_index(op.f('ix_purchase_orders_supplier_name'), table_name='purchase_orders')
+    op.drop_index(op.f('ix_purchase_orders_supplier_id'), table_name='purchase_orders')
+    op.drop_index('ix_purchase_orders_status', table_name='purchase_orders')
+    op.drop_index(op.f('ix_purchase_orders_reference_number'), table_name='purchase_orders')
+    op.drop_index('ix_purchase_orders_created_by_user_id', table_name='purchase_orders')
+    op.drop_index('ix_purchase_orders_company_id', table_name='purchase_orders')
+    op.drop_index('ix_purchase_orders_approval_status', table_name='purchase_orders')
+    op.drop_table('purchase_orders')
     op.drop_index('ix_financial_receipt_files_user_id', table_name='financial_receipt_files')
     op.drop_index('ix_financial_receipt_files_receipt_id', table_name='financial_receipt_files')
     op.drop_index('ix_financial_receipt_files_asset_id', table_name='financial_receipt_files')

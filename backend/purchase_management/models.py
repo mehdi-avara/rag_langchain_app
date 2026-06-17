@@ -91,8 +91,10 @@ class PurchaseOrder(Base):
     base_currency_id = Column(Integer, ForeignKey("currencies.id", ondelete="RESTRICT"), nullable=False)
     exchange_rate_used = Column(Numeric(28, 10), nullable=False, default=1)
 
-    status = Column(String(20), nullable=False, default=PurchaseOrderStatus.DRAFT.value, index=True)
-    approval_status = Column(String(20), nullable=False, default=PurchaseApprovalStatus.DRAFT.value, index=True)
+    # Indexes for status/approval_status are declared in __table_args__;
+    # no column-level index= here (would create a duplicate index name).
+    status = Column(String(20), nullable=False, default=PurchaseOrderStatus.DRAFT.value)
+    approval_status = Column(String(20), nullable=False, default=PurchaseApprovalStatus.DRAFT.value)
 
     description = Column(Text, nullable=True)
     # Semantic search embedding (nullable — generated on demand)
@@ -143,7 +145,8 @@ class PurchasePhase(Base):
     phase_number = Column(Integer, nullable=False, default=1)
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
-    status = Column(String(20), nullable=False, default=PurchasePhaseStatus.DRAFT.value, index=True)
+    # Index for status is declared in __table_args__ (no duplicate here).
+    status = Column(String(20), nullable=False, default=PurchasePhaseStatus.DRAFT.value)
 
     # Phase-level currency — inherits from PO if null
     currency_id = Column(Integer, ForeignKey("currencies.id", ondelete="RESTRICT"), nullable=True)

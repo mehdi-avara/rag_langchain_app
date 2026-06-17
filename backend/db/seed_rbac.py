@@ -186,12 +186,15 @@ def seed() -> None:
             ("property_management:update", "property_management", "update", "Update warehouse and property data"),
             ("property_management:delete", "property_management", "delete", "Delete warehouse and property data"),
             ("property_management:summary", "property_management", "summary", "Read net worth summary"),
-            ("buying_management:create", "buying_management", "create", "Create buying processes"),
-            ("buying_management:read", "buying_management", "read", "Read buying processes"),
-            ("buying_management:update", "buying_management", "update", "Update buying processes"),
-            ("buying_management:delete", "buying_management", "delete", "Delete buying processes"),
-            ("buying_management:summary", "buying_management", "summary", "Read buying summaries"),
-            ("buying_management:apply_warehouse", "buying_management", "apply_warehouse", "Apply buying processes to warehouse"),
+            ("purchase_management:orders:read", "purchase_management.orders", "read", "Read purchase orders"),
+            ("purchase_management:orders:create", "purchase_management.orders", "create", "Create purchase orders"),
+            ("purchase_management:orders:update", "purchase_management.orders", "update", "Update purchase orders"),
+            ("purchase_management:orders:delete", "purchase_management.orders", "delete", "Delete purchase orders"),
+            ("purchase_management:orders:approve", "purchase_management.orders", "approve", "Approve purchase orders"),
+            ("purchase_management:orders:search", "purchase_management.orders", "search", "Search purchase orders"),
+            ("purchase_management:phases:manage", "purchase_management.phases", "manage", "Manage purchase order phases and items"),
+            ("purchase_management:costs:manage", "purchase_management.costs", "manage", "Manage purchase order costs"),
+            ("purchase_management:summary", "purchase_management", "summary", "Read purchase summaries"),
         ]
 
         permissions = [
@@ -202,8 +205,18 @@ def seed() -> None:
         permission_map = {permission.name: permission for permission in permissions}
 
         admin_role = get_or_create_role(db, "admin", "Administrator role")
+
+        # Track whether the built-in "user" role already exists, so we only seed
+        # its default permissions on first creation. After that, role↔permission
+        # assignments are managed by an admin at runtime (RBAC API) and must not
+        # be overwritten on every startup.
+        normal_role_existed = (
+            db.query(Role).filter(Role.name == "user").first() is not None
+        )
         normal_role = get_or_create_role(db, "user", "Normal user role")
 
+        # The admin role always holds the full permission set — bootstrap so an
+        # administrator can never be locked out and can manage every other role.
         admin_role.permissions = permissions
 
         normal_permission_names = {
@@ -257,19 +270,18 @@ def seed() -> None:
             "property_management:update",
             "property_management:delete",
             "property_management:summary",
-            "buying_management:create",
-            "buying_management:read",
-            "buying_management:update",
-            "buying_management:delete",
-            "buying_management:summary",
-            "buying_management:apply_warehouse",
+            # purchase_management permissions are intentionally NOT defaulted to
+            # the normal role — grant them per-role via the admin RBAC API.
         }
 
-        normal_role.permissions = [
-            permission_map[name]
-            for name in normal_permission_names
-            if name in permission_map
-        ]
+        # Seed the normal role's default permissions only when it is first
+        # created; leave admin-managed assignments untouched on later runs.
+        if not normal_role_existed:
+            normal_role.permissions = [
+                permission_map[name]
+                for name in normal_permission_names
+                if name in permission_map
+            ]
 
         admin_user = get_or_create_user(
             db=db,
