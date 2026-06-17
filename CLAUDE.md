@@ -1,0 +1,1 @@
+See docs/KEEP_IN_MIND.md before touching models, migrations, RBAC, or deployment.
