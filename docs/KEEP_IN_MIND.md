@@ -28,6 +28,10 @@ module, point it here first.
    re-run it.
 6. **Circular foreign keys must be deferred** in migrations (create tables without
    the back-reference, then `op.create_foreign_key` after both exist).
+7. **AI assistant work has its own rules.** The agent calls services not its own HTTP
+   routes, runs with exactly the caller's RBAC (never more), commits writes only via
+   draft-and-confirm, raises only catalogued errors, and ships with full tests. See the
+   "AI Assistant Backbone" section below and Section 12 of the Master Plan before touching it.
 
 ---
 
@@ -187,3 +191,81 @@ Tell the assistant explicitly:
 - "Match the naming convention in `db/base.py` for all constraints/indexes."
 - "Don't put DDL in request/startup code. Don't hardcode secrets."
 - "After changes, run `alembic upgrade head` on a fresh DB and `alembic check`."
+
+---
+
+## AI Assistant Backbone (Section 12 of the Master Plan) — don't get burned
+
+The chat page is the system's primary interface and is built as a stateful agent
+(`backend/assistant/`). The full spec is **Section 12 of `CMMS_MASTER_PLAN.md`** —
+read it before touching the assistant. The rules below are the ones that bite.
+
+### New tables — register them or Alembic skips them
+
+The Assistant Core and related work introduce new models. **Every one must be imported
+in `backend/Models/__init__.py`** (same bug that lost `currencies`/`purchase_*`):
+
+- `AgentRun` (agent run-state / status / plan — Section 12.8)
+- `Draft` (draft-and-confirm payloads — Section 12.5)
+- `TagMetadataField` + the `Tag.metadata` JSONB column (Section 12.10)
+- any audit/usage tables added for agent actions and LLM usage (Sections 12.18, 12.20)
+
+The LangGraph Postgres **checkpointer** also creates tables — make sure their creation
+is owned by Alembic (or the library's documented migration), never by runtime DDL
+(`create_all` is still banned everywhere).
+
+### The agent calls services, NOT its own HTTP routes
+
+- The agent reaches modules through **in-process service-function calls** via each
+  module's `assistant_tools.py` adapter — never by making HTTP requests to our own
+  routes (loopback HTTP), and never via a duplicated AI-only function layer. This is
+  Master Plan Rule 2 + Section 12.4.1.
+- If logic lives inside a route handler, push it down into a service function so both
+  the route and the tool set call the same code.
+- HTTP between modules is only correct **after** a module becomes its own microservice.
+
+### Agent access == the caller's access (never more)
+
+- The agent always runs as `current_user`. It is **not** a privileged service account.
+- The route's `require_permission` dependency is bypassed when the agent calls a service
+  directly, so the adapter **must** re-check permissions itself (`has_permission` /
+  `get_user_permissions`) before any action, and **again at draft confirm time**.
+- Reads are scoped to the user/company too. In group chat (Phase 5) each participant
+  acts under their own permissions — never leak one user's restricted data to another.
+
+### Drafts are central; modules stay thin
+
+- The `Draft` table + lifecycle (create/edit/confirm/cancel/persist/resume) live in
+  `backend/assistant/`. Each module only ships a thin `assistant_tools.py` adapter
+  (`search`/`summarize`/`ask`/`add_draft`/`commit_draft`). Don't reinvent draft storage
+  per module.
+
+### Ingested content is data, never instructions
+
+- Text from uploaded PDFs/photos or retrieved docs is reference material only. Never let
+  instructions found inside a file drive a tool call, and **never auto-commit a write**
+  from file contents — a human confirms every draft (Section 12.19).
+
+### Errors: only catalogued codes
+
+- `core/exceptions/error_codes.py` is the single source of truth. New routes/tools raise
+  only **catalogued** `AppException` codes (never bare `HTTPException` with ad-hoc text);
+  `INTERNAL_SERVER_ERROR` is the only uncatalogued case. The catalog auto-exports to
+  `docs/frontend-error-codes.md` + a machine-readable `errors.json` (`GET /errors/catalog`).
+  CI should fail on an uncatalogued raise (Section 12.9).
+
+### Logging (Phase 0.5 / Section 4.5) is separate from the Audit Log
+
+- Application logging = structured JSON, levels driven by env, `request_id` propagated
+  across web **and** Celery, with `user_id`/`company_id`/route/latency context. **No
+  secrets/PII** in logs. Replace ad-hoc `print()` and the loose `logs/` usage with the
+  central logger. This is technical logging — distinct from the business Audit Log
+  (who-changed-what).
+
+### Tests are required, not optional (Section 12.12)
+
+- Every AI track ships: unit tests with the **LLM mocked** (deterministic), route
+  integration tests (incl. RBAC 403 → `PERMISSION_DENIED` and catalogued errors), and
+  agent end-to-end tests (intent routing, draft→confirm, draft→cancel, interruption
+  pause/resume, resume-after-restart, multilingual). Both the LangGraph layer and the
+  backend routes must be covered. CI runs `pytest` + `alembic check`.

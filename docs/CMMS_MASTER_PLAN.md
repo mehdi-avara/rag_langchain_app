@@ -189,6 +189,10 @@ This keeps each module independently extractable into a microservice when needed
 3. Every module exposes a `/ask` endpoint so the AI agent can query it in natural language.
 4. Documents can be attached to any entity (work orders, purchase orders, assets, etc.).
 5. Tags can be applied to any entity.
+6. Every module registers an **Assistant Tool set** (`search`, `summarize`, `ask`, `add_draft`) into the Assistant Core so the chat agent can drive that module without the UI. See **Section 12 — AI Assistant Backbone**.
+7. Every delivery phase has a **parallel AI sub-phase** (a separate developer track) that wires that phase's modules into the Assistant Core. See Section 12.13.
+
+> **The chat page is the primary interface of the whole system.** Everything a user can do through the UI must also be doable by talking to the assistant on the chat page — searching across modules, adding data (via draft-and-confirm), getting summaries/KPIs, uploading PDFs/photos, and asking general questions. The complete specification for this lives in **Section 12**. Every module plan must satisfy Section 12's Module Tool Contract.
 
 ---
 
@@ -369,6 +373,7 @@ Prompt 0.1 (Celery) is independent and can run any time, but do it last to keep 
 | 0.3 | `Prompt 0.3` | **Multi-currency foundation** — new shared module | New module (additive) | P0 |
 | 0.2 | `Prompt 0.2` | **purchase_management** — clean replacement of buying_management | **Clean rewrite (breaking)** | P0 |
 | 0.1 | `Prompt 0.1` | **Heavy processing → Celery** (STT, image embedding) | Refactor, no route change | P0 |
+| 0.5 | — | **Structured logging & observability** — central JSON logging, request-id correlation across web + Celery (Section 4.5) | New foundation (additive) | P0 |
 | 0.4 | — | **Frontend spec for Phase 0** | Spec | P0 |
 
 ---
@@ -677,6 +682,19 @@ The existing codebase has cross-module coupling that must be cleaned up before t
 
 ---
 
+### Phase 5 — Collaboration & Group Chat (Later — not urgent)
+> Target users: Teams that want to work with the assistant together.
+> Priority: P2. Built only after the Assistant Core (Phase 0-AI) and the per-phase tool tracks are mature.
+
+| # | Module | Priority |
+|---|---|---|
+| 5.1 | **Group Chat** — multi-participant conversations where the agent is a participant, invoked with a trigger (e.g. `//` or `@assistant`) | P2 |
+| 5.2 | **Slash-command quick tools** — the frontend `//` launcher that lets a user start an add-draft / tag-data / search action inline (single-user; can ship earlier as part of the Assistant UX) | P1 |
+
+See **Section 12.16 (slash `//` quick tools)** and **Section 12.17 (group chat)** for the full specification. Group chat is explicitly low-priority for now; the `//` quick-tool launcher is more useful sooner and may ship alongside the Assistant Core UX rather than waiting for Phase 5.
+
+---
+
 ### KPI & Reporting Phases (End of Every Phase)
 
 After each delivery phase is complete, a **KPI & Reporting sub-phase** is added before handing off
@@ -795,6 +813,20 @@ Build them progressively starting from Phase 1.
 - Phase 2: Can answer "what work orders are overdue?" or "which assets need PM?"
 - Phase 3: Can answer "who is on leave this week?"
 - Phase 4: Full cross-module natural language reporting
+
+### 4.5 Structured Logging & Observability (build early — Phase 0)
+
+A first-class application logging system for the whole backend. **This is technical logging — distinct from the business Audit Log (4.3).** Audit Log answers "who changed this record"; logging answers "what did the system do and why is it slow/broken".
+
+- **Structured JSON logs** with consistent levels (DEBUG/INFO/WARNING/ERROR/CRITICAL), emitted by a single configured logger — no scattered `print()`.
+- **Request correlation:** every request gets a `request_id` (already present in the error shape) propagated through logs and into Celery tasks, so one operation is traceable end to end across web + worker.
+- **Context on every line:** `request_id`, `user_id`, `company_id`, route, latency, and outcome where available.
+- **Errors:** every catalogued error (Section 12.9) and every 500 logs with stack trace + `request_id`; the `request_id` is returned to the client so a user-reported problem can be found instantly.
+- **Celery tasks** log start/finish/retry/failure with the originating `request_id` and `TaskResult` id (Rule 10).
+- **Configurable sinks/levels** per environment (stdout JSON in prod for shipping to a log store; pretty logs in dev). Log level driven by env, not code.
+- **No secrets/PII in logs** — redact tokens, passwords, national IDs.
+- Replaces ad-hoc use of the existing `logs/` directory with a proper, central configuration.
+- **Where it's built:** Phase 0 foundation (it underpins every other module). The AI-specific tracing/usage in Section 12.20 sits on top of this and ships with the Assistant Core.
 
 ---
 
@@ -1544,6 +1576,14 @@ Run prompts in this order (currency must exist before purchase_management):
 | 2nd | Prompt 0.2 | `purchase_management/` — PurchaseOrder + Phases, replaces buying_management entirely |
 | 3rd | Prompt 0.1 | Celery refactor — STT async, TaskResult model, `GET /tasks/{task_id}` polling |
 
+> **Phase 0-AI (parallel track — Assistant Core).** Build `backend/assistant/` per **Section 12**: the LangGraph
+> stateful agent (intent router, interruption pause/resume, cancel), Postgres checkpointer, `AgentRun` + `Draft`
+> models, draft-and-confirm framework (multilingual), multimodal intake (heavy vs inline), general-knowledge
+> branch, the Module Tool Contract + registry, error-catalog consolidation/auto-export (Section 12.9), and the
+> tag-metadata schema (Section 12.10). Refactor the existing `core/agents/` + `routs/chat.py` into it and register
+> the first tool sets (documents, comments, financial). Full test suite per Section 12.12. Done by a separate
+> developer in parallel; depends on the Phase 0 module APIs.
+
 ---
 
 ### Phase 1 — Commerce & Warehouse
@@ -1558,6 +1598,11 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt 6 | `warehouse_management` | Warehouse, Zone, Shelf, Bin, StockItem, StockMovement |
 | Prompt 7 | Phase 1 KPIs | Procurement dashboards: PO cycle time, GRN vs PO variance, stock value |
 
+> **Phase 1-AI (parallel track).** Register tool sets (search/summarize/ask/add_draft/commit_draft) for supplier,
+> material, requisition, RFQ, goods-receipt, and warehouse into the Assistant Core (Section 12.4/12.13). Enables
+> chat to e.g. "add this supplier", "how many of item X are in the main warehouse", "find POs for supplier Y".
+> Full test suite per Section 12.12.
+
 ---
 
 ### Phase 2 — Maintenance
@@ -1571,6 +1616,10 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt 12 | `inspection_management` | InspectionChecklist, ChecklistItem (Pass/Fail/Measure), execution records |
 | Prompt 13 | Phase 2 KPIs | Asset KPIs: MTBF, MTTR, OEE, maintenance backlog, PM compliance |
 
+> **Phase 2-AI (parallel track).** Register tool sets for assets, work orders, PM, and inspections into the
+> Assistant Core (Section 12.4/12.13) — e.g. "raise a work order for pump P-1001", "what PM is due next week",
+> "how many CM WOs did P-1001 have this year". Full test suite per Section 12.12.
+
 ---
 
 ### Phase 3 — HR & Communication
@@ -1583,6 +1632,10 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt 17 | `hse_management` | HSE Incident, Investigation, Permit to Work, HSE statistics |
 | Prompt 18 | Phase 3 KPIs | HR dashboards: headcount, leave utilisation, training compliance, HSE incident rate |
 
+> **Phase 3-AI (parallel track).** Register tool sets for HR, communication/letters, and HSE into the Assistant
+> Core (Section 12.4/12.13) — e.g. "who is on leave this week", "find letters about P-1001", "report a near
+> miss". Full test suite per Section 12.12.
+
 ---
 
 ### Phase 4 — Full Platform + AI Agent
@@ -1590,10 +1643,15 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt | Module | What gets built |
 |---|---|---|
 | Prompt 19 | Notification Engine | Cross-module event → notification routing (bell + email via Celery) |
-| Prompt 20 | AI Manager Agent | Agent tool registry, cross-module `/ask` routing, natural language queries |
+| Prompt 20 | AI Manager Agent | **Now the mature state of the Assistant Core (Section 12)** — cross-module orchestration over the per-phase tool registry, manager dashboard synthesis, report formatting. Not a from-scratch build. |
 | Prompt 21 | Manager Dashboard API | Unified KPI aggregation endpoint consumed by the frontend dashboard |
 | Prompt 22 | Module Refactor | Fix cross-module violations in existing code (buying_management remnants, tag_management, Models/__init__.py) |
 | Prompt 23 | Route Versioning | Add version prefix to routes, microservice extraction prep, service boundary lock |
+
+> **Phase 4-AI (parallel track).** Finalize cross-module orchestration in the Assistant Core: multi-tool
+> synthesis with cited sources, the manager dashboard aggregation, and (when designed) the future
+> file/document-generation service (Section 12.14). The "AI Manager Agent" (Prompt 20) is the culmination of the
+> Assistant Core built since Phase 0-AI, per **Section 12**. Full test suite per Section 12.12.
 
 ---
 
@@ -2762,3 +2820,316 @@ WIDGETS/REUSABLE COMPONENTS:
 | `hse_officer` | - | View WO | - | Full HSE |
 | `department_head` | View Procurement | View WO | View Dept HR + Approve Leave | Letters |
 | `employee` | - | - | Own data + Leave | View Announcements |
+
+---
+
+## 12. AI Assistant Backbone (Chat as the Universal Interface)
+
+> This section is **authoritative** for everything related to the chat page, the AI agent, and AI-friendliness.
+> The Phase 4 "AI Manager Agent" (Prompt 13 / Prompt 20) is **superseded** by this section: it is no longer a
+> one-off final-phase build but the **mature state** of the Assistant Core defined here, which is built early
+> and grown phase by phase.
+
+### 12.1 Vision
+
+The **chat page is the main page of the system**. A user must be able to do *anything* there without navigating to other parts of the UI:
+
+1. **Search** across any module — financial, documents, warehouse, purchase, and (as they are built) maintenance, HR, HSE, etc.
+2. **Add data** by describing it ("add a recipe with this data and this picture") — the agent builds a **draft**, shows it for review, and writes only after the user accepts.
+3. **Summarize** — "how much money do we have", "which cards exist", "how many of this product are in the warehouse".
+4. **Answer general questions** from the model's own knowledge, clearly separated from grounded system data.
+5. **Accept files** — PDFs and photos — as input.
+6. Operate **without the UI at all**: every capability is a clean backend API, so a user (or another LLM) can drive the system purely through the assistant API.
+
+The system must be **LLM-friendly end to end** and **multilingual** — the user may work in a language other than English; the assistant detects the user's language and responds and drafts in it.
+
+### 12.2 Where it lives — Assistant Core + per-phase AI tracks
+
+**Decision:** A new cross-cutting module **`backend/assistant/`** ("Assistant Core") is built early (Phase 0-AI) and owns the agent. Each later delivery phase ships a **thin AI track** that registers that phase's modules as tools into the Core — it does **not** rebuild the agent.
+
+```
+backend/assistant/
+  agent/
+    graph.py          ← the LangGraph stateful agent (nodes, edges, router)
+    router.py         ← intent classification → next step
+    nodes/            ← one file per step type (search, summarize, ask, add_draft, general, file_intake)
+    state.py          ← AgentState TypedDict (question, plan, current_step, pending_draft, language, ...)
+    checkpointer.py   ← LangGraph Postgres checkpointer (resumable runs)
+  tools/
+    registry.py       ← ToolRegistry: modules register their tool sets here at startup
+    contract.py       ← the Module Tool Contract (Section 12.4) — base classes/protocols
+  drafts/
+    models.py         ← Draft, AgentRun models
+    service.py        ← create/get/update/confirm/cancel draft
+    routes.py         ← draft confirm/cancel endpoints
+  intake/
+    service.py        ← multimodal routing: heavy pipeline vs inline (Section 12.6)
+  routes.py           ← POST /assistant/chat (the one agentic endpoint), plus session/run endpoints
+  permissions.py
+  search/             ← (the assistant itself is searchable over its own sessions if needed)
+```
+
+> **Modular-monolith compliance.** Assistant Core never imports another module's SQLAlchemy models. Modules
+> register their tools via the registry (Section 12.4); the agent calls those registered callables. Heavy work
+> goes through Celery (Rule 8/10). This keeps the assistant extractable as its own service later.
+
+The existing `core/agents/` (langgraph.py, pre_search.py, file_founder.py) and `routs/chat.py` are the **seed** of this module. Phase 0-AI refactors them into `backend/assistant/` cleanly; the existing document/comment/financial retrieval becomes the first registered tool set.
+
+### 12.3 The agent control flow (stateful, interruptible)
+
+The chat route is a **stateful LangGraph agent**, not a single request/response. It plans in steps and decides the next step from the user's input.
+
+```
+            ┌─────────────────────────────────────────────┐
+            │              ASSISTANT GRAPH                 │
+  user msg →│  [router] → classify intent + language       │
+            │     │                                        │
+            │     ├─→ search        (cross-module)         │
+            │     ├─→ summarize     (KPIs/totals)          │
+            │     ├─→ ask           (grounded module Q&A)  │
+            │     ├─→ add_draft     (build → confirm)      │
+            │     ├─→ general       (model knowledge)      │
+            │     ├─→ file_intake   (PDF/photo)            │
+            │     └─→ clarify       (ask user a question)  │
+            │     │                                        │
+            │  [decide next] → loop or finish              │
+            └─────────────────────────────────────────────┘
+```
+
+**Multi-step planning.** After each step the agent re-evaluates and decides the next step based on results and any new user input. A task can span several steps (e.g. file_intake → add_draft → confirm).
+
+**Interruption (chosen behavior: pause → answer → offer resume).** If the user sends a new request while a task is in progress (e.g. mid add-draft), the agent **suspends** the current run (its full state is checkpointed), handles the new request, then offers: *"Resume the draft you were building?"* Unfinished work is never silently lost. Multiple suspended runs may stack per chat.
+
+**Cancellation.** The user can cancel the current task at any time. Cancelling sets the `AgentRun` to `cancelled`, discards the associated unconfirmed `Draft`, and (if a Celery job was dispatched) revokes it where possible.
+
+**Long-running work.** Any step exceeding ~200ms (embedding, PDF parse, image analysis, bulk add) is dispatched to Celery per Rules 8 & 10; the chat stays interactive and the result surfaces when the task completes (the run is checkpointed as `waiting_on_task`).
+
+### 12.4 Module Tool Contract (every module must implement)
+
+Every module registers a tool set into `assistant/tools/registry.py` at startup. This is the **only** way the agent reaches a module — no model imports.
+
+```python
+# Each module provides, in {module}/assistant_tools.py:
+class ModuleToolSet:
+    name: str                 # e.g. "warehouse"
+    description: str          # natural-language; the LLM uses this to route
+    permissions: dict         # action -> required RBAC permission
+
+    def search(db, user, query, mode, filters, limit) -> list[Hit]: ...
+    def summarize(db, user, request) -> Summary:    # totals/KPIs in user's base currency
+    def ask(db, user, question) -> GroundedAnswer:  # grounded NL answer + sources
+    def add_draft(db, user, payload, attachments) -> Draft:  # builds a draft, does NOT commit
+    def commit_draft(db, user, draft) -> EntityRef:          # called only after user confirms
+```
+
+- `search` / `summarize` / `ask` reuse the module's existing `search/` + `/ask` + `/summary` work — no duplication.
+- `add_draft` returns a structured `Draft` (see 12.5). `commit_draft` performs the real write through the module's normal create path, fully RBAC-checked.
+- Every action maps to an existing module permission (`{module}:search`, `{module}:summary`, `{module}:ask`, `{module}:create`). The agent enforces the user's RBAC before invoking any action; a missing permission surfaces as `PERMISSION_DENIED` from the error catalog (Section 12.9).
+
+#### 12.4.1 How the agent talks to modules — in-process service calls, NOT loopback HTTP
+
+**Decision:** The agent reaches modules through **in-process service-function calls** (via each module's tool-set adapter), never by making HTTP requests to the system's own routes, and never through a duplicated AI-only function layer.
+
+- **Do** call the same service functions the routes call. If business logic currently lives inside a route handler, refactor it down into a service function and have both the route and the tool set call it. One implementation, one test surface.
+- **Do not** make the agent issue HTTP requests to `/purchase/...`, `/warehouse/...`, etc. (loopback HTTP). In a single-process modular monolith this only adds JSON serialization, a second auth round-trip, and middleware overhead, and it violates Rule 2 ("routes are HTTP handlers, not a service API").
+- **Do not** write a parallel set of AI-only functions that re-implement what the services already do — they will drift from the routes.
+- **RBAC is still enforced.** Because the tool set bypasses the route's `require_permission` dependency, the agent must call the shared permission check (`has_permission` / `get_user_permissions`) **before** invoking any action, mapping failures to `PERMISSION_DENIED`. The agent never gains access the user lacks.
+- **Cross-module side-effects keep the existing pattern:** `commit_draft` performs its own module's write through that module's service, and any cross-module effect (e.g. warehouse intake on receipt) is published as a Celery event — not a direct call into another module (Rules 3, 8, 10).
+- **When HTTP becomes correct:** only after a module is extracted into its own microservice (Phase 4+). At that point the tool-set adapter for that module switches from an in-process service call to an HTTP/RPC call — and nothing else in the agent changes. This is exactly why the adapter layer exists.
+
+**Draft ownership (answering "central vs per-app"):** the generic draft machinery — the `Draft` table, lifecycle (create/edit/confirm/cancel), persistence, resume, checkpointer, multilingual handling — lives **centrally in `backend/assistant/`**. Each module owns only its thin `assistant_tools.py` adapter: how to build/validate a draft payload for its entities and how to commit it via its own service. This keeps module isolation (each module owns its data, validation, and migrations) while keeping the agent machinery DRY and giving the frontend one consistent draft/confirm API.
+
+### 12.5 Draft-and-Confirm Write Framework (multilingual)
+
+Writes never happen directly from a chat message. Flow:
+
+```
+user describes data (+ optional file) → agent builds Draft → frontend renders Draft → user edits/accepts → commit
+```
+
+**`Draft` model** (in `assistant/drafts/models.py`):
+```
+Draft
+  ├── id, chat_id, agent_run_id, created_by_user_id, company_id
+  ├── target_module (str)        # "warehouse", "financial", ...
+  ├── target_action (str)        # "create_item", ...
+  ├── payload (JSONB)            # the proposed fields, pre-filled
+  ├── attachments (JSONB)        # file_asset ids extracted from uploaded PDF/photo
+  ├── language (str)             # detected user language (BCP-47), e.g. "fa", "en"
+  ├── status: pending | confirmed | cancelled | committed | failed
+  ├── validation (JSONB)         # per-field validation result for the frontend
+  ├── committed_entity_ref (JSONB nullable)
+  └── created_at, updated_at
+```
+
+**Endpoints** (Assistant Core):
+- `POST /assistant/chat` — the agentic endpoint; may return a `Draft` for the frontend to render.
+- `GET  /assistant/drafts/{id}` — fetch a draft (resume later).
+- `PATCH /assistant/drafts/{id}` — user edits fields before confirming.
+- `POST /assistant/drafts/{id}/confirm` — commit via the target module's `commit_draft` (RBAC-checked).
+- `POST /assistant/drafts/{id}/cancel` — discard.
+
+**Multilingual rules:**
+- The agent detects the user's language and conducts the whole exchange (questions, field labels, confirmations, errors) in that language.
+- Drafts store `language`; field **labels/help** shown to the user are localized, while the **stored values** use the module's canonical field names/enums.
+- Numerals, dates, and currency follow the user's locale on display but are stored canonically.
+
+### 12.6 Multimodal input (PDF / photo)
+
+Files attached to a chat message are routed by `assistant/intake/service.py`:
+
+- **Heavy path (reuse existing pipeline):** documents needing full extraction/OCR/chunking go through the existing `document_management` + MinerU PDF pipeline + image embedding (already Celery-backed). The agent waits via the task-polling mechanism and uses the extracted content for search/add_draft/summary.
+- **Lightweight inline path:** when full ingestion is unnecessary — e.g. a single photo to read off a nameplate, a short receipt image, a quick "what does this say" — the file is handled **inline** (passed directly to a vision/parse step) without creating a permanent document record, unless the user asks to save it.
+- The router decides heavy vs inline based on file type, size, and the user's intent; the choice is recorded on the `AgentRun` for traceability.
+
+### 12.7 General-knowledge answering (intent routing)
+
+The router (12.3) has an explicit **`general`** branch for questions the model can answer from its own knowledge (not system data). Grounded answers (search/ask/summarize) always cite system sources; `general` answers are clearly marked as model knowledge so the two never blur. The router may also choose **`clarify`** to ask the user a question before proceeding.
+
+### 12.8 Persistence & resumability
+
+Chosen behavior: **persist server-side, resumable.**
+
+- **`AgentRun` model:** id, chat_id, user_id, company_id, status (`active | suspended | waiting_on_task | completed | cancelled | failed`), current_step, plan (JSONB), language, created_at, updated_at.
+- **LangGraph Postgres checkpointer:** the agent's full graph state is checkpointed to Postgres after each step, so a run can be suspended (interruption), parked (waiting on Celery), or resumed later from any device.
+- Drafts persist independently (12.5), so a half-built draft survives app close and can be resumed.
+- This persistence is what makes **"use without UI"** real: all state lives in the backend; any client (including another LLM) can start, resume, confirm, or cancel via the API.
+
+### 12.9 Error catalog — consolidate + auto-export
+
+Chosen scope: **consolidate into one registry + auto-export a machine-readable catalog.**
+
+- `core/exceptions/error_codes.py` becomes the **single source of truth** for every non-500 error. Ad-hoc `HTTPException(...)` raises across modules are migrated to registered, coded `AppException`s.
+- Standard shape stays: `{ error: { code, message, user_message, details, request_id } }` (see `docs/frontend-error-codes.md`).
+- A build/CI step **auto-generates** the catalog from the registry into:
+  - `docs/frontend-error-codes.md` (human-readable, already exists), and
+  - a machine-readable `errors.json` (code, http_status, user_message, module) served at `GET /errors/catalog`.
+- The frontend and the assistant both consume the catalog so they know every error a call can return. `INTERNAL_SERVER_ERROR` is the only uncatalogued case (it is just "something failed").
+- Every new module's permissions/routes must raise only catalogued codes; CI fails on an uncatalogued raise.
+
+### 12.10 Tag metadata — admin-defined per company (JSONB)
+
+Chosen model: **admin-defined field schema + JSONB values**, because the required fields differ per customer.
+
+Default fields requested (a starting template, fully editable by the admin): **MIH level, Criticality, Location, Type, P&ID number, Supplier, Group, Category, Unit.**
+
+```
+TagMetadataField   (per company — admin configurable)
+  ├── id, company_id
+  ├── key (str, stable)          # "criticality"
+  ├── label (JSONB)              # localized display labels {"en": "...", "fa": "..."}
+  ├── data_type: text | number | enum | date | reference
+  ├── options (JSONB nullable)   # for enum
+  ├── reference_module (str nullable)  # for "reference" type, e.g. supplier
+  ├── required (bool), is_active (bool), sort_order (int)
+  └── created_at, updated_at
+
+Tag (existing tag_management) gains:
+  └── metadata (JSONB)           # values keyed by TagMetadataField.key, validated against the company's schema
+```
+
+- An **admin UI** lets each company add/edit/reorder/retire metadata fields without a migration.
+- Values are validated against the company's active `TagMetadataField` definitions on write.
+- Metadata keys are searchable/filterable (the tag search includes JSONB key lookups), and exposed to the assistant so a user can say e.g. "show all tags where Criticality is A in Unit 2".
+- Implementation lands as an extension of `tag_management` (its own migration), surfaced as a tool set per the Module Tool Contract.
+
+### 12.11 RBAC for the assistant — the agent has exactly the caller's access, never more
+
+**Core principle (non-negotiable): the agent's access is the access of the person using it.** The agent is not a privileged service account. It can see and do only what the current user is permitted to see and do. There is no path by which talking to the assistant grants more than the user already has in the UI.
+
+Concrete rules:
+
+- The agent **always runs as the current user** (`current_user`), carrying that user's identity and permission set into every step. It never elevates to admin or a system identity to "be helpful".
+- **Every tool action re-checks the user's RBAC** before it runs (`has_permission` / `get_user_permissions` in the adapter, per Section 12.4.1). A missing permission returns `PERMISSION_DENIED` from the error catalog — the agent does not silently skip or work around it.
+- **Reads are scoped to the user too.** Search / summarize / ask only return data the user is allowed to read (company scope today; record-level scope when Section 6's `scope_checker` is activated). The agent must never surface rows from a module or company the user can't access.
+- **Drafts inherit the creator's permissions.** A draft can only be *committed* if the user confirming it holds the target action's permission at confirm time (re-checked on confirm, not just on create).
+- **Multimodal / file input is access-checked too** — a user can only attach and act on files they're permitted to use (`assistant:files`).
+- **Group chat (Phase 5):** each participant interacts with the agent under **their own** permissions. The agent's answer to person A may legitimately differ from its answer to person B in the same thread, because they have different access. The agent never leaks one participant's restricted data to another. See Section 12.17.
+- Assistant-level permissions (declare in `assistant/permissions.py`, seed in migration) gate *use of the assistant itself*, on top of the per-module permissions above:
+  ```
+  assistant:chat      assistant   chat      Use the chat assistant
+  assistant:draft     assistant   draft     Create/confirm add-drafts
+  assistant:files     assistant   files     Upload files to the assistant
+  ```
+- A user can only ever do *through chat* what they could do through the UI — chat is an interface, not an escalation path.
+
+### 12.12 Testing standard (mandatory for every AI track)
+
+Chosen bar: **unit (mocked LLM) + route integration + agent end-to-end.** Non-negotiable, enforced in CI. Every AI track and every backend module it touches must ship:
+
+1. **Unit tests** for services and tool-set methods with the **LLM mocked** (deterministic) — `search`, `summarize`, `ask`, `add_draft`, `commit_draft`.
+2. **Route integration tests** for every endpoint, asserting: success path, RBAC (403 → `PERMISSION_DENIED`), validation, and that only **catalogued error codes** are returned.
+3. **Agent end-to-end tests** (with a stubbed model) covering: intent routing per branch, draft → confirm, draft → cancel, **interruption (pause → answer → resume)**, resume-after-restart (checkpointer), and multilingual response.
+4. Tests for both the **LangGraph/LangChain layer** and the **backend routes** must be complete before a track is considered done. CI runs `pytest` + `alembic check`.
+
+### 12.13 Per-phase AI sub-phase (parallel track template)
+
+Each delivery phase has a matching **AI sub-phase** (`Phase N-AI`) worked **in parallel by a separate developer**, depending only on (a) the Assistant Core (Phase 0-AI) and (b) that phase's module APIs existing. Each `Phase N-AI` delivers:
+
+1. A `{module}/assistant_tools.py` `ModuleToolSet` for each module in the phase (search/summarize/ask/add_draft/commit_draft).
+2. Registration of those tool sets into the Assistant Core registry.
+3. Router/description updates so the agent knows when to use them.
+4. The full test suite from Section 12.12 for the new tools.
+5. A short "what the assistant can now do" note for the frontend (example utterances).
+
+### 12.14 Future — file/document generation (noted, no design yet)
+
+Generating Word/PDF files from tag data, letter data, and other module data is a **desired future capability** to be designed later (template-based generation with admin-defined templates filled from system data). It is **not** designed in this revision; modules should keep their data accessible via tool sets so a future generation service can consume it without rework.
+
+### 12.15 "Use without UI" guarantee
+
+Because all state is server-side (12.8), all writes go through draft-and-confirm APIs (12.5), every module is reachable via the tool contract (12.4), and every error is catalogued (12.9), the entire system is operable through the assistant API alone. Any new module is "done" only when a user could complete its core workflows by talking to the assistant — not just through the UI.
+
+### 12.16 Frontend slash-command quick tools (`//`)
+
+Users get an inline command launcher: typing `//` (or another configured trigger) in the chat box opens a menu of quick actions — e.g. "add a recipe", "add/edit tag data", "search warehouse", "summarize spend". Selecting one starts the corresponding assistant action (usually an add-draft, Section 12.5) with a guided form instead of free text.
+
+Key rules:
+
+- **The menu is generated from the tool registry (12.4), filtered by the user's RBAC (12.11).** A user only sees `//` actions they are permitted to perform — the slash menu is not a separate permission surface, it is a view onto the same registry.
+- Each `//` action maps to a registered tool-set method (`add_draft`, `search`, `summarize`, …). There is **no new backend** for slash commands beyond what the tool contract already provides — it is a frontend affordance over the existing Assistant API.
+- Selecting an `add_draft` command opens the draft form pre-structured for that entity; the user fills it (multilingual, 12.5) and confirms — same draft-and-confirm path as a typed request.
+- Optional companion: `@`-mentions to reference a specific entity (an asset tag, a PO number) so a command can be scoped to it.
+- This launcher is single-user and may ship **early**, alongside the Assistant Core UX, rather than waiting for Phase 5 — it is listed as item 5.2 only for bookkeeping.
+
+### 12.17 Group chat with the assistant (Phase 5 — not urgent)
+
+A later, low-priority capability: multi-participant chat threads where the assistant is a participant, invoked on demand with a trigger (`//` command or `@assistant` mention) rather than responding to every message.
+
+Design notes (to be detailed when Phase 5 is scheduled):
+
+- **Per-participant access (critical).** Each person addresses the agent under their own RBAC (12.11). The agent's response is computed against the *asking* user's permissions and must never expose data that user couldn't see — even though others are in the thread. This is the main reason group chat is deferred: it needs careful access-scoping and is not needed now.
+- **Invocation model.** The agent stays silent until explicitly addressed (trigger/mention), to avoid noise in human-to-human discussion.
+- **Shared context, private results.** The thread is shared, but any action that returns restricted data, or any draft/commit, is attributed to and permission-checked against the specific user who requested it.
+- **Reuses everything else.** Same agent graph, tool registry, draft-and-confirm, error catalog, and checkpointer — group chat adds a thread/participant model and the addressing rules, not a second agent.
+- Priority **P2**. Tracked as Phase 5.1.
+
+### 12.18 Audit trail for agent actions
+
+Because the agent acts on the user's behalf, every state-changing thing it does is auditable through the existing **Audit Log** (Section 5.4.3 / Section 6 "Audit Trail").
+
+- Every `commit_draft`, cancel, approval, or other write the agent performs writes an audit record: `user_id`, `action`, `target_module`, `entity_type`, `entity_id`, `old_value → new_value`, plus AI-specific context: `agent_run_id`, `draft_id`, the tool invoked, and the originating chat message id.
+- Reads via the agent are not audited as writes, but the `AgentRun` history (12.8) preserves what was asked and which tools ran, so any query is reconstructable.
+- Audit records are immutable and queryable (and searchable by the agent itself, for "who changed PO-123 and when").
+
+### 12.19 Prompt-injection & ingested-content guardrails
+
+The agent ingests untrusted content (uploaded PDFs/photos, retrieved documents, OCR text). All of it is **data, never instructions**.
+
+- **Content is never treated as commands.** Text extracted from a file or pulled from search is inserted into the model context as quoted data, clearly delimited; instructions found inside ingested content ("ignore previous rules", "delete all POs") are ignored.
+- **No write is ever auto-committed from ingested content.** A file can *populate* a draft, but a human still confirms it (12.5). The agent never reads "please approve this" out of a document and acts on it.
+- **Tool calls are constrained by the user's RBAC (12.11), not by anything a document says.** Injected content cannot widen access.
+- **Untrusted-vs-trusted separation** is maintained in the prompt: the user's actual instruction is the only command channel; everything retrieved/ingested is reference material.
+- File handling is defensive: type/size validation, and (when the heavy pipeline is used) the existing document security path. Suspicious or unparseable files surface a catalogued error, not a silent action.
+
+### 12.20 LLM usage limits & observability
+
+- **Usage limits.** Per-user and per-company rate/quota limits on assistant calls and token spend, enforced in the Assistant Core. Exceeding a limit returns a catalogued error (e.g. `ASSISTANT_RATE_LIMITED`). Usage is recorded per `AgentRun` for cost attribution.
+- **Observability.** Every agent run is traced to **Langfuse** (already provisioned in the repo via `docker-compose-langfuse.yml`): the step graph, tool calls, latencies, token counts, and outcomes. Traces carry `agent_run_id`, `user_id`, and `company_id` so a production issue can be inspected end to end. Tracing is read-only and must never block or slow the user-facing path (fire-and-forget).
+
+### 12.21 Streaming responses
+
+- The assistant streams its reply token-by-token for a responsive chat UX.
+- Intermediate step signals (e.g. "searching warehouse…", "building draft…") may be streamed as lightweight status events so the user sees progress during multi-step runs.
+- Structured payloads (a `Draft`, search hits, a summary table) are delivered as a final, complete message at the end of the stream — the frontend renders the draft/confirm UI from that, not from partial tokens.
+- Streaming is transport only; it changes nothing about RBAC, drafts, persistence, or the error catalog. A stream that fails mid-flight leaves the `AgentRun` resumable (12.8).
