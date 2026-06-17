@@ -10,6 +10,7 @@ from passlib.hash import bcrypt
 
 from db.session import SessionLocal, get_db  # re-exported for existing imports
 from Models import User
+from Models.rbac import Role
 from settings import get_settings
 
 settings = get_settings()
@@ -18,28 +19,43 @@ __all__ = ["get_db", "seed_default_user"]
 
 
 def seed_default_user() -> None:
-    """Create the default admin user if it doesn't already exist.
+    """Ensure the default admin user exists and is linked to the admin role.
 
     Idempotent. Intended to be called once at application startup (see the
-    startup hook in ``api.py``), never inside a request handler.
+    startup hook in ``api.py``), after ``seed_rbac`` has created the system
+    ``admin`` role. Schema is owned by Alembic migrations.
+
+    The legacy ``users.role`` column alone grants nothing — authorization is
+    driven by RBAC (``user.roles -> role.permissions``). So this also attaches
+    the system-wide admin role (``company_id IS NULL``); without it the default
+    user looks like an admin but has zero permissions.
     """
     db = SessionLocal()
     try:
-        existing = (
+        user = (
             db.query(User)
             .filter_by(username=settings.default_username)
             .first()
         )
-        if not existing:
-            db.add(
-                User(
-                    username=settings.default_username,
-                    First_name=settings.default_firstname,
-                    pw_hash=bcrypt.hash(settings.default_password),
-                    role="admin",
-                )
+        if user is None:
+            user = User(
+                username=settings.default_username,
+                First_name=settings.default_firstname,
+                pw_hash=bcrypt.hash(settings.default_password),
+                role="admin",
             )
-            db.commit()
+            db.add(user)
+            db.flush()
+
+        admin_role = (
+            db.query(Role)
+            .filter(Role.name == "admin", Role.company_id.is_(None))
+            .first()
+        )
+        if admin_role is not None and admin_role not in user.roles:
+            user.roles.append(admin_role)
+
+        db.commit()
     finally:
         db.close()
 
