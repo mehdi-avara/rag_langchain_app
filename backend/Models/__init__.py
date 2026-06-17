@@ -46,6 +46,19 @@ from property_management.models import (
 # The buying_management/ folder remains on disk but is no longer imported.
 # Tables were dropped in migration a2_phase_0_2_purchase.
 
+from purchase_management.models import (
+    PurchaseOrder,
+    PurchasePhase,
+    PurchasePhaseItem,
+    PurchaseOrderCost,
+    PurchaseOrderReceiptLink,
+)
+
+from shared.currency.models import (
+    Currency,
+    ExchangeRate,
+)
+
 from document_intelligence.models import (
     DocumentIntelligenceJob,
     DocumentPageArtifact,
@@ -96,6 +109,13 @@ __all__ = [
     "FinancialDirection",
     "WarehouseItem",
     "OwnedProperty",
+    "PurchaseOrder",
+    "PurchasePhase",
+    "PurchasePhaseItem",
+    "PurchaseOrderCost",
+    "PurchaseOrderReceiptLink",
+    "Currency",
+    "ExchangeRate",
     "DocumentIntelligenceJob",
     "DocumentPageArtifact",
     "DocumentMethodRun",
