@@ -224,6 +224,13 @@ class FinancialReceiptFileOut(BaseModel):
     created_at: datetime
 
 
+class FinancialReceiptFileUploadUrlCreate(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: str = Field(..., min_length=1, max_length=255)
+    size_bytes: int = Field(..., gt=0)
+    checksum: Optional[str] = None
+
+
 class FinancialReceiptBase(BaseModel):
     description: str = Field(..., min_length=1)
     tracking_number: Optional[str] = None

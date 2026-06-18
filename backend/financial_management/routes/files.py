@@ -6,18 +6,18 @@ from typing import List
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from db.init_db import get_db
 from deps import require_permission
 from Models import FileAsset, FileAssetStatus, User
-from schemas.asset import AssetUploadUrlCreate, AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
+from schemas.asset import AssetUploadUrlOut, AssetCompleteUploadIn, AssetDownloadUrlOut
 from settings import get_settings
 from storage.manager import StorageManager
 
 from ..models import FinancialReceiptFile
-from ..schemas import FinancialReceiptFileOut
+from ..schemas import FinancialReceiptFileOut, FinancialReceiptFileUploadUrlCreate
 from ..services import get_receipt_or_404, receipt_file_to_out
 
 
@@ -66,7 +66,7 @@ def list_receipt_files(
 @router.post("/{receipt_id}/files/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
 def create_receipt_file_upload_url(
     receipt_id: int,
-    payload: AssetUploadUrlCreate,
+    payload: FinancialReceiptFileUploadUrlCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:receipt_files:create")),
 ):
@@ -245,7 +245,7 @@ def download_receipt_file(
             user=current_user,
             disposition="attachment",
         )
-        return {"asset_id": asset_id, "download_url": download_url}
+        return RedirectResponse(url=download_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     file_path = Path(file_rec.media_address).resolve()
     allowed_base = (Path(settings.files_dir) / "companies" / str(current_user.company_id)).resolve()
