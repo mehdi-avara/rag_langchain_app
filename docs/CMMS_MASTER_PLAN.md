@@ -3036,6 +3036,705 @@ E) Permission seeding pattern for {module}:export across all modules
 F) Frontend spec: reusable KPI-card, chart, filter-bar, and Export(xlsx/csv/pdf) components
 ```
 
+
+### PROMPT 16 — Employee Management (Phase 3)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+Database: PostgreSQL + pgvector. Search: keyword (ILIKE) + semantic (pgvector, Jina embeddings) + hybrid.
+Every module needs a search/ subfolder matching the financial_management/search/ pattern (repository/service/routes).
+Search endpoint: POST /{module}/search with mode: keyword | semantic | hybrid (Section 2.1).
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+Already built: All Phase 1 (procurement + warehouse) and Phase 2 (assets + work orders + PM +
+defect reporting + notifications) modules. The Assistant Core (backend/assistant/, Phase 0-AI) exists;
+this module registers a tool set into it (Section 12.4).
+
+TODAY'S TASK: hr_management — Part 1: Employee master data, department/position hierarchy, org chart.
+
+REQUIREMENTS:
+1. Department model:
+   - code (auto: DEP-001, unique per company), name, description
+   - parent_department_id (self-referential, nullable — org tree)
+   - head_employee_id (nullable FK to Employee — resolved after employees exist)
+   - is_active, company_id
+2. Position model:
+   - code (unique per company), title, description
+   - department_id (FK Department)
+   - grade_level (int), is_management (bool)
+   - job_description (text — embedded for semantic search)
+3. Employee model:
+   - employee_number (auto: EMP-001, unique per company)
+   - first_name, last_name, full_name (computed/stored)
+   - national_id (store encrypted/hashed — never log it; see Section 4.5 "no PII in logs")
+   - date_of_birth, gender, nationality
+   - hire_date, contract_type: Permanent / Contract / Secondment
+   - department_id (FK), position_id (FK)
+   - reports_to_employee_id (self-referential, nullable — manager link, drives org chart)
+   - status: Active / On Leave / Terminated
+   - user_id (nullable FK to existing User — links the employee to a system login if they have one)
+   - email, phone, company_id
+   - description_embedding: Vector(1024), nullable  (embeds job_description + position + department)
+4. EmployeeDocument model:
+   - employee_id, file_asset_id (existing file_asset), document_type:
+     Contract / NationalID / Qualification / Certificate / Other, issued_date, notes
+5. EmployeeHistory model (append-only lifecycle log):
+   - employee_id, event_type: Hired / Promoted / Transferred / ContractChanged / Terminated
+   - from_value (JSONB), to_value (JSONB), effective_date, performed_by, notes
+6. Org chart: a service + endpoint that derives the tree from Employee.reports_to_employee_id
+   and Department.parent_department_id (no separate OrgChart table — it is a projection).
+7. Tag employees via existing tag_management; attach documents via existing file_asset.
+8. Search (Section 2.1): keyword ILIKE on full_name, employee_number, position title, department name
+   + semantic pgvector on description_embedding. ensure_employee_embeddings() + build_searchable_text().
+9. Assistant Tool Contract (Section 12.4): register hr_management ToolSet (search / summarize / ask /
+   add_draft / commit_draft) so the agent can answer "who is the maintenance manager?" and draft a new
+   employee via draft-and-confirm — RBAC enforced as the caller (Section 12.11).
+10. RBAC (seed in seed_rbac.py): hr_management:employees:read / create / update / delete / search;
+    hr_management:summary. hr_manager gets hr_management:*; department_head sees own department
+    (record-level scope deferred per Section 6 — seed names now); employee can read own profile.
+
+IMPACT:
+- What changes: adds hr_management module; registers an Assistant tool set.
+- Backward compatible: yes (purely additive; new nullable FK on no existing table except optional User link via user_id on the new Employee table).
+- New tables: departments, positions, employees, employee_documents, employee_history.
+- Existing routes affected: none.
+
+Please provide:
+A) All models with complete fields, types, constraints, indexes (incl. embedding column)
+B) All API endpoints (employee/department/position CRUD + org-chart endpoint; ?q= shortcut +
+   ?department=&status=&position= filters on the employee list)
+C) search/ subfolder (repository.py ILIKE keyword + pgvector semantic + service.py hybrid — Section 2.1)
+D) Alembic migration notes (encrypted national_id column, embedding column, self-referential FKs,
+   deferred head_employee_id FK)
+E) RBAC permission seeds (which roles get which permissions)
+F) Frontend specification: employee list (filters), employee profile page, org chart view,
+   document tab, history timeline
+G) What you could add next (e.g. shift/roster management, payroll integration, skills matrix)
+```
+
+---
+
+### PROMPT 17 — Leave & Training Management (Phase 3)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+Database: PostgreSQL + pgvector. Search: keyword (ILIKE) + semantic (pgvector, Jina embeddings) + hybrid.
+Every module needs a search/ subfolder matching the financial_management/search/ pattern (Section 2.1).
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+Already built: Prompt 16 (hr_management employees/departments/positions/org chart), the Notification &
+Workflow Engine (Approval Workflow Engine §4.2 — reuse it for leave approval), the Assistant Core.
+This prompt EXTENDS hr_management — same module folder, new sub-resources (leave, training). It must
+not duplicate or rewrite the employee models from Prompt 16; it references them via hr_management's own
+internal services (same module — direct use is allowed within a module).
+
+TODAY'S TASK: hr_management — Part 2: Leave Management + Training & Certification, with expiry alerting.
+
+REQUIREMENTS:
+1. LeaveType model: code, name (Annual / Sick / Emergency / Maternity / Study / Unpaid),
+   is_paid, default_annual_days, requires_attachment (bool), company_id, is_active
+2. LeaveBalance model (employee × leave_type × year):
+   - employee_id, leave_type_id, year, entitled_days, used_days, pending_days
+   - available_days (computed: entitled - used - pending)
+3. LeaveRequest model:
+   - request_number (auto: LV-2026-0001)
+   - employee_id, leave_type_id, from_date, to_date, total_days (computed, excludes weekends/holidays)
+   - reason, attachment_file_asset_id (optional), status: Draft / Submitted / Approved / Rejected / Cancelled
+   - submitted_at, decided_at
+4. LeaveApproval model (uses Approval Workflow Engine §4.2):
+   - leave_request_id, approver_user_id, decision: Approved / Rejected, decided_at, note
+   - On Approved: move pending_days → used_days in LeaveBalance (within hr_management service).
+5. TrainingProgram model:
+   - code, name, provider, category (e.g. Safety / Technical / Compliance), duration_hours,
+     description (embedded for semantic search), is_active, company_id
+6. Certification model (the credential definition):
+   - code, name (e.g. H2S, BOSIET, Confined Space), issuing_body, validity_period_months, is_active
+7. EmployeeTraining model (employee × training × completion):
+   - employee_id, training_program_id, completed_date, score, result: Pass / Fail,
+     certificate_file_asset_id (optional)
+8. EmployeeCertification model (employee × cert × dates):
+   - employee_id, certification_id, issue_date, expiry_date (computed from validity_period_months),
+     certificate_file_asset_id, is_valid (computed: today <= expiry_date)
+9. TrainingPlan model (annual plan per department): department_id, year, planned_programs (list),
+   notes — drives the "training compliance" KPI in Prompt 20.
+10. Celery (Rule 10): daily Beat task scan EmployeeCertification where expiry_date within 30 days →
+    publish notification event to employee + their manager (via the Notification Engine, Prompt 21).
+    Also flag already-expired certs. Cross-module notify is a Celery event, not a direct call.
+11. Search (Section 2.1): keyword ILIKE on training/cert name, employee name; semantic on
+    TrainingProgram.description_embedding. Reuse hr_management's search/ folder (add entity functions).
+12. Assistant Tool Contract (Section 12.4): extend the hr_management ToolSet so the agent can answer
+    "which employees have an expired H2S certification?" and draft a leave request (draft-and-confirm).
+13. RBAC (seed in seed_rbac.py): hr_management:leave:read / create / approve;
+    hr_management:training:read / manage. Employees create own leave + read own training; hr_manager
+    has hr_management:* ; a manager approves their team's leave (record-level scope deferred per §6).
+
+IMPACT:
+- What changes: extends hr_management with leave + training sub-resources; adds a daily expiry-alert task.
+- Backward compatible: yes (additive; references Prompt 16 employees within the same module).
+- New tables: leave_types, leave_balances, leave_requests, leave_approvals, training_programs,
+  certifications, employee_trainings, employee_certifications, training_plans.
+- Existing routes affected: none.
+
+Please provide:
+A) All models with complete fields, types, constraints, indexes
+B) All API endpoints (leave CRUD + submit/approve/reject transitions, balance view, training/cert CRUD,
+   employee training matrix, expiring-certs list; filters: ?employee=&status=&from=&to=&expiring_in_days=)
+C) search/ subfolder additions (keyword + pgvector semantic + hybrid — Section 2.1)
+D) Alembic migration notes (computed columns / triggers vs application-side computation, embedding column)
+E) RBAC permission seeds (which roles get which permissions)
+F) Frontend specification: leave request form, leave balance widget, team leave calendar, approval inbox,
+   training matrix, certification expiry dashboard
+G) What you could add next (e.g. competency/skills gap analysis, e-signature on certificates,
+   auto-block work assignment when a required cert is expired — ties into HSE Prompt 19)
+```
+
+---
+
+### PROMPT 18 — Internal Communication (Phase 3)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+Database: PostgreSQL + pgvector. Search: keyword (ILIKE) + semantic (pgvector, Jina embeddings) + hybrid.
+Every module needs a search/ subfolder matching the financial_management/search/ pattern (Section 2.1).
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+Already built: All Phase 1 + Phase 2 modules, hr_management (Prompts 16–17), the Notification Engine
+(Prompt 21 — publish events to it), tag_management (existing), the Assistant Core.
+
+TODAY'S TASK: communication_management — formal internal letters, announcements, and threaded messaging.
+
+REQUIREMENTS:
+1. LetterTemplate model:
+   - code, name, letter_type: Memo / FormalLetter / Circular / Report / Request
+   - subject_template, body_template (Jinja2-style placeholders), company_id, is_active
+2. Letter model:
+   - letter_number (auto, configurable prefix per letter_type and year, e.g. MAINT-2026-001, HR-2026-045)
+   - letter_type, subject, body (rich text), template_id (nullable)
+   - from_department_id, from_employee_id (resolved via hr_management service — no model import)
+   - priority: Normal / Urgent / Confidential
+   - status: Draft / Sent / Acknowledged / Archived
+   - sent_at, acknowledged_at, company_id
+   - body_embedding: Vector(1024), nullable
+   - tag_ids: letters may reference tag_management tags (read via the tag_management service) so a letter
+     "regarding maintenance of pump P-1001" links to that tag.
+3. LetterRecipient model: letter_id, recipient_type: TO / CC,
+   to_department_id (nullable), to_employee_id (nullable), acknowledged_at (per recipient)
+4. LetterVersion model (append-only edit history of a draft): letter_id, version_no, subject, body,
+   edited_by, edited_at — so a sent letter's content is immutable and prior drafts are auditable.
+5. LetterAttachment model: letter_id, file_asset_id (existing file_asset), caption
+6. LetterComment model: letter_id, author_user_id, body, created_at (reply/note on a letter; audit-logged)
+7. Announcement model:
+   - title, body, target_audience: All / Departments / Roles
+   - target_department_ids (JSONB), target_role_ids (JSONB)
+   - published_by, published_at, expires_at, is_pinned, company_id
+8. MessageThread model: subject, participant_user_ids (JSONB), created_by, created_at
+   MessageThreadMessage model: thread_id, sender_user_id, body, sent_at, read_by_user_ids (JSONB)
+9. Letter numbering logic: a per-(company, letter_type, year) counter, allocated atomically on Send
+   (Draft has no number until sent). Prefix configurable per letter_type.
+10. Workflow: Draft → Sent (allocates number, snapshots a LetterVersion, publishes a Celery event to the
+    Notification Engine so recipients are notified) → Acknowledged (per recipient) → Archived.
+11. Search (Section 2.1): keyword ILIKE on letter_number, subject, body, sender name; semantic pgvector on
+    body_embedding. Filters: ?from=&to=&sender=&recipient=&status=&letter_type=. ensure_letter_embeddings().
+12. Assistant Tool Contract (Section 12.4): register communication_management ToolSet so the agent can
+    "find all letters about pump P-1001 in the last 6 months" and draft a memo via draft-and-confirm.
+13. RBAC (seed in seed_rbac.py): communication_management:letters:read / create / update / delete /
+    search / ask; communication_management:announcements:read / manage. A communication_officer/creator
+    role gets create+manage; all authenticated users get read on letters addressed to them + announcements.
+    Confidential letters are restricted to sender + recipients (record-level scope deferred per §6).
+
+IMPACT:
+- What changes: adds communication_management module; publishes "letter.sent" events; registers a tool set.
+- Backward compatible: yes (purely additive).
+- New tables: letter_templates, letters, letter_recipients, letter_versions, letter_attachments,
+  letter_comments, announcements, message_threads, message_thread_messages.
+- Existing routes affected: none.
+
+Please provide:
+A) All models with complete fields, types, constraints, indexes (incl. body_embedding)
+B) All API endpoints (letter CRUD + send/acknowledge/archive transitions, recipient ack, comments,
+   announcement CRUD, thread + message endpoints; ?q= shortcut + the filters above)
+C) search/ subfolder (repository.py ILIKE keyword + pgvector semantic + service.py hybrid — Section 2.1)
+D) Alembic migration notes (per-type/year number-counter table, embedding column, JSONB targets)
+E) RBAC permission seeds (which roles get which permissions)
+F) Frontend specification: letter inbox, compose-letter (template picker + tag link), letter detail with
+   ack + comments, announcement board, direct-message threads
+G) What you could add next (e.g. read receipts analytics, letter approval routing before Send,
+   org-wide broadcast scheduling, AI letter drafting from a tag/work-order context — ties into §12.14)
+```
+
+---
+
+### PROMPT 19 — HSE Management (Phase 3)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+Database: PostgreSQL + pgvector. Search: keyword (ILIKE) + semantic (pgvector, Jina embeddings) + hybrid.
+Every module needs a search/ subfolder matching the financial_management/search/ pattern (Section 2.1).
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+Already built: All Phase 1 + Phase 2 modules — including work_order_management (Prompt 7) and the Phase 2
+DefectReport (Prompt 14, "tag X has a problem; the pump under it failed") — plus the Approval Workflow
+Engine (§4.2), the Notification Engine (Prompt 21), the Export Engine (Prompt 15), and the Assistant Core.
+
+TODAY'S TASK: hse_management — incidents + investigations, Permit to Work, the dual-approval Work Access
+Request that gates maintenance work, risk assessments, safety observations, and HSE statistics.
+
+This is the back half of the maintenance loop that starts at a DefectReport (Prompt 14): a fault is open
+on a tag; someone wants to fix the failed asset; they must be granted access by BOTH the HSE team and the
+Manager team, and a valid Permit to Work must exist, before a Work Order can go In Progress.
+
+REQUIREMENTS:
+1. HSEIncident model:
+   - incident_number (auto: INC-2026-001)
+   - incident_type: NearMiss / FirstAid / MedicalTreatment / LostTime / Fatality / Environmental / PropertyDamage
+   - severity: Low / Medium / High / Critical
+   - location, occurred_at, reported_by, reported_at
+   - description (embedded for semantic search), immediate_action_taken
+   - injured_employee_id (nullable — via hr_management service, no model import)
+   - status: Reported / UnderInvestigation / Closed, company_id, description_embedding: Vector(1024)
+2. IncidentInvestigation model (root cause analysis):
+   - incident_id, immediate_cause, root_cause, contributing_factors (JSONB)
+   - corrective_actions (JSONB list: action, owner_user_id, due_date, status), closed_at
+3. PermitToWork model:
+   - permit_number (auto: PTW-2026-001)
+   - permit_type: HotWork / ConfinedSpace / ElectricalIsolation / WorkingAtHeight / ColdWork / Excavation
+   - work_order_id (nullable — link via work_order_management service)
+   - location, description_of_work, valid_from, valid_to
+   - issuer_user_id (safety officer), receiver_user_id (supervisor)
+   - status: Draft / PendingApproval / Active / Suspended / Closed / Cancelled
+   - isolation_points (JSONB list), jsa_file_asset_id (Job Safety Analysis document)
+4. PTWChecklistItem model: permit_id, sequence, description, is_completed, completed_by, completed_at
+   (all required items must be completed before a permit goes Active).
+5. WorkAccessRequest model (the "I want to fix this" request following a DefectReport):
+   - request_number (auto: WAR-2026-001)
+   - defect_id (nullable — link via defect module service), work_order_id (nullable), tag_id, asset_id
+   - requested_by, requested_at, scope_of_work, required_permit_types (JSONB)
+   - status: Requested / Granted / Active / Closed / Rejected
+6. WorkAccessApproval model (DUAL approval — one row per required group):
+   - access_request_id, approver_group: HSE | MANAGER
+   - approver_user_id, decision: Approved | Rejected, decided_at, note
+   - Rule: request becomes Granted only when BOTH groups have Approved; a Rejected from EITHER group
+     blocks it. Implemented on the Approval Workflow Engine (§4.2) as two parallel approver groups.
+7. RiskAssessment model:
+   - hazard, likelihood (1-5), severity (1-5), risk_score (computed = likelihood × severity)
+   - control_measures, residual_risk_score, notes (embedded for semantic search), assessed_by
+8. SafetyObservation model (anyone can report):
+   - observation_type: Positive / UnsafeAct / UnsafeCondition
+   - location, description, photo_file_asset_id, reported_by, reported_at
+9. HSEStatistic model (auto-calculated weekly/monthly):
+   - period_start, period_end, man_hours_worked, lti_count, recordable_count, near_miss_count,
+     trir (computed), ltir (computed)
+10. Work Order gate (cross-module, NO model import): work_order_management calls an hse_management
+    service function can_start_work(work_order_id) → bool/reason. A WO cannot transition to In Progress
+    unless (a) a valid (Active) PermitToWork exists AND (b) its WorkAccessRequest status = Granted.
+    The dependency direction: work_order_management calls hse_management's service (one-way), keeping
+    HSE the owner of the gate decision. Defect auto-resolve and WO-close side-effects stay Celery events.
+11. Notifications (Prompt 21, via Celery events): request raised → notify HSE + Manager queues;
+    each decision → notify requester; granted → notify maintenance; permit expiring → notify issuer.
+12. Search (Section 2.1): keyword ILIKE on incident_number/description/location, permit_number,
+    access-request scope; semantic pgvector on incident description_embedding + risk-assessment notes.
+13. KPI + export (reuse Prompt 15 — do NOT re-implement): GET /kpi/hse and GET /reports/hse/... per the
+    §4.7 chart-data shape; every register (incidents, permits, access requests) supports
+    POST /{entity}/export to xlsx/csv/pdf via the shared Export Engine (§4.6).
+14. Assistant Tool Contract (Section 12.4): register hse_management ToolSet so the agent can answer
+    "show all open hot work permits" / "what is our TRIR for Q1?" and DRAFT (never auto-approve) a work
+    access request via draft-and-confirm — the agent inherits exactly the caller's RBAC (§12.11).
+15. RBAC (seed in seed_rbac.py):
+    hse_management:incidents:read / create / update / close / search / ask;
+    hse_management:permits:read / create / approve; hse_management:summary;
+    plus the dual-approval gate permissions: hse:permit_approve (HSE team approves HSE side),
+    maintenance:access_approve (Manager team approves Manager side),
+    maintenance:access_request (anyone who may raise a request). Anyone may submit a SafetyObservation.
+    hse_officer gets hse_management:* ; observations are open to all authenticated users.
+
+IMPACT:
+- What changes: adds hse_management module; adds an HSE gate that work_order_management consults before
+  In Progress; publishes HSE events to the Notification Engine.
+- Backward compatible: yes for data; the WO "In Progress" gate is a NEW precondition — flag to the owner
+  that work orders requiring access can no longer start without a Granted request + Active permit
+  (this is intended behavior, but it is a behavior change on the WO state machine — confirm before build).
+- New tables: hse_incidents, incident_investigations, permits_to_work, ptw_checklist_items,
+  work_access_requests, work_access_approvals, risk_assessments, safety_observations, hse_statistics.
+- Existing routes affected: work_order_management transition-to-In-Progress now calls the HSE gate.
+
+Please provide:
+A) All models with complete fields, types, constraints, indexes (incl. embedding columns)
+B) All API endpoints (incident + investigation CRUD/close; PTW CRUD + checklist + status transitions;
+   access-request create + per-group approve/reject + status transitions; risk assessment; observations)
+C) The PTW + dual-approval gate: exact signature of hse_management.can_start_work(work_order_id) and how
+   work_order_management consults it (one-way service call; the cross-module side-effects stay Celery events)
+D) TRIR/LTIR calculation logic (standard formulas: per 200,000 man-hours)
+E) The dual-approval state machine (HSE + Manager, both required, either can reject) on the Approval Engine
+F) KPI/chart-data endpoints and the export endpoints (reuse §4.6 / §4.7 — Prompt 15 — no duplication)
+G) Frontend specification: incident form, investigation/CAPA tracker, PTW issue screen with checklist,
+   access-request + dual-approval inbox, safety observation wall, HSE dashboard (KPI cards + charts +
+   Excel/PDF export); plus "What you could add next" (e.g. MoC, audit/inspection module, contractor HSE)
+```
+
+---
+
+### PROMPT 20 — Phase 3 KPIs & Reporting (HR + HSE Dashboards) (Phase 3-R)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+This is a REPORTING sub-phase (Phase 3-R), built entirely on the shared conventions in §4.6 (Export
+Engine) and §4.7 (Dashboard & Chart-Data Convention), already delivered in Prompt 15.
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+Already built: hr_management (Prompts 16–17), hse_management (Prompt 19), and the shared Export Engine +
+Dashboard/Chart-Data framework (Prompt 15). DO NOT re-implement export or the chart-data schema — reuse them.
+
+TODAY'S TASK: the Phase 3 reporting layer — HR and HSE KPI cards, chart-data report endpoints, summary
+pages, and export wiring. This is mostly aggregation endpoints — typically NO new tables (KPIs are
+computed over existing hr_management / hse_management data, cached per §4.7).
+
+REQUIREMENTS:
+1. HR KPI cards — GET /kpi/hr → [{ key, label, value, unit, trend }] (§4.7 shape), e.g.:
+   total_headcount, headcount_by_status, leave_utilisation_pct, certs_expiring_30d, training_compliance_pct.
+2. HSE KPI cards — GET /kpi/hse → e.g.: open_permits, pending_access_requests_by_group, trir, ltir,
+   open_incidents, overdue_corrective_actions, near_misses_this_period.
+3. HR report endpoints (chart-data shape: { chart_type, x, series, unit }; recommended chart_type set
+   by backend), each accepting ?from=&to=&group_by=day|week|month and relevant dimension filters:
+   - GET /reports/hr/headcount            → headcount by department over time      (stacked_bar / line)
+   - GET /reports/hr/leave-utilisation    → used vs entitled leave days by type     (bar)
+   - GET /reports/hr/training-compliance  → % of required trainings completed       (gauge / bar)
+   - GET /reports/hr/cert-expiry          → certs expiring by month / by status     (bar)
+4. HSE report endpoints:
+   - GET /reports/hse/incident-rate       → TRIR / LTIR trend over time             (line)
+   - GET /reports/hse/incidents-by-type   → incident composition                    (donut)
+   - GET /reports/hse/permits-status      → permits by status                       (stacked_bar)
+   - GET /reports/hse/access-requests     → access requests pending HSE vs Manager   (bar)
+5. Each aggregation reads ONLY through the owning module's service functions (hr_management /
+   hse_management) — never their models. New cross-module reads, if any, go through service calls.
+6. Summary pages: KPI cards on top, charts below, a filter bar (period + dimension), and an Export button
+   (xlsx / csv / pdf) wired to the shared Export Engine (§4.6) — the same filters export the on-screen view.
+   DO NOT implement export here; just call POST /{module}/{entity}/export from Prompt 15.
+7. Caching: short-TTL cache per (company, params), invalidated on the relevant module's events (§4.7).
+8. Assistant integration (§12.4/§12.5): the existing hr/hse tool sets' summarize/ask already expose these
+   numbers to chat ("how many employees are on leave this week?", "what's our TRIR for Q1?") and can
+   trigger an export from chat — wire the report endpoints into those tool sets, no new agent code.
+9. RBAC: reuse existing module permissions — viewing HR KPIs requires hr_management:summary, HSE KPIs
+   require hse_management:summary; export requires the module's {module}:export (Prompt 15). No NEW
+   permission names unless a dashboard-level gate is needed; if so, seed hr_management:summary /
+   hse_management:summary (already in §6) — do not invent new ones.
+
+IMPACT:
+- What changes: adds KPI + report (chart-data) endpoints and summary pages for HR and HSE; wires export.
+- Backward compatible: yes (read-only aggregation; no schema change expected).
+- New tables: none (optional: a small report-cache table if not using an existing cache layer).
+- Existing routes affected: none.
+
+Please provide:
+A) All KPI + report endpoint definitions with the exact §4.7 response schema and recommended chart_type
+B) The aggregation/service approach (which hr_management / hse_management service functions each report calls)
+C) (No new search module — these are dashboards; note search reuse where a report drills into a register)
+D) Migration notes (only if a report-cache table is introduced; otherwise "no migration")
+E) RBAC: reuse hr_management:summary / hse_management:summary + {module}:export — list the mapping
+F) Frontend specification: HR summary page + HSE summary page (which KPI cards, which charts with
+   recommended type, where the period/filter/export controls sit), reusing the Prompt 15 chart components
+G) What you could add next (e.g. drill-down from a KPI card into the filtered register, scheduled
+   email of the dashboard, target/threshold lines on the rate charts)
+```
+
+---
+
+### PROMPT 21 — Notification Engine (Phase 4, Cross-Cutting)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+This is a CROSS-CUTTING engine (§4.1), not a domain module. It lives in backend/core/notifications/.
+Every module already publishes Celery events (per its own prompt). This engine LISTENS and routes them.
+Celery tasks follow Rule 10 (acks_late, retries, TaskResult). Email send is heavy → Celery (Rule 8).
+
+TODAY'S TASK: the Notification Engine — turn cross-module domain events into in-app bell notifications
+and emails, driven by configurable rules.
+
+REQUIREMENTS:
+1. NotificationTemplate model:
+   - event_type (string key: "work_order.approved", "stock.below_minimum", "pm.due_soon",
+     "leave.pending", "certification.expiring", "letter.sent", "access_request.raised", ...)
+   - title_template, body_template (Jinja2), default_channels: in_app / email / both
+   - locale-aware: title/body templates keyed by language (multilingual per §12.5), company_id
+2. NotificationRule model (the "when X happens in module Y, notify Z" rule):
+   - event_type, is_active
+   - recipient_resolver: a declarative spec (JSONB) describing who to notify — e.g.
+     { "type": "entity_field", "field": "assignee_user_id" } | { "type": "role", "role": "hse_officer" }
+     | { "type": "approver_group", "group": "MANAGER" } | { "type": "static_users", "ids": [...] }
+   - channel_override (nullable), company_id
+   - Configurable via an admin UI (the admin UI itself is out of scope for this prompt, but the engine
+     must support CRUD on rules so that UI can drive it).
+3. Notification model (the in-app bell item):
+   - recipient_user_id, title, body, entity_type, entity_id (deep-link target),
+     event_type, is_read, read_at, created_at, company_id
+4. NotificationDelivery model (per-channel audit): notification_id, channel: in_app | email,
+   status: queued | sent | failed, error, sent_at — so a failed email is visible and retryable.
+5. Event intake: a single entry point publish(event_type, entity_ref, payload) that modules call by
+   dispatching a Celery task (e.g. app.send_task("core.notifications.tasks.on_event", ...)). The engine
+   resolves matching rules → recipients → renders templates → writes Notification rows → dispatches email.
+   Cross-module Celery tasks run as system (no per-user permission check inside — §Rule 10); the
+   dispatching route already verified the actor's permission.
+6. Channels: (a) in-app bell (Notification rows, exposed via API + unread count), (b) email via Celery
+   (reuse the existing mailer; one Celery task per email; retries per Rule 10). Design so SMS/push can be
+   added later as new channels without schema change.
+7. Endpoints: list my notifications (paginated, ?unread=true), unread count, mark one/all read,
+   rule CRUD (admin), template CRUD (admin), resend a failed delivery (admin).
+8. Concrete rules to ship as seed examples (mapping the events emitted by earlier prompts):
+   - work_order.approved          → notify assignee
+   - leave.pending                → notify the approver (manager)
+   - certification.expiring       → notify employee + their manager (Prompt 17 daily task)
+   - letter.sent                  → notify recipients (Prompt 18)
+   - access_request.raised        → notify HSE queue + Manager queue (Prompt 19)
+   - access_request.decided       → notify requester; access_request.granted → notify maintenance
+   - stock.below_minimum / pm.due_soon → notify the relevant role
+9. RBAC: admins configure rules/templates (notifications:rules:manage, notifications:templates:manage);
+   every user can read/dismiss their own notifications (notifications:read). The engine itself publishes
+   as system — no user permission check inside the worker (§Rule 10). Seed all in seed_rbac.py.
+
+IMPACT:
+- What changes: adds backend/core/notifications/ engine; modules' existing events now produce
+  notifications + emails via rules. No change to how modules publish (they already send Celery events).
+- Backward compatible: yes (additive; if no rule matches an event, nothing happens).
+- New tables: notification_templates, notification_rules, notifications, notification_deliveries.
+- Existing routes affected: none (modules keep publishing the same events).
+
+Please provide:
+A) All models with complete fields, types, constraints, indexes
+B) All API endpoints (my-notifications list + unread count + mark-read; rule/template admin CRUD; resend)
+C) The event-intake contract: exact publish(...) signature + the Celery on_event task, the recipient-
+   resolver spec (JSONB) and how each resolver type maps to users, and template rendering (multilingual)
+D) Alembic migration notes (+ the seed example rules/templates from requirement 8)
+E) RBAC permission seeds (notifications:read, notifications:rules:manage, notifications:templates:manage)
+F) Frontend specification: notification bell + dropdown, unread badge, notification center (filter by
+   module/read), admin rule/template editor
+G) What you could add next (e.g. per-user channel preferences / quiet hours, digest emails,
+   web-push/SMS channels, escalation when a notification is unread past a deadline)
+```
+
+---
+
+### PROMPT 22 — AI Manager Agent: Mature Assistant Core (Phase 4)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+
+THIS IS NOT A NEW MODULE. It is the MATURE STATE of the Assistant Core (backend/assistant/) defined in
+master plan SECTION 12 — read §12 as the source of truth, especially:
+- §12.1 Vision, §12.3 control flow (LangGraph router: search/summarize/ask/add_draft/general/file_intake/
+  clarify), §12.4 Module Tool Contract + §12.4.1 in-process service calls (NOT loopback HTTP),
+  §12.5 Draft-and-Confirm, §12.8 persistence/resumability (Postgres checkpointer), §12.9 error catalog,
+  §12.11 RBAC (agent runs as exactly the caller, never more), §12.12 testing standard.
+Already built (Phase 0-AI): the LangGraph agent, the router, the draft-and-confirm framework, the Module
+Tool Contract + registry, the Postgres checkpointer, the error catalog. Per-phase AI sub-phases (§12.13)
+have registered each module's ToolSet (procurement, warehouse, assets, work orders, PM, defects, HR,
+communication, HSE) as they shipped.
+
+TODAY'S TASK: bring the Assistant Core to full Phase-4 maturity — cross-module synthesis, manager
+dashboard synthesis, and report generation — WITHOUT re-implementing the agent. This is refinement,
+orchestration, and integration testing on top of what §12 already defines.
+
+REQUIREMENTS:
+1. Cross-module synthesis: the agent answers questions that span multiple registered tool sets in one
+   turn — e.g. "show all assets with overdue maintenance that cost more than 5M in the last month". The
+   planner (router, §12.3) fans out to the relevant modules' search/summarize/ask (in-process service
+   calls, §12.4.1), MERGES and de-duplicates results, and CITES sources (module + entity ids). Define the
+   multi-tool planning loop and the result-merge/citation format — building on the §12.3 graph, not replacing it.
+2. Manager dashboard synthesis: a conversational path that aggregates the per-module KPI/summary tools
+   (Prompt 20 + the financial/maintenance dashboards) into one executive narrative. This CONSUMES the
+   Manager Dashboard API (Prompt 23) and each module's summarize tool — it does not compute KPIs itself.
+3. Report generation: the agent generates a structured report (e.g. "generate a monthly maintenance
+   report for Unit 2") by gathering data via tool sets and rendering through the shared Export Engine
+   (Prompt 15, §4.6) to xlsx/pdf — as a draft-and-confirm action (§12.5). Reuse Prompt 15; do NOT build
+   a second export path. (Ties into §12.14 future document generation.)
+4. LLM routing refinement: improve tool selection as the number of registered tools grows — better tool
+   descriptions, disambiguation/clarify (§12.7) when intent is ambiguous, and a fallback when no tool
+   fits. No new graph; refine the existing router + tool descriptions.
+5. RBAC (§12.11, non-negotiable): the agent runs as exactly the current user. Every tool action re-checks
+   the user's permissions before running; reads are scoped to the user; drafts commit only if the user
+   holds the action permission at confirm time. Cross-module synthesis must never surface rows the user
+   can't read. No new permission names beyond assistant:chat / assistant:draft / assistant:files (§12.11)
+   — manager-only features are gated by the underlying module summary permissions, not a new agent role.
+6. Audit (§12.18): every agent query/answer and every committed draft is logged (who asked what, which
+   tools ran, what was returned/committed) via the Audit Log (§4.3).
+7. Observability (§12.20): LLM usage + per-step tracing on top of the structured logging (§4.5).
+8. Test suite (§12.12, mandatory): unit (mocked LLM) for the new synthesis/merge/report logic; route
+   integration; and agent end-to-end for complex multi-step scenarios — multi-tool fan-out + merge +
+   citation, report-generation draft → confirm, interruption (pause → answer → resume), resume-after-
+   restart (checkpointer), multilingual, and RBAC scoping (a low-privilege user gets a correctly reduced answer).
+
+IMPACT:
+- What changes: matures backend/assistant/ (synthesis, dashboard narrative, report generation, router
+  refinement). Refinements + integration — NOT a rewrite of the agent.
+- Backward compatible: yes (the chat endpoint and draft API are unchanged; new capabilities are additive).
+- New tables: none expected (reuse AgentRun / Draft / checkpointer from §12.8). Note any new index needed.
+- Existing routes affected: POST /assistant/chat behavior is extended (richer answers), not its contract.
+
+Please provide:
+A) How the agent synthesizes cross-module data (the multi-tool planning loop on the §12.3 graph: fan-out
+   to registered tool sets via in-process service calls §12.4.1, merge + de-duplicate, cite sources)
+B) How it generates reports (gather via tool sets → shared Export Engine §4.6/Prompt 15 → draft-and-confirm §12.5)
+C) LLM routing refinement (tool-description strategy, clarify branch §12.7, no-tool-fits fallback)
+D) The RBAC enforcement path through synthesis (§12.11) — where the per-action permission re-check sits
+E) Reference to §12 for the Agent Core architecture (state, checkpointer, draft model) — do NOT re-specify it
+F) The test suite for complex multi-step scenarios (§12.12) — list the end-to-end cases
+G) What you could add next (e.g. proactive insights/alerts pushed to managers, scheduled report runs via
+   the scheduler, agent-authored letters via communication_management — all as draft-and-confirm)
+```
+
+---
+
+### PROMPT 23 — Manager Dashboard API (Phase 4)
+
+```
+PROJECT CONTEXT:
+We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
+Backend: FastAPI + PostgreSQL + pgvector + SQLAlchemy + Alembic + Celery.
+Architecture: a modular monolith targeting future microservice extraction.
+Built on the §4.7 Dashboard & Chart-Data Convention and the §4.6 Export Engine (Prompt 15) and the
+per-module /kpi/{module} + /reports/{module}/{name} endpoints delivered in each phase's reporting sprint
+(financial 0-R, inventory/procurement 1-R, maintenance 2-R, HR/HSE 3-R / Prompt 20).
+
+ARCHITECTURAL GOAL — MODULAR MONOLITH → FUTURE MICROSERVICES:
+This project is built as a modular monolith. Every module must be independently extractable into a
+microservice in the future. ALL new code must follow these rules without exception:
+1. NEVER import another module's SQLAlchemy model. Use that module's service functions instead.
+2. NEVER call another module's route functions. Routes are HTTP handlers, not a service API.
+3. Cross-module writes happen via Celery tasks (async event) — not synchronous service calls.
+4. Shared types/enums live in backend/shared/ only — never in one module imported by another.
+5. Each module has its own independent Alembic migrations — never mix two modules in one revision.
+6. Models/__init__.py is for Alembic discovery only — no business code imports from it.
+Already built: every module's KPI/report endpoints (financial, procurement, warehouse, work orders, PM,
+defects, HR, HSE) and the shared Export Engine + chart-data schema (Prompt 15). DO NOT re-implement
+per-module KPIs or export — this endpoint AGGREGATES them.
+
+TODAY'S TASK: a single unified executive aggregation endpoint that returns one consolidated KPI view
+across all modules, for the frontend's one-page executive dashboard.
+
+REQUIREMENTS:
+1. GET /dashboard/executive — returns KPIs from every domain in one response, grouped by domain:
+   { financial: {cards:[...]}, procurement: {...}, warehouse: {...}, maintenance: {...},
+     hr: {...}, hse: {...} } — each card in the §4.7 { key, label, value, unit, trend } shape.
+2. It aggregates by calling each module's existing KPI/summary SERVICE function (the same logic behind
+   GET /kpi/{module}) in-process — never by importing module models and never via loopback HTTP to the
+   /kpi routes (§12.4.1). If a module's KPI logic lives in a route handler, refactor it into a service
+   function both the route and this aggregator call (one implementation).
+3. Params: ?from=&to=&company_id= (multi-tenant aware — company scope enforced; a user only sees their
+   company). Optional ?domains=financial,maintenance,hse to fetch a subset.
+4. Partial-failure tolerance: if one module's KPI call fails or the user lacks its permission, return the
+   domains the user CAN see and mark the omitted ones (status per domain) rather than failing the whole
+   response. The dashboard degrades gracefully.
+5. RBAC: gate the endpoint with a high-level role (general_manager and above). CRUCIALLY, each domain's
+   numbers are still filtered by the caller's existing module permissions — a user without
+   hse_management:summary does not get HSE cards even if they can hit /dashboard/executive. Reuse existing
+   {module}:summary permissions; the only new gate is dashboard:executive:read (seed in seed_rbac.py).
+   No sensitive figure is exposed beyond what the user could already see on the per-module dashboards.
+6. Caching (§4.7): short TTL per (company, params, user-permission-set), invalidated on any contributing
+   module's events. Reuse the Prompt 15 caching approach; do not invent a new one.
+7. Export: the whole executive view exports via the shared Export Engine (§4.6, Prompt 15) —
+   POST /dashboard/executive/export → xlsx/pdf. Do NOT re-implement export.
+8. Assistant integration (§12.4): expose the aggregator as the data source the Manager Dashboard
+   synthesis path in Prompt 22 consumes (one shared service, used by both the route and the agent tool).
+
+IMPACT:
+- What changes: adds /dashboard/executive (read-only aggregation) + its export; refactors any KPI logic
+  still trapped in route handlers down into reusable service functions.
+- Backward compatible: yes (additive; per-module /kpi endpoints are unchanged).
+- New tables: none (optional small cache table if not reusing an existing cache layer).
+- Existing routes affected: none functionally; some module KPI logic may move route → service (same output).
+
+Please provide:
+A) The /dashboard/executive response schema (domains → cards, per-domain status for partial failure)
+B) The aggregation approach — which per-module KPI SERVICE functions it calls and how it parallelizes/
+   tolerates partial failure, with the §12.4.1 in-process (not loopback HTTP) rule made explicit
+C) (No new search — this is a dashboard endpoint; note it reuses each module's existing KPI services)
+D) Migration notes (only if a cache table is added; otherwise "no migration") + the dashboard:executive:read seed
+E) RBAC: dashboard:executive:read gate + per-domain filtering by existing {module}:summary permissions
+F) Frontend specification: the one-page executive dashboard (domain sections, KPI cards with trend chips,
+   period/company filter bar, Export to Excel/PDF), reusing the Prompt 15 chart/card components
+G) What you could add next (e.g. configurable card layout per manager, target/threshold alerting,
+   period-over-period comparison view, drill-down from an executive card into the owning module's report)
+```
+
 ---
 
 ## 9. Frontend Specification Format
