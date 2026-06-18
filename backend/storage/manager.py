@@ -201,7 +201,6 @@ class StorageManager:
         if asset.status != FileAssetStatus.READY.value:
             raise HTTPException(status_code=409, detail="Asset is not ready")
 
-        safe_filename = asset.original_filename.replace('"', "")
         expires = expires_seconds or settings.S3_DOWNLOAD_EXPIRES_SECONDS
 
         download_url = self.presign_client.generate_presigned_url(
@@ -210,7 +209,6 @@ class StorageManager:
                 "Bucket": asset.bucket,
                 "Key": asset.storage_key,
                 "ResponseContentType": asset.content_type,
-                "ResponseContentDisposition": f'{disposition}; filename="{safe_filename}"',
             },
             ExpiresIn=expires,
         )
