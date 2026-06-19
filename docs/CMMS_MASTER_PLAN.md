@@ -11,6 +11,94 @@
 
 ---
 
+## 0. Glossary — Canonical Domain Terms (read before using any term below)
+
+These terms are **overloaded** and have caused real design errors (e.g. treating `model_management` as
+ML/AI config). Each term has exactly ONE meaning in this project. Any spec that contradicts a definition
+here is a bug — fix the spec, not the glossary. When a spec makes a *negative* claim ("X is wrong because
+Y is …"), it must cite the glossary term it relies on.
+
+| Term | Canonical meaning | What it is NOT |
+|---|---|---|
+| **model** (`model_management.ManagedModel`) | An **equipment-model type**: manufacturer/company + model name + spec data/docs (e.g. a Siemens pump model). The catalog of equipment *types*. | NOT an ML/AI model, NOT stock, NOT a physical installed unit. |
+| **item** (`material_management.Item`) | A **stockable thing**: material, spare, consumable, tool, chemical, PPE. The universal warehouse/PO line entity. Identified by `item_code`. May optionally reference a model via `item.model_id` (NULL for generic materials like glue). | NOT a model; NOT a physical position in the plant. |
+| **tag** (`tag_management` / `system_tags`) | A **functional position in the process** (P&ID tag). `tag → model` means "equipment of this model is used at this process point." | NOT a free-text label only; NOT the equipment unit itself. |
+| **asset** (Phase 2 `asset_management.Asset`) | A **physical installed unit** at a position, with serial number and lifecycle/history. References its model via `asset.model_id`. | NOT a model type; NOT a stock row. |
+| **stock** (`StockItem`) | The **on-hand quantity of an `item` at a storage location**. Always points at `item_id`, never directly at a model. | NOT the item definition; NOT a model. |
+
+**Module charters (one line each — what the module owns and is NOT):**
+- `model_management` — owns equipment-model *types* and their docs/links; it is **not** an item/stock store and **not** ML config.
+- `material_management` — owns the `Item` catalog (materials/spares/consumables); the universal stock & PO line entity.
+- `tag_management` — owns functional positions and their links (tag↔model, tag↔doc); not stock, not assets.
+- `property_management` / Warehouse — owns warehouses, locations, `StockItem`, and movements; anchors stock to `Item`.
+
+---
+
+## 0.5 Data Separation Architecture — Canonical Standard for Every Module
+
+> **Read this before adding ANY new module or any cross-module reference.** Every module is built so it can be
+> lifted into its own physical database/service later with only a connection-string + transport change — no
+> schema or business-logic rewrite. Follow this once and new modules are correct by construction; you should
+> never have to retrofit a module for separation.
+
+**Chosen model: schema-per-module on one Postgres, designed for physical split later.**
+Each module owns exactly one Postgres **schema** (`model_management`, `material_management`, `warehouse`,
+`purchase`, …). Shared identity/reference data lives in one **`platform`** schema that every module references
+but none owns. One pgvector-enabled instance today; any schema can be promoted to its own database tomorrow
+without touching table definitions or business logic.
+
+**The five hard rules (no exceptions):**
+
+1. **No cross-schema foreign key.** A `ForeignKey(...)` may only point at a table in the *same* module's schema.
+   A reference to another module's row is a **soft reference**: a plain `INTEGER` column (e.g. `model_id`,
+   `item_id`, `company_id`) with **no `ForeignKey(...)` and no SQLAlchemy `relationship()`** to the other module.
+
+2. **No cross-schema JOIN / no direct read of another schema.** Never `SELECT … JOIN other_schema.table`. To read
+   another module's data, call that module's **service function** (today an in-process call; after a split, the
+   identical call behind an HTTP client). Routes are not the service API — call the service layer.
+
+3. **Denormalize the fields you display or search.** Because you cannot JOIN, copy the *small* read-only set of
+   fields you need onto your own row (e.g. `Item` copies `manufacturer` + `model_name` from the model;
+   `StockItem` / PO line copy `item_code` + `name` from the item). These are cached snapshots — never the source
+   of truth.
+
+4. **Sync denormalized data with events, not writes.** The **owning** module emits a domain event (Celery /
+   message bus) on create/update/delete; consumers refresh their snapshots and flag/resolve dangling refs.
+   Cross-module *writes* are always events — never a synchronous reach into another schema.
+
+5. **Validate soft references on write; reconcile periodically.** Since the DB no longer enforces the ref, the
+   writing module validates existence via the owning module's service (raise a catalogued error on miss), and a
+   periodic reconciliation job flags orphaned soft refs. Prefer soft-delete + events over hard cascade.
+
+**Shared platform schema (`platform`):** owns `users`, `companies`, roles/permissions, `currencies`, `fx_rates`.
+Every module references `user_id` / `company_id` / `currency_id` as soft references validated via the platform
+service. The 4-column money rule (§4) still holds: `amount`, `currency_id` (soft ref → `platform`), `amount_base`,
+`exchange_rate_used`.
+
+**Search & the AI assistant:** each module owns its search (keyword + pgvector) over **its own** schema only (the
+existing `search/` subfolder pattern). Cross-module and agent search = fan-out to each module's search service and
+merge in the app — never a cross-schema query. Global semantic search therefore works identically before and
+after any module is split out.
+
+**Migrations:** each module's Alembic revisions are scoped to its own schema; never mix two modules in one
+revision. A module's tables, version table, and metadata all live in its schema.
+
+**Definition of done for every NEW module (so nothing needs changing later):**
+- [ ] All tables in the module's own schema; no table outside it.
+- [ ] Every reference to another module is a soft `INTEGER` — no cross-schema FK, no cross-module `relationship()`.
+- [ ] No query JOINs or reads another schema; cross-module reads go through that module's service function.
+- [ ] Denormalized snapshot fields defined for anything displayed/searched from another module, kept read-only.
+- [ ] Domain events defined for create/update/delete of entities other modules denormalize; consumers are idempotent.
+- [ ] Soft-reference existence validated on write (catalogued error on miss); orphan reconciliation noted.
+- [ ] Own `search/` subfolder over own schema; cross-module search via fan-out + merge.
+- [ ] Own Alembic revisions, scoped to the schema.
+
+**To physically extract a module later (the payoff):** point the module's engine at a new database, move its
+schema, swap its in-process service calls for an HTTP client, and route its events over the bus. No table, FK,
+or business-logic change — because nothing ever crossed the boundary.
+
+---
+
 ## 1. What Already Exists (Foundation)
 
 The existing codebase is a production-ready RAG system. Every new module builds **on top of** this — it is not replaced.
@@ -19,7 +107,7 @@ The existing codebase is a production-ready RAG system. Every new module builds 
 |---|---|
 | `document_management` | Upload, version, chunk, embed documents |
 | `tag_management` | Tag any entity; tag-based search |
-| `model_management` | AI model configs, document linking, ask/chat |
+| `model_management` | **Equipment-model catalog** (manufacturer + model name + spec data/docs); tag↔model linking; document linking; ask/chat. NOT ML/AI model config — see Glossary §0. |
 | `buying_management` | **Deleted in Phase 0.2** — replaced by `purchase_management` (clean rewrite) |
 | `financial_management` | Financial receipts, cards, customers |
 | `property_management` | Properties catalog, warehouse skeleton (partial) |
@@ -426,8 +514,11 @@ No other team has implemented against it. There is no transition period and no a
 The old module folder, tables, and routes are deleted. The new module is built from scratch, clean.
 
 **What was wrong with buying_management (do NOT carry forward):**
-- `BuyingProcessItem` links to `model_management.ManagedModel` — the AI model catalog. Wrong entity.
-  Items in a purchase order are materials/spare parts/consumables, not AI models.
+- `BuyingProcessItem` links **stock/PO lines directly** to `model_management.ManagedModel`. The link itself
+  is valid (ManagedModel is the equipment-model catalog, not an AI model catalog — see Glossary §0), but a
+  PO/stock line is an `Item` (material / spare / consumable). Lines must resolve through the **`Item` catalog**,
+  and `Item.model_id` (→ managed_models) is **optional** — set for equipment and model-specific spares, NULL
+  for generic materials (glue, grease, bolts). Mandatory model on every line is the bug, not the FK itself.
 - `affects_warehouse` Boolean flag on `BuyingProcess` — couples purchase to warehouse logic directly.
   In a modular monolith, the correct pattern is: purchase emits a Celery event; warehouse module listens.
 - Route prefix `/buying/` — replaced by `/purchase/`.
@@ -465,9 +556,10 @@ PurchasePhase  (one PO has 1..N phases — each phase = one physical delivery ba
   ├── exchange_rate_used
   └── created_at, updated_at
 
-PurchasePhaseItem  (items inside a phase — materials, not AI models)
+PurchasePhaseItem  (items inside a phase — Item rows: material/spare/consumable; equipment items optionally carry model_id)
   ├── phase_id FK → purchase_phases.id
-  ├── item_name (free text in Phase 0; FK to Item catalog in Phase 1)
+  ├── item_id (free text item_name in Phase 0; SOFT reference → material_management.Item in Phase 1 — plain
+  │            INTEGER, NO cross-schema FK, §0.5; denormalize item_code/name for display)
   ├── item_code (optional SKU/part number)
   ├── quantity (Numeric), unit (str: "pcs", "kg", "m", etc.)
   ├── unit_price (Numeric), currency_id FK
@@ -1905,7 +1997,8 @@ No backward compatibility with buying_management — no other team has implement
 The old folder, tables, and routes are gone. Build fresh.
 
 WHAT WAS WRONG WITH buying_management (do NOT replicate):
-- BuyingProcessItem linked to model_management.ManagedModel — an AI model catalog. Items in a PO
+- BuyingProcessItem linked stock/PO lines directly to model_management.ManagedModel (the equipment-model
+  catalog — see Glossary §0). PO lines must resolve through the Item catalog (Item.model_id is optional). Items in a PO
   are materials/spare parts/consumables. This FK is semantically wrong.
 - affects_warehouse Boolean flag on BuyingProcess — wrong pattern. Warehouse interaction must go
   through a Celery event, not a flag on the purchase model.
@@ -2080,7 +2173,7 @@ PROJECT CONTEXT:
 We are building a CMMS for the petroleum industry on top of an existing RAG/KMS system.
 Backend: FastAPI + PostgreSQL (only) + SQLAlchemy + Alembic + Celery.
 Architecture: each feature area is its own app folder. Apps communicate via REST API only.
-Existing: document_management, tag_management, model_management, buying_management (partial),
+Existing: document_management, tag_management, model_management (equipment-model catalog — see Glossary §0), buying_management (partial),
 financial_management (partial), property_management (partial), RBAC, user/company, file assets, AI chat.
 Database: PostgreSQL + pgvector extension. No Elasticsearch or ChromaDB needed.
 Search stack: keyword (ILIKE on text columns) + semantic (pgvector <=> cosine similarity, Jina embeddings) + hybrid.
@@ -2223,6 +2316,13 @@ REQUIREMENTS:
    - item_type: Material / Spare Part / Consumable / Tool / Chemical / PPE
    - is_active, is_critical (critical spare flag)
    - lead_time_days (typical procurement lead time)
+   - model_id (SOFT reference → model_management.managed_models, plain INTEGER, NULLABLE — NO cross-schema
+     FK, NO relationship(); see §0.5): set for equipment and model-specific spares, NULL for generic materials
+     such as glue, grease, bolts. `Item` is the universal stock entity; `ManagedModel` is the equipment-model
+     catalog it optionally references (Glossary §0), NOT a parallel stock store.
+   - model_manufacturer, model_name (DENORMALIZED snapshot copied from model_management for display/search;
+     read-only, refreshed via a model-changed event — §0.5 rule 3/4). Validate model_id via the
+     model_management service on write.
 4. ItemAlternative: item_id, alt_code, alt_name, supplier_id (vendor's code for this item)
 5. Search: keyword ILIKE on item_code, name, description, specs + semantic pgvector on description_embedding (Section 2.1 pattern)
 6. Attach documents to items (datasheets, safety data sheets) via file_asset
@@ -2273,7 +2373,15 @@ REQUIREMENTS:
 2. Zone model: warehouse_id, code, name, description
 3. StorageLocation model (shelf/bin): zone_id, code, name, capacity_unit, capacity_value, is_active
 4. StockItem model (current state — one row per item per location):
-   - item_id, storage_location_id
+   - item_id (SOFT reference → material_management.Item, plain INTEGER — NO cross-schema FK, §0.5),
+     storage_location_id (FK → warehouse.storage_locations — same schema, real FK allowed)
+   - item_code, item_name (DENORMALIZED snapshot from material_management for display/search; read-only,
+     refreshed via item-changed event). Stock anchors to `item_id`, NEVER directly to a model; equipment
+     make/model is reached by asking material_management for the item (Glossary §0).
+     MIGRATION: existing `property_management.WarehouseItem.model_id` (NOT NULL → managed_models) is migrated —
+     create an `Item` per warehouse row carrying its model into `Item.model_id`, repoint stock to the
+     soft `item_id`, then drop the old cross-module FK and the `relationship("ManagedModel")`. The `color`-based
+     uniqueness key is dropped in favour of item + storage location (+ lot/batch where needed).
    - quantity_on_hand (Decimal — derived from movements but stored for performance)
    - quantity_reserved (reserved for work orders not yet consumed)
    - quantity_available (computed: on_hand - reserved)
@@ -2482,7 +2590,11 @@ REQUIREMENTS:
    - asset_type: Rotating / Static / Electrical / Instrument / Civil / Piping
    - criticality: A (critical) / B (important) / C (general)
    - status: Active / Standby / Under Maintenance / Decommissioned
-   - manufacturer, model_number, serial_number
+   - model_id (SOFT reference → model_management.managed_models, plain INTEGER, nullable — NO cross-schema FK,
+     §0.5) — the equipment-model type (manufacturer + model live there, Glossary §0); prefer this over re-typing
+     make/model as free text. manufacturer/model_number kept as DENORMALIZED snapshot (read-only, refreshed via
+     model-changed event), or as fallback when no ManagedModel record exists yet.
+   - serial_number (identifies the individual physical unit; stays on the asset)
    - installation_date, warranty_expiry
    - parent_asset_id (for sub-components, tree structure)
    - belongs to AssetSystem
