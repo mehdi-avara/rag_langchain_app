@@ -71,10 +71,17 @@ module, point it here first.
 - **Naming convention** is defined in `backend/db/base.py` (`ix_`, `uq_`, `fk_`,
   `pk_`, `ck_`). Hand-written migrations must use the same names autogenerate would
   produce, so the schema stays consistent and `alembic check` passes.
-- **Module isolation by design**: some "foreign keys" are deliberately plain
-  `Integer` columns with no FK (e.g. `purchase_order_receipt_links.financial_receipt_id`,
-  `purchase_orders.supplier_id`). This keeps modules decoupled; integrity is enforced
-  in application code. Don't "fix" these into real FKs without understanding the intent.
+- **Cross-module references are real FKs in the shared DB (the default).** We run one
+  shared PostgreSQL database and keep foreign keys for cross-module references too
+  (e.g. `purchase_order_receipt_links.financial_receipt_id` → `financial_receipts`,
+  `purchase_phase_items.item_id` → `items`), so the database enforces integrity. The
+  separation rule is about **code seams, not FKs**: never import another module's model
+  to resolve the row — call its service function. A reference becomes a plain `Integer`
+  **soft reference** (no FK) **only at a seam deliberately designated for physical
+  extraction**. See "Module boundaries & database separation — the rules" below and
+  master plan §0.5. (`purchase_orders.supplier_id` is the one transitional exception: a
+  plain nullable int in Phase 0 because the Supplier module doesn't exist yet — it
+  becomes a real FK in Phase 1.)
 
 ---
 
@@ -186,11 +193,113 @@ Tell the assistant explicitly:
   duplicate indexes, and `pgvector` import; do not rely on `create_all`."
 - "If the feature has protected endpoints, add the permission strings to
   `seed_rbac.py` and confirm the admin role gets them."
-- "Keep cross-module references as plain integer columns where the existing modules
-  do (module isolation); don't add cross-module FKs without checking the pattern."
+- "Use a real FK in the shared DB for cross-module references (the default), but resolve
+  the other module's row through its service function — never import its model. Use a
+  plain-int soft reference only at a seam explicitly designated for extraction (§0.5)."
 - "Match the naming convention in `db/base.py` for all constraints/indexes."
 - "Don't put DDL in request/startup code. Don't hardcode secrets."
 - "After changes, run `alembic upgrade head` on a fresh DB and `alembic check`."
+
+---
+
+## Module boundaries & database separation — the rules
+
+Written for **both AI assistants and human developers.** This is the everyday version of master
+plan §0.5. Read it before you add a model, a cross-module reference, or a new module.
+
+### The FK-default rule (and why)
+
+We run **one shared PostgreSQL database**, and **foreign keys are the default** — including for
+references that cross module schemas. When a purchase line points at an item, that's a real
+`ForeignKey` to `items`, not a loose integer. We do this because:
+
+- **Integrity is enforced by the database.** You cannot save an `item_id` that points at a
+  non-existent item — no orphan rows, ever.
+- **No hand-rolled existence checks.** You don't write "does this id exist?" on every create, and
+  you don't run periodic "find the orphans" reconciliation jobs.
+- **Safe, declarative cascades.** `ON DELETE RESTRICT/CASCADE` does the right thing for you instead
+  of application code trying to emulate it.
+
+Divisibility (the ability to split a module into its own service later) comes from **clean code
+seams, not from removing FKs.** You keep the FK *and* keep the seam clean.
+
+### The four seam rules (always, no exceptions)
+
+1. **No cross-module imports of another module's internals.** Never import another module's
+   SQLAlchemy **models**, **route functions**, or **Pydantic schemas**.
+2. **Talk to another module through its service functions.** To read or use another module's data,
+   call its service layer (an in-process function call today; the same call behind an HTTP client
+   after a split). Routes are not the service API.
+3. **Cross-module writes go through Celery events.** When module A must cause a write in module B
+   (e.g. a posted GRN creating a stock movement), A publishes a Celery event and B's handler does
+   the write. Never reach synchronously into another module to mutate its rows.
+4. **Shared types live in `backend/shared/`.** Enums, constants, money helpers, and common
+   exceptions that several modules need go in `backend/shared/` — never in one module imported by
+   another.
+
+The FK in the database is fine; the **Python coupling** is what these rules forbid. You may declare
+`ForeignKey("financial_management.financial_receipts.id")` on your column — you just resolve and
+display that receipt by calling the `financial_management` service, not by importing its model.
+
+### Soft references only at a designated split-seam
+
+A **soft reference** is a plain `INTEGER` column with no `ForeignKey(...)`, no `relationship()`, and
+existence validated in application code. It is **not** the default. Introduce one **only** at a seam
+you have deliberately decided to split into its own physical database. Likewise, **do not add
+denormalized snapshot columns pre-emptively** — add them only at extraction time, for the specific
+fields a cut would otherwise prevent you from JOINing to.
+
+### Scaling order (cheapest, most reversible first)
+
+1. **Index / query tuning** — solves most load problems.
+2. **Read replicas** — offload reporting/read traffic.
+3. **Partitioning** — partition the big hot tables (e.g. `stock_movements`, audit logs).
+4. **Caching / connection pooling** — short-TTL caches, PgBouncer.
+5. **(Last resort) Physically extract one hot module** to its own database — and only then convert
+   that seam's crossing FKs to soft refs, via the recipe below.
+
+### The extraction recipe (only when step 5 is actually reached)
+
+1. Point the module's engine at a **new database**.
+2. **Move its schema** to that database (nothing else moves).
+3. Convert **only the FKs that cross the cut** to soft refs (drop `ForeignKey`/`relationship`, keep a
+   plain `INTEGER`). FKs that stay within the module are untouched.
+4. Add **service-side existence checks + events** at that one seam (validate the soft ref via the
+   owning module's service; reconciliation job for the new soft seam).
+5. Add **denormalized snapshot fields** only for columns the cut now blocks from JOINing.
+6. **Swap the in-process service call for an HTTP client** at that seam — same signature.
+7. **No business-logic change** — only the boundary's transport and that one seam change.
+
+### DO / DON'T
+
+- **DON'T** `from model_management.models import ManagedModel` inside another module, then
+  `db.query(ManagedModel)...`.
+- **DO** call `model_management`'s service: `from model_management.services import get_model;
+  model = get_model(db, model_id)` — and keep `Asset.model_id` as a real FK to `managed_models`.
+- **DON'T** import another module's route functions or Pydantic schemas
+  (`from financial_management.routes.receipts import get_receipt`).
+- **DO** call its service function; if you need a shared schema, move it to `backend/shared/`.
+- **DON'T** synchronously reach into warehouse to write a stock movement from procurement.
+- **DO** emit a Celery event procurement → warehouse handles the write.
+- **DON'T** drop a cross-module FK "for separation," or add snapshot columns "just in case."
+- **DO** keep the FK and the clean seam; soft-ref + denormalize only when you actually extract.
+
+### Definition of done for a new module
+
+- [ ] All the module's tables live in its **own schema**; no table outside it.
+- [ ] Cross-module access is **service-function only** — no import of another module's models,
+      routes, or Pydantic schemas.
+- [ ] Cross-module references are **real FKs in the shared DB** (resolved via the owning module's
+      service); a soft ref appears only at a seam explicitly designated for extraction.
+- [ ] Cross-module **writes go through Celery events**.
+- [ ] Shared types are in `backend/shared/`.
+- [ ] The module has its **own `search/` subfolder** over its own tables (cross-module search =
+      fan-out + merge).
+- [ ] The module owns its **Alembic revisions**, scoped to its tables (never mix two modules in one
+      revision).
+
+`purchase_management` is the reference pattern — it links a financial receipt by id with **no** import
+from `financial_management.models`.
 
 ---
 

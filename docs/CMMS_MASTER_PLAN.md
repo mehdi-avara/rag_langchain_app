@@ -36,66 +36,107 @@ Y is …"), it must cite the glossary term it relies on.
 
 ## 0.5 Data Separation Architecture — Canonical Standard for Every Module
 
-> **Read this before adding ANY new module or any cross-module reference.** Every module is built so it can be
-> lifted into its own physical database/service later with only a connection-string + transport change — no
-> schema or business-logic rewrite. Follow this once and new modules are correct by construction; you should
-> never have to retrofit a module for separation.
+> **Read this before adding ANY new module or any cross-module reference.** We run **one shared PostgreSQL
+> database** and we **keep foreign keys as the default**. Divisibility comes from clean **code seams**, not from
+> removing FKs. A module is split into its own database only as a deliberate, last-resort step — and there is a
+> documented recipe for doing it when (if ever) that day comes. Follow the seam rules once and new modules are
+> correct by construction; you never have to pre-emptively denormalize or drop FKs "just in case."
 
-**Chosen model: schema-per-module on one Postgres, designed for physical split later.**
+**Chosen model: schema-per-module on one shared Postgres, FK-as-default, split-ready by clean seams.**
 Each module owns exactly one Postgres **schema** (`model_management`, `material_management`, `warehouse`,
-`purchase`, …). Shared identity/reference data lives in one **`platform`** schema that every module references
-but none owns. One pgvector-enabled instance today; any schema can be promoted to its own database tomorrow
-without touching table definitions or business logic.
+`purchase`, …) for organization. Shared identity/reference data lives in one **`platform`** schema that every
+module references but none owns. **Foreign keys and JOINs across module schemas in this shared DB are allowed and
+preferred** — we want DB-enforced referential integrity (no manual "does this id exist?" checks, safe cascades,
+no orphan rows). Because it is one database, any schema *could* be promoted to its own database later, but that is
+an explicit migration, not the default posture.
 
-**The five hard rules (no exceptions):**
+**Why FK-as-default (not soft-ref-everywhere):**
+- The database enforces integrity for us: an `item_id` that points at a non-existent item simply cannot be written.
+- No hand-rolled existence checks on every write, and no periodic "orphan reconciliation" jobs to maintain.
+- Safe, declarative cascade/restrict behavior instead of application code trying to emulate it.
+- No pre-emptive denormalized snapshot columns to keep in sync — you JOIN when you need a label.
 
-1. **No cross-schema foreign key.** A `ForeignKey(...)` may only point at a table in the *same* module's schema.
-   A reference to another module's row is a **soft reference**: a plain `INTEGER` column (e.g. `model_id`,
-   `item_id`, `company_id`) with **no `ForeignKey(...)` and no SQLAlchemy `relationship()`** to the other module.
+**Divisibility comes from clean code seams, NOT from removing FKs. The seam rules (always):**
 
-2. **No cross-schema JOIN / no direct read of another schema.** Never `SELECT … JOIN other_schema.table`. To read
-   another module's data, call that module's **service function** (today an in-process call; after a split, the
-   identical call behind an HTTP client). Routes are not the service API — call the service layer.
+1. **Schema-per-module for organization.** Every table a module owns lives in that module's schema. FKs may cross
+   schemas inside this one shared DB.
 
-3. **Denormalize the fields you display or search.** Because you cannot JOIN, copy the *small* read-only set of
-   fields you need onto your own row (e.g. `Item` copies `manufacturer` + `model_name` from the model;
-   `StockItem` / PO line copy `item_code` + `name` from the item). These are cached snapshots — never the source
-   of truth.
+2. **A module is only ever touched through its service-layer functions.** To read or use another module's data,
+   call that module's **service function** (today an in-process call; after a hypothetical split, the identical
+   call behind an HTTP client). Routes are not the service API — call the service layer.
 
-4. **Sync denormalized data with events, not writes.** The **owning** module emits a domain event (Celery /
-   message bus) on create/update/delete; consumers refresh their snapshots and flag/resolve dangling refs.
-   Cross-module *writes* are always events — never a synchronous reach into another schema.
+3. **No cross-module imports of another module's internals.** Never import another module's SQLAlchemy **models**,
+   **route functions**, or **Pydantic schemas**. The FK in the database is fine; the *Python coupling* is what we
+   forbid. You may declare a `ForeignKey("other_schema.table.id")` column, but you resolve/display that row by
+   calling the owning module's service — not by importing its model or `relationship()`-ing into it.
 
-5. **Validate soft references on write; reconcile periodically.** Since the DB no longer enforces the ref, the
-   writing module validates existence via the owning module's service (raise a catalogued error on miss), and a
-   periodic reconciliation job flags orphaned soft refs. Prefer soft-delete + events over hard cascade.
+4. **Cross-module writes go through Celery events.** When module A must cause a write in module B (e.g. a GRN
+   creates a StockMovement), A publishes a Celery event; B's handler performs the write. Never reach synchronously
+   into another module to mutate its rows.
+
+5. **Shared types live in `backend/shared/`.** Enums, constants, money helpers, common exceptions that several
+   modules need live in `backend/shared/` — never in one module imported by another.
+
+**Soft references are NOT the default.** A **soft reference** (plain `INTEGER` column, no `ForeignKey(...)`, no
+`relationship()`, existence validated in application code) is introduced **only at a seam we have deliberately
+decided to split out** to its own physical database. Until a seam is designated for extraction, it stays a normal
+FK. Denormalized snapshot fields are likewise **not** added pre-emptively — they are added **only at extraction
+time**, for the specific fields that can no longer be reached by JOIN once the seam is cut.
+
+**Scaling order for large deployments (cheapest, most reversible first):**
+1. **Index / query tuning** — the right indexes and query shapes solve the vast majority of load problems.
+2. **Read replicas** — offload reporting/read traffic.
+3. **Partitioning** — partition the hot, large tables (e.g. `stock_movements`, audit logs) by time/tenant.
+4. **Caching / connection pooling** — short-TTL caches on hot reads, PgBouncer for connection pressure.
+5. **(Last resort) Physically extract one hot module to its own database** — convert *only that seam's* crossing
+   FKs to soft refs at that point, following the recipe below.
+
+**How to extract a module later (the recipe — only when step 5 above is actually reached):**
+1. **Point the module's engine at a new database.** Give the module its own connection string / engine; its
+   schema and tables move to the new DB unchanged.
+2. **Move its schema** to the new database (dump/restore the module's schema; nothing else moves).
+3. **Convert only the FKs that cross the cut** to soft references — for each FK that now points across the new
+   physical boundary, drop the `ForeignKey(...)`/`relationship()` and make it a plain `INTEGER`. FKs that stay
+   within the extracted module (or within what remains) are untouched.
+4. **Add service-side existence checks + events** at that one seam — the writing side validates the soft ref via
+   the owning module's service (catalogued error on miss); cross-boundary writes that were already events stay
+   events; add a reconciliation job only for the newly soft seam.
+5. **Add denormalized snapshot fields** only for the columns the cut now prevents you from JOINing to (e.g. a
+   label you used to render via JOIN), kept read-only and refreshed via the owning module's change events.
+6. **Swap in-process service calls for an HTTP client** at that seam — same function signature, now behind a
+   transport. Because every module was only ever reached through its service layer, this is a client swap, not a
+   rewrite.
+7. **No business-logic change.** The module's internal logic, its tables, and its tests do not change — only the
+   boundary's transport and the one seam's FK→soft-ref conversion do.
 
 **Shared platform schema (`platform`):** owns `users`, `companies`, roles/permissions, `currencies`, `fx_rates`.
-Every module references `user_id` / `company_id` / `currency_id` as soft references validated via the platform
-service. The 4-column money rule (§4) still holds: `amount`, `currency_id` (soft ref → `platform`), `amount_base`,
-`exchange_rate_used`.
+Every module references `user_id` / `company_id` / `currency_id` as **real FKs → `platform`** in the shared DB
+(resolved via the platform service in code — no model import). The 4-column money rule (§4) still holds:
+`amount`, `currency_id` (FK → `platform.currencies`), `amount_base`, `exchange_rate_used`.
 
-**Search & the AI assistant:** each module owns its search (keyword + pgvector) over **its own** schema only (the
-existing `search/` subfolder pattern). Cross-module and agent search = fan-out to each module's search service and
-merge in the app — never a cross-schema query. Global semantic search therefore works identically before and
-after any module is split out.
+**Search & the AI assistant:** each module owns its search (keyword + pgvector) via the existing `search/`
+subfolder pattern. Cross-module and agent search = fan-out to each module's search service and merge in the app.
+This keeps the seam clean regardless of FKs, so global semantic search works identically before and after any
+hypothetical module split.
 
-**Migrations:** each module's Alembic revisions are scoped to its own schema; never mix two modules in one
-revision. A module's tables, version table, and metadata all live in its schema.
+**Migrations:** each module's Alembic revisions are scoped to its own tables; never mix two modules in one
+revision (see `KEEP_IN_MIND.md`). A cross-schema FK is created in the revision of the module that *owns the
+referencing table*.
 
-**Definition of done for every NEW module (so nothing needs changing later):**
-- [ ] All tables in the module's own schema; no table outside it.
-- [ ] Every reference to another module is a soft `INTEGER` — no cross-schema FK, no cross-module `relationship()`.
-- [ ] No query JOINs or reads another schema; cross-module reads go through that module's service function.
-- [ ] Denormalized snapshot fields defined for anything displayed/searched from another module, kept read-only.
-- [ ] Domain events defined for create/update/delete of entities other modules denormalize; consumers are idempotent.
-- [ ] Soft-reference existence validated on write (catalogued error on miss); orphan reconciliation noted.
-- [ ] Own `search/` subfolder over own schema; cross-module search via fan-out + merge.
-- [ ] Own Alembic revisions, scoped to the schema.
+**Definition of done for every NEW module:**
+- [ ] All the module's tables live in its own schema; no table outside it.
+- [ ] Cross-module data is reached **only** through the other module's service functions — no import of its
+      models, routes, or Pydantic schemas.
+- [ ] Cross-module references are **real FKs in the shared DB** (resolve the other module's row via its service);
+      a soft ref appears only at a seam explicitly designated for extraction.
+- [ ] Cross-module writes go through **Celery events**, never a synchronous reach into another schema.
+- [ ] Shared types live in `backend/shared/`.
+- [ ] Own `search/` subfolder over its own tables; cross-module search via fan-out + merge.
+- [ ] Own Alembic revisions, scoped to its tables.
 
-**To physically extract a module later (the payoff):** point the module's engine at a new database, move its
-schema, swap its in-process service calls for an HTTP client, and route its events over the bus. No table, FK,
-or business-logic change — because nothing ever crossed the boundary.
+**The payoff:** because nothing ever crosses a module boundary *in code* except through a service function, the
+day a module genuinely needs its own database is a mechanical, well-scoped change (the recipe above) — not a
+rewrite. We pay for that option with clean seams, not with degraded integrity today.
 
 ---
 
@@ -173,7 +214,13 @@ This file exists for Alembic discovery only. No business code should import from
 - Future: to extract `warehouse_management` into its own microservice, you replace the Celery task calls with message queue publishes and the service function calls with HTTP calls — the business logic inside each module does not change
 
 ### Existing violations (to be fixed in Phase 4):
-The existing code (`buying_management`, `tag_management`, `embedding_service`, `Models/__init__.py`) has cross-module imports that violate these rules. These are tracked and will be refactored in Phase 4 — see "Module Refactor" task in Phase 4 below. All NEW modules must be clean from day one.
+The existing code has cross-module **imports** that violate the seam rules — `tag_management` and
+`model_management` import `financial_management` routes/schemas and `model_management` models;
+`property_management` imports `model_management` models and `financial_management.models`;
+`embedding_service` and `core/agents/langgraph.py` pull from modules; `Models/__init__.py` is imported by
+business code (`buying_management` is deleted in Phase 0). These are the *code seams* to clean — **not** the
+FKs, which stay (§0.5). They are tracked and refactored in **Phase 4.7 — Modular Monolith Refactor** (the single
+merged refactor spec). All NEW modules must be clean from day one (`purchase_management` is the reference pattern).
 
 **Rule 7 — Backward compatibility is mandatory.**
 Adding a new module or feature must never break existing API routes or DB schema.
@@ -558,8 +605,8 @@ PurchasePhase  (one PO has 1..N phases — each phase = one physical delivery ba
 
 PurchasePhaseItem  (items inside a phase — Item rows: material/spare/consumable; equipment items optionally carry model_id)
   ├── phase_id FK → purchase_phases.id
-  ├── item_id (free text item_name in Phase 0; SOFT reference → material_management.Item in Phase 1 — plain
-  │            INTEGER, NO cross-schema FK, §0.5; denormalize item_code/name for display)
+  ├── item_id (free-text item_name in Phase 0; in Phase 1 becomes item_id FK → material_management.items
+  │            (shared DB) — resolve via material_management service, do not import its model; §0.5)
   ├── item_code (optional SKU/part number)
   ├── quantity (Numeric), unit (str: "pcs", "kg", "m", etc.)
   ├── unit_price (Numeric), currency_id FK
@@ -578,7 +625,8 @@ PurchaseOrderCost  (additional costs: freight, customs, tax, insurance)
 
 PurchaseOrderReceiptLink  (links payment receipts from financial_management)
   ├── purchase_order_id FK → purchase_orders.id
-  ├── financial_receipt_id (INT — stored as plain ID, not a FK import)
+  ├── financial_receipt_id FK → financial_management.financial_receipts.id (shared DB) — resolve via the
+  │            financial_management service, do not import its model; §0.5
   └── linked_at, linked_by_user_id
 ```
 
@@ -753,33 +801,81 @@ API CALLS NEEDED:
 | 4.6 | **Contractor Management** | P2 |
 | 4.7 | **Modular Monolith Refactor** (fix existing cross-module violations) | P1 |
 
-#### Phase 4.7 — Modular Monolith Refactor (existing code cleanup)
+#### Phase 4.7 — Modular Monolith Refactor (existing code cleanup) — the single seam-cleanup spec
 
-The existing codebase has cross-module coupling that must be cleaned up before the system can be considered microservice-ready. This task is deferred to Phase 4 so it does not block feature delivery.
+> **This is the one canonical refactor spec.** It merges the three previously-overlapping descriptions —
+> Phase 4.7 here, the summary-table row **"Prompt 22 — Module Refactor"**, and the summary-table row
+> **"Prompt 23 — Route Versioning / service boundary lock"**. They all describe the same job: make the
+> *code seams* clean. Use the framing below; do not maintain three separate lists.
 
-**What needs to be fixed:**
+**Goal: clean code seams, per §0.5.** We keep foreign keys as the default in the one shared database — the
+refactor does **not** rip out FKs. What it removes is the **Python coupling** that crosses module boundaries:
+imports of another module's SQLAlchemy **models**, **route functions**, or **Pydantic schemas**. After this,
+every cross-module interaction goes through a **service-layer function** (reads) or a **Celery event** (writes),
+shared types live in `backend/shared/`, and each route carries a version prefix so a module can later be lifted
+out behind an HTTP client with no business-logic change (the §0.5 extraction recipe). This is deferred to Phase 4
+so it does not block feature delivery; **all NEW modules must already be clean** (`purchase_management` is the
+reference pattern — it links a financial receipt by id and a comment, with **no** import from
+`financial_management.models`).
 
-1. **Create `backend/shared/` folder**
-   - Move `FinancialCurrency` enum (used by `company.py`) into `shared/currency.py`
-   - Move common exceptions, base types, money helpers into `shared/`
+**The seam standard to enforce everywhere (from §0.5):**
+- No cross-module import of another module's models, routes, or Pydantic schemas.
+- Reads from another module go through its **service function** (in-process today; HTTP client after extraction).
+- Cross-module **writes** go through **Celery events**.
+- Shared types live in `backend/shared/`.
+- A real FK in the shared DB is fine and preferred — it is the *code import* that is forbidden, not the FK.
 
-2. **`buying_management/services.py`** — remove direct imports of:
-   - `FinancialReceipt` from `financial_management` → replace with service call
-   - `ManagedModel` from `model_management` → replace with service call
-   - `WarehouseItem` from `property_management` → replace with service call
+**Current cross-module coupling to remove (confirmed by grep on the existing code):**
 
-3. **`tag_management/routes/receipts.py`** — stop calling `financial_management` route functions directly → call service layer instead
+1. **Create / finish `backend/shared/`** — move `FinancialCurrency` enum (used by `company.py`) into
+   `shared/currency.py`; move common exceptions, base money types, and money helpers into `shared/`.
 
-4. **`tag_management/schemas.py`** — stop importing Pydantic schemas from `financial_management` → define local schemas or move shared ones to `shared/`
+2. **`tag_management` → `model_management` (models)** —
+   `tag_management/services.py` imports `ManagedModel, ModelDocumentLink` from `model_management.models`, and
+   `tag_management/routes/models.py` imports `ManagedModel`. **Fix:** call a `model_management` **service**
+   function (e.g. `get_model`, `list_models_for_tag`) instead of importing the model. The FK stays; the import goes.
 
-5. **`components/embedding_service.py`** — stop importing models from `financial_management` and `model_management` → modules push text to embedding service, embedding service does not pull from modules
+3. **`tag_management` → `financial_management` (routes + schemas)** —
+   `tag_management/routes/receipts.py` imports route functions (`create_receipt`, `get_receipt`,
+   `get_receipts_by_ids`), `financial_management.search.routes.search_receipts`, and schemas
+   (`FinancialReceiptBatchRequest`, `FinancialReceiptSearchRequest`); `tag_management/schemas.py` imports
+   `FinancialReceiptCreate, FinancialReceiptOut`. **Fix:** call `financial_management` **service** functions, not
+   route functions; define local schemas or move shared ones into `backend/shared/`.
 
-6. **`Models/__init__.py`** — strip down to Alembic discovery only; remove from any business code imports
+4. **`model_management` → `financial_management` (routes + schemas)** —
+   `model_management/routes/receipts.py` imports route functions + schemas, and `model_management/routes/models.py`
+   imports `get_receipt`; `model_management/schemas.py` imports `FinancialReceiptCreate, FinancialReceiptOut`.
+   **Fix:** replace route imports with `financial_management` **service** calls; relocate shared schemas to `shared/`.
 
-7. **`core/agents/langgraph.py`** — stop importing `financial_management.search.repository` directly → financial_management exposes a registered agent tool instead
+5. **`property_management` → `model_management` + `financial_management` (models + services)** —
+   `property_management/services.py` imports `FinancialDirection, FinancialReceipt` from
+   `financial_management.models` and `get_model_or_404, require_company` from `model_management.services`;
+   `property_management/routes/warehouse.py` imports `ManagedModel`. **Fix:** stop importing
+   `financial_management.models` (call its service); the `model_management.services` calls are already the right
+   shape (service-layer) — only the `ManagedModel` model import must be removed in favour of a service call.
+   (Note: warehouse here is superseded by the Phase 1 `warehouse` module; the migration repoints stock to
+   `item_id` per §0.5 / Prompt 3.)
 
-**Estimated effort: 4–5 days**
-**Risk: Low** — these are import-level changes, no business logic changes needed
+6. **`components/embedding_service.py`** — stop importing models from `financial_management` and
+   `model_management`. Invert the dependency: modules **push** text to the embedding service; it does not pull
+   from modules.
+
+7. **`Models/__init__.py`** — strip to Alembic discovery only; no business code imports from it.
+
+8. **`core/agents/langgraph.py`** — stop importing `financial_management.search.repository` directly;
+   `financial_management` exposes a registered agent tool (Module Tool Contract §12.4) instead.
+
+9. **Delete the dead `buying_management/` folder** — replaced by `purchase_management` in Phase 0; its remnants
+   confuse greps and autogenerate.
+
+10. **Route versioning / service-boundary lock** (the old "Prompt 23" item) — add a version prefix to routes
+    (e.g. `/api/v1/...`) and lock the boundary so each module is reached only through its service layer. This is
+    microservice-extraction prep: with versioned routes + a clean service seam, swapping an in-process service
+    call for an HTTP client at one seam is the only change needed to split a module (§0.5 recipe). No
+    business-logic change.
+
+**Estimated effort: ~1 week.** **Risk: Low** — these are import-level + routing changes; FKs and business logic
+are untouched.
 
 ---
 
@@ -1219,13 +1315,15 @@ Lets anyone with access report that **a tag has a problem** — and pinpoint tha
 **Entities:**
 - `DefectReport`
   - `defect_number` (auto: DEF-2026-0001)
-  - `tag_id` → references a `tag_management` tag (via that module's service, not a model import — Section 2 rules)
-  - `asset_id` (optional) → the specific failed equipment under the tag (the "pump that is used in that tag is failed")
+  - `tag_id` FK → `tag_management` tag (shared DB) — resolve via that module's service, never a model import (§0.5)
+  - `asset_id` (optional) FK → `asset_management.assets` (shared DB) → the specific failed equipment under the tag
+    (the "pump that is used in that tag is failed") — resolve via the asset_management service, no model import
   - `severity`: Low / Medium / High / Critical
   - `status`: Open / Acknowledged / In Progress / Resolved / Closed / Rejected
   - `description`, `description_embedding` (Vector 1024 — semantic search, Section 2.1)
   - `reported_by`, `reported_at`
-  - `work_order_id` (optional — set when a WO is raised to fix it)
+  - `work_order_id` (optional) FK → `work_order` (shared DB) — set when a WO is raised to fix it; resolve via the
+    work_order service, no model import
   - `photos` (FileAsset attachments)
 - `DefectComment` (follow-up notes / status changes, audit-logged)
 
@@ -1897,8 +1995,8 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt 19 | Notification Engine | Cross-module event → notification routing (bell + email via Celery) |
 | Prompt 20 | AI Manager Agent | **Now the mature state of the Assistant Core (Section 12)** — cross-module orchestration over the per-phase tool registry, manager dashboard synthesis, report formatting. Not a from-scratch build. |
 | Prompt 21 | Manager Dashboard API | Unified KPI aggregation endpoint consumed by the frontend dashboard (built on 4.7 chart-data + 4.6 export) |
-| Prompt 22 | Module Refactor | Fix cross-module violations in existing code (buying_management remnants, tag_management, Models/__init__.py) |
-| Prompt 23 | Route Versioning | Add version prefix to routes, microservice extraction prep, service boundary lock |
+| Prompt 22 | Module Refactor | **Merged into the single Phase 4.7 spec** — clean the code seams: remove cross-module model/route/schema imports (tag_management, model_management, property_management; delete buying_management remnants; strip Models/__init__.py to discovery). Reads → service functions, writes → events. FKs stay (§0.5). |
+| Prompt 23 | Route Versioning / service-boundary lock | **Merged into the single Phase 4.7 spec** — add a route version prefix and lock each module to its service-layer seam (microservice-extraction prep). No business-logic change (§0.5 extraction recipe). |
 
 > **HSE permit & access-grant workflow (Phase 4.2).** The HSE module (see §8 Prompt 12) adds the
 > `WorkAccessRequest` + dual-approval (`WorkAccessApproval`: HSE team **and** Manager team) flow that follows a
@@ -2009,8 +2107,10 @@ NEW MODULE: backend/purchase_management/
 MODELS (all new — no legacy):
 1. PurchaseOrder (table: purchase_orders)
    - id, reference_number (auto: PO-2026-0001), title, description
-   - supplier_id (INT nullable — FK to suppliers.id populated when Phase 1 Supplier module exists)
-   - supplier_name (VARCHAR — fallback for Phase 0 before Supplier module)
+   - supplier_id (nullable; plain INTEGER in Phase 0 because the Supplier module does not exist yet — becomes a
+     real FK → supplier_management.suppliers.id in the shared DB once Phase 1 ships, resolved via the
+     supplier_management service, no model import; §0.5)
+   - supplier_name (VARCHAR — free-text fallback for Phase 0 before the Supplier module exists)
    - currency_id FK → currencies.id, base_currency_id FK → currencies.id
    - exchange_rate_used (Numeric 28,10)
    - status: draft | ordered | shipped | received | closed | cancelled
@@ -2029,7 +2129,8 @@ MODELS (all new — no legacy):
 
 3. PurchasePhaseItem (table: purchase_phase_items)
    - id, phase_id FK → purchase_phases.id
-   - item_name (VARCHAR — free text in Phase 0; FK to Item catalog added in Phase 1)
+   - item_name (VARCHAR — free text in Phase 0; in Phase 1 add item_id FK → material_management.items in the
+     shared DB, resolved via the material_management service — do not import its model; §0.5)
    - item_code (VARCHAR nullable — SKU / part number)
    - quantity (Numeric), unit (VARCHAR: "pcs", "kg", "m", "L", etc.)
    - unit_price (Numeric), currency_id FK → currencies.id
@@ -2047,7 +2148,8 @@ MODELS (all new — no legacy):
 
 5. PurchaseOrderReceiptLink (table: purchase_order_receipt_links)
    - id, purchase_order_id FK → purchase_orders.id
-   - financial_receipt_id (INT — stored as plain ID, NOT an ORM FK to financial_management model)
+   - financial_receipt_id FK → financial_management.financial_receipts.id (shared DB) — resolve the receipt via
+     the financial_management service, never import its model; §0.5. (Real FK for integrity; clean code seam.)
    - linked_at, linked_by_user_id
 
 ROUTES (prefix: /purchase/):
@@ -2316,14 +2418,16 @@ REQUIREMENTS:
    - item_type: Material / Spare Part / Consumable / Tool / Chemical / PPE
    - is_active, is_critical (critical spare flag)
    - lead_time_days (typical procurement lead time)
-   - model_id (SOFT reference → model_management.managed_models, plain INTEGER, NULLABLE — NO cross-schema
-     FK, NO relationship(); see §0.5): set for equipment and model-specific spares, NULL for generic materials
-     such as glue, grease, bolts. `Item` is the universal stock entity; `ManagedModel` is the equipment-model
-     catalog it optionally references (Glossary §0), NOT a parallel stock store.
-   - model_manufacturer, model_name (DENORMALIZED snapshot copied from model_management for display/search;
-     read-only, refreshed via a model-changed event — §0.5 rule 3/4). Validate model_id via the
-     model_management service on write.
-4. ItemAlternative: item_id, alt_code, alt_name, supplier_id (vendor's code for this item)
+   - model_id FK → model_management.managed_models.id (shared DB), NULLABLE — resolve via the model_management
+     service, do not import its model (§0.5): set for equipment and model-specific spares, NULL for generic
+     materials such as glue, grease, bolts. `Item` is the universal stock entity; `ManagedModel` is the
+     equipment-model catalog it optionally references (Glossary §0), NOT a parallel stock store.
+   - manufacturer / model_name for display/search come from the model — reach them by asking the
+     model_management service for the model row (JOIN allowed in the shared DB). Do NOT add pre-emptive
+     denormalized snapshot columns; denormalization happens only at extraction time (§0.5 recipe).
+4. ItemAlternative: item_id (FK → items, same module), alt_code, alt_name, supplier_id FK →
+   supplier_management.suppliers.id (shared DB — resolve via the supplier_management service, no model import;
+   §0.5; vendor's code for this item)
 5. Search: keyword ILIKE on item_code, name, description, specs + semantic pgvector on description_embedding (Section 2.1 pattern)
 6. Attach documents to items (datasheets, safety data sheets) via file_asset
 7. Tag items (critical spare, fast-moving, slow-moving, hazardous, etc.) via tag_management
@@ -2373,15 +2477,17 @@ REQUIREMENTS:
 2. Zone model: warehouse_id, code, name, description
 3. StorageLocation model (shelf/bin): zone_id, code, name, capacity_unit, capacity_value, is_active
 4. StockItem model (current state — one row per item per location):
-   - item_id (SOFT reference → material_management.Item, plain INTEGER — NO cross-schema FK, §0.5),
-     storage_location_id (FK → warehouse.storage_locations — same schema, real FK allowed)
-   - item_code, item_name (DENORMALIZED snapshot from material_management for display/search; read-only,
-     refreshed via item-changed event). Stock anchors to `item_id`, NEVER directly to a model; equipment
-     make/model is reached by asking material_management for the item (Glossary §0).
+   - item_id FK → material_management.items.id (shared DB) — resolve via the material_management service, do not
+     import its model (§0.5); storage_location_id FK → warehouse.storage_locations (same module)
+   - item_code / item_name for display/search come from the item — reach them by asking the material_management
+     service (JOIN allowed in the shared DB). Stock anchors to `item_id`, NEVER directly to a model; equipment
+     make/model is reached by asking material_management for the item, which carries the optional model
+     (Glossary §0). Do NOT add pre-emptive denormalized snapshot columns; denormalize only at extraction time.
      MIGRATION: existing `property_management.WarehouseItem.model_id` (NOT NULL → managed_models) is migrated —
-     create an `Item` per warehouse row carrying its model into `Item.model_id`, repoint stock to the
-     soft `item_id`, then drop the old cross-module FK and the `relationship("ManagedModel")`. The `color`-based
-     uniqueness key is dropped in favour of item + storage location (+ lot/batch where needed).
+     create an `Item` per warehouse row carrying its model into `Item.model_id`, repoint stock to `item_id`
+     (real FK → items), and drop the old direct stock→model link and the `relationship("ManagedModel")` so stock
+     reaches the model only through the item. The `color`-based uniqueness key is dropped in favour of item +
+     storage location (+ lot/batch where needed).
    - quantity_on_hand (Decimal — derived from movements but stored for performance)
    - quantity_reserved (reserved for work orders not yet consumed)
    - quantity_available (computed: on_hand - reserved)
@@ -2391,7 +2497,8 @@ REQUIREMENTS:
 5. StockMovement model (append-only — never update or delete):
    - movement_number (auto: MOV-2026-00001)
    - movement_type: RECEIPT / ISSUE / TRANSFER_OUT / TRANSFER_IN / ADJUSTMENT / RETURN / COUNT_ADJUSTMENT
-   - item_id, from_location_id (nullable), to_location_id (nullable)
+   - item_id FK → material_management.items.id (shared DB; resolve via material_management service — no model
+     import), from_location_id (nullable), to_location_id (nullable) — both FK → warehouse.storage_locations
    - quantity (always positive)
    - unit_cost, currency_id, unit_cost_base, exchange_rate_used (multi-currency)
    - reference_type: GRN / WORK_ORDER / MANUAL / STOCK_COUNT
@@ -2399,10 +2506,13 @@ REQUIREMENTS:
    - performed_by (user), movement_date, notes
 6. StockCount model (physical inventory sessions):
    - count_number (auto), warehouse_id, status: Open/In Progress/Posted, performed_by
-7. StockCountLine: count_id, item_id, location_id, system_quantity, counted_quantity, variance
+7. StockCountLine: count_id (FK → stock_counts), item_id FK → material_management.items.id (shared DB — resolve
+   via the material_management service, no model import; §0.5), location_id FK → warehouse.storage_locations.id,
+   system_quantity, counted_quantity, variance
    - On post: auto-create COUNT_ADJUSTMENT StockMovements for variances
 8. Business logic:
-   - When GRN is finalized in procurement: auto-create RECEIPT StockMovements (service call)
+   - When GRN is posted in procurement: procurement emits a Celery event; this warehouse module handles it and
+     creates the RECEIPT StockMovements (cross-module write = event, §0.5 — not a synchronous call from procurement)
    - Prevent ISSUE if quantity_available < requested (raise HTTP 422 with clear message)
    - After each movement: update StockItem.quantity_on_hand
    - Celery daily task: check all items where quantity_on_hand <= reorder_point → create notification
@@ -2412,7 +2522,8 @@ REQUIREMENTS:
 Please provide:
 A) All models with complete fields, types, constraints, indexes
 B) All API endpoints including: stock by location, movements history, low-stock list
-C) How GRN triggers StockMovement (service function called from procurement module)
+C) How a GRN-posted Celery event (emitted by procurement) is handled here to create the StockMovement RECEIPT
+   (cross-module write = event, §0.5 — the warehouse handler reads accepted items via the procurement service)
 D) Weighted average cost recalculation logic on each RECEIPT
 E) Celery low-stock alert task
 F) Alembic migration notes
@@ -2458,7 +2569,9 @@ REQUIREMENTS:
    - needed_by_date, reason, priority: Normal/Urgent/Critical
    - status: Draft / Submitted / Under Review / Approved / Rejected / Ordered / Closed
    - notes
-2. MRItem: mr_id, item_id, quantity, unit_id, estimated_unit_cost (optional), currency_id, notes
+2. MRItem: mr_id (FK → material_requisitions), item_id FK → material_management.items.id (shared DB — resolve
+   via the material_management service, no model import; §0.5), quantity, unit_id, estimated_unit_cost
+   (optional), currency_id, notes
 3. MR Approval workflow (state machine):
    - Draft → Submitted (by requester)
    - Submitted → Approved or Rejected (by dept_head or procurement_officer)
@@ -2468,8 +2581,12 @@ REQUIREMENTS:
    - mr_id (optional — RFQ can exist without MR for blanket quotes)
    - title, description, deadline_date, status: Draft / Sent / Closed / Cancelled
 5. RFQSupplier: rfq_id × supplier_id (sent to multiple suppliers), sent_at, response_status
-6. RFQItem: rfq_id, item_id, quantity, unit_id, specifications (text)
-7. QuotationResponse: rfq_id, supplier_id, received_at, valid_until, payment_terms, delivery_days, notes
+   (supplier_id FK → supplier_management.suppliers.id, shared DB — resolve via the supplier_management service,
+   no model import; §0.5)
+6. RFQItem: rfq_id, item_id FK → material_management.items.id (shared DB — resolve via the material_management
+   service, no model import; §0.5), quantity, unit_id, specifications (text)
+7. QuotationResponse: rfq_id, supplier_id FK → supplier_management.suppliers.id (shared DB — resolve via the
+   supplier_management service, no model import; §0.5), received_at, valid_until, payment_terms, delivery_days, notes
 8. QuotationResponseItem: response_id, rfq_item_id, unit_price, currency_id, lead_time_days, notes
    (also store: unit_price_base, exchange_rate_used)
 9. RFQ comparison: endpoint that returns all supplier responses side-by-side for one RFQ
@@ -2516,28 +2633,38 @@ WORKFLOW:
 REQUIREMENTS:
 1. PurchaseOrder (PO):
    - po_number (auto: PO-2026-0001)
-   - mr_id (optional), rfq_id (optional), supplier_id
+   - mr_id (optional, FK → requisition_management.material_requisitions), rfq_id (optional, FK → rfqs)
+   - supplier_id FK → supplier_management.suppliers.id (shared DB) — resolve via the supplier_management
+     service, no model import (§0.5)
    - order_date, expected_delivery_date
    - payment_terms (text), incoterms (EXW/FOB/CIF/DDP/etc.)
-   - currency_id, exchange_rate_used, amount_base (computed sum)
+   - currency_id FK → currencies.id, exchange_rate_used, amount_base (computed sum)
    - status: Draft / Submitted / Approved / Sent to Supplier / Partially Received / Fully Received / Cancelled / Closed
    - shipping_address, notes
-2. POItem: po_id, item_id, quantity, unit_id, unit_price, currency_id, unit_price_base, exchange_rate_used,
-   discount_pct, tax_pct, line_total, line_total_base, received_quantity (updated as GRNs come in)
+2. POItem: po_id (FK → purchase_orders), item_id FK → material_management.items.id (shared DB — resolve via the
+   material_management service, no model import; §0.5), quantity, unit_id, unit_price, currency_id,
+   unit_price_base, exchange_rate_used, discount_pct, tax_pct, line_total, line_total_base,
+   received_quantity (updated as GRNs come in)
 3. PO Approval workflow:
    - Draft → Submitted → Approved (by finance_manager) → [if total_base > threshold] GM approval → Sent
    - Approval threshold configurable per company (e.g., if PO base value > X → needs GM sign-off)
 4. GoodsReceiptNote (GRN):
    - grn_number (auto: GRN-2026-0001)
-   - po_id, received_by (user), receipt_date
+   - po_id FK → purchase_orders.id (same module). NOTE: in Phase 0 the equivalent link is GRN/receipt →
+     PurchasePhase (FK → purchase_phases.id, shared DB, resolve via purchase service); §0.5
+   - received_by (user), receipt_date
    - delivery_note_number (supplier's delivery doc number)
    - status: Draft / Posted (posted = finalised, creates movements)
-   - warehouse_id (where goods are being received)
+   - warehouse_id FK → warehouse.warehouses.id (shared DB — resolve via the warehouse service, no model import)
    - notes
-5. GRNItem: grn_id, po_item_id, item_id, received_quantity, accepted_quantity, rejected_quantity,
-   rejection_reason, storage_location_id (where to put accepted items)
-6. On GRN POST (status → Posted): call warehouse service to create StockMovement RECEIPT for each accepted GRNItem
-   - This is a service function call within the same process (not HTTP): warehouse_service.create_receipt_movement(grn_item)
+5. GRNItem: grn_id (FK → goods_receipt_notes), po_item_id (FK → po_items), item_id FK → material_management.items.id
+   (shared DB — resolve via the material_management service, no model import; §0.5), received_quantity,
+   accepted_quantity, rejected_quantity, rejection_reason, storage_location_id FK → warehouse.storage_locations.id
+   (shared DB — resolve via the warehouse service)
+6. On GRN POST (status → Posted): emit a Celery event that the warehouse module handles by creating a
+   StockMovement RECEIPT for each accepted GRNItem (cross-module write = event, §0.5 — not a synchronous reach
+   into the warehouse module). Event payload carries the GRN id; the warehouse handler reads the accepted items
+   via the procurement service and writes its own movements.
 7. Partial delivery: one PO can have multiple GRNs. POItem.received_quantity updates on each GRN post.
    PO status auto-updates: Partially Received vs Fully Received.
 8. Print PO as PDF: endpoint returns PDF-ready structured data (frontend renders or server generates)
@@ -2547,7 +2674,8 @@ Please provide:
 A) All models
 B) All endpoints (PO CRUD + state transitions + GRN CRUD + post action)
 C) PO approval threshold logic
-D) Exact signature of the warehouse_service.create_receipt_movement() function
+D) The GRN-posted Celery event contract (event name + payload) and the warehouse-side handler that creates the
+   RECEIPT movements — cross-module write goes through the event, not a synchronous warehouse call (§0.5)
 E) How POItem.received_quantity and PO status stay in sync across multiple GRNs
 F) Alembic migration notes
 G) Frontend specification: PO form, PO approval screen, GRN entry screen, receiving dashboard
@@ -2590,16 +2718,21 @@ REQUIREMENTS:
    - asset_type: Rotating / Static / Electrical / Instrument / Civil / Piping
    - criticality: A (critical) / B (important) / C (general)
    - status: Active / Standby / Under Maintenance / Decommissioned
-   - model_id (SOFT reference → model_management.managed_models, plain INTEGER, nullable — NO cross-schema FK,
-     §0.5) — the equipment-model type (manufacturer + model live there, Glossary §0); prefer this over re-typing
-     make/model as free text. manufacturer/model_number kept as DENORMALIZED snapshot (read-only, refreshed via
-     model-changed event), or as fallback when no ManagedModel record exists yet.
+   - model_id FK → model_management.managed_models.id (shared DB), nullable — resolve via the model_management
+     service, do not import its model (§0.5) — the equipment-model type (manufacturer + model live there,
+     Glossary §0); prefer this over re-typing make/model as free text. manufacturer/model_number are reached by
+     asking the model_management service for the model (JOIN allowed in the shared DB), with a free-text fallback
+     only when no ManagedModel record exists yet. Do NOT add pre-emptive denormalized snapshot columns;
+     denormalize only at extraction time (§0.5 recipe).
    - serial_number (identifies the individual physical unit; stays on the asset)
    - installation_date, warranty_expiry
    - parent_asset_id (for sub-components, tree structure)
    - belongs to AssetSystem
 4. AssetSpecification (JSON key-value pairs per asset type, e.g., pump: flow_rate, head, power)
-5. AssetSpare (links Asset to Items in Material Master — spare parts for this asset)
+5. AssetSpare (links Asset to Items in Material Master — spare parts for this asset):
+   - asset_id FK → asset_management.assets.id (same module)
+   - item_id FK → material_management.items.id (shared DB) — resolve via the material_management service, do not
+     import its model (§0.5)
 6. AssetDocument (manuals, P&IDs, drawings — uses existing file_asset)
 7. AssetHistory (lifecycle events: installed, modified, repaired, replaced — append-only log)
 8. Search: keyword ILIKE on tag_number, name, description, manufacturer + semantic pgvector on description_embedding (Section 2.1 pattern)
@@ -2653,7 +2786,8 @@ REQUIREMENTS:
    - wo_number (auto-generated: WO-2026-0001)
    - type: CM/PM/Inspection/Modification
    - priority: Critical/High/Medium/Low
-   - asset_id (links to Asset Management)
+   - asset_id FK → asset_management.assets.id (shared DB) — resolve via the asset_management service, do not
+     import its model (§0.5)
    - title, description
    - requested_by (user), assigned_to (user or team)
    - scheduled_start, scheduled_end, actual_start, actual_end
@@ -2661,10 +2795,15 @@ REQUIREMENTS:
    - source: Manual / PM Schedule (if auto-generated)
    - parent_pm_schedule_id (if from PM)
 2. WorkOrderTask (checklist steps on the work order)
-3. WorkOrderLabor (who worked: employee/user, date, hours, craft_type)
+3. WorkOrderLabor (who worked, date, hours, craft_type):
+   - employee_id — **Employee is Phase 3**, so for now this is a NULLABLE plain field / free-text fallback
+     (same pattern as `supplier_name` in Phase 0); upgrade it to a real FK → hr.employees in Phase 3 once the
+     Employee module exists. (May still record the acting `user_id` as a real FK → platform.users.)
 4. WorkOrderMaterial (items consumed from warehouse):
-   - item_id, planned_qty, actual_qty
-   - On actual_qty save: creates StockMovement OUT in warehouse
+   - item_id FK → material_management.items.id (shared DB) — resolve via the material_management service, no
+     model import (§0.5); planned_qty, actual_qty
+   - On actual_qty save: emit a Celery event that creates the StockMovement OUT in warehouse (cross-module
+     write = event, §0.5)
 5. WorkOrderFailure (for CM only):
    - failure_code (ISO 14224 taxonomy: mechanical, electrical, instrument, etc.)
    - failure_cause, corrective_action, root_cause
@@ -2711,13 +2850,15 @@ REQUIREMENTS:
 1. MaintenancePlan model:
    - plan_number (auto: MP-2026-001)
    - name, description
-   - asset_id (or asset_system_id for grouped)
+   - asset_id FK → asset_management.assets.id (or asset_system_id FK → asset_management.asset_systems.id for
+     grouped) — shared DB, resolve via the asset_management service, no model import (§0.5)
    - is_active
 2. MaintenanceTask (task within a plan):
    - task_name, description
    - craft_type (Mechanical / Electrical / Instrument)
    - estimated_hours
-   - required_items (list of items needed from warehouse)
+   - required_items (list of item_id FK → material_management.items.id, shared DB — resolve via the
+     material_management service, no model import; §0.5)
 3. TaskTrigger (when to do it):
    - trigger_type: CALENDAR (every N days) or METER (every N hours/km/cycles)
    - frequency_value, frequency_unit
@@ -2725,7 +2866,8 @@ REQUIREMENTS:
    - next_due_date (calculated)
 4. PMSchedule (generated future instances):
    - plan_id, task_id, due_date, status: Pending/Generated/Overdue
-   - When status=Pending and due_date approaches: auto-generate WorkOrder
+   - When status=Pending and due_date approaches: emit a Celery event that the work_order module handles to
+     create the WorkOrder (cross-module write = event, §0.5 — not a direct call into work_order)
 5. InspectionChecklist (checklist template):
    - belongs to MaintenanceTask
    - checklist_items: step number, description, response_type: OK/NOT_OK / Numeric / Text
@@ -3077,12 +3219,15 @@ NOTE: "tag" = a tag_management tag (the central user-facing object), optionally 
 REQUIREMENTS:
 1. DefectReport model:
    - defect_number (auto: DEF-2026-0001)
-   - tag_id (reference a tag_management tag via that module's SERVICE — no model import)
-   - asset_id (optional — the failed equipment under the tag)
+   - tag_id FK → tag_management tag (shared DB) — resolve via that module's SERVICE, no model import (§0.5)
+   - asset_id (optional) FK → asset_management.assets (shared DB) — the failed equipment under the tag; resolve
+     via the asset_management service, no model import
    - severity: Low/Medium/High/Critical
    - status: Open/Acknowledged/In Progress/Resolved/Closed/Rejected
    - description, description_embedding (Vector 1024)
-   - reported_by, reported_at, work_order_id (optional), photos (FileAsset)
+   - reported_by, reported_at
+   - work_order_id (optional) FK → work_order (shared DB) — resolve via the work_order service, no model import
+   - photos (FileAsset)
 2. DefectComment (notes + status changes, audit-logged)
 3. Criticality of a tag is admin-defined tag metadata (Section 12.10 JSONB) — read it via the
    tag_management service to compute "critical tags with an open fault".
