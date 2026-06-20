@@ -27,7 +27,11 @@ def create_item(
     current_user: User = Depends(require_permission("purchase_management:phases:manage")),
 ):
     return add_phase_item(
-        db, current_user, po_id, phase_id,
+        db=db,
+        user=current_user,
+        po_id=po_id,
+        phase_id=phase_id,
+        item_id=payload.item_id,
         item_name=payload.item_name,
         item_code=payload.item_code,
         quantity=payload.quantity,
@@ -54,6 +58,10 @@ def patch_item(
     current_user: User = Depends(require_permission("purchase_management:phases:manage")),
 ):
     return update_phase_item(
-        db, current_user, po_id, phase_id, item_id,
-        **payload.model_dump(exclude_none=True),
+        db,
+        current_user,
+        po_id,
+        phase_id,
+        item_id,
+        **payload.model_dump(exclude_unset=True),
     )

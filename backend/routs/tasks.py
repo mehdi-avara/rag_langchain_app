@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from typing import Any, Optional
 
 from db.init_db import get_db
-from deps import require_permission
+from deps import get_current_user
 from Models import User
 from Models.task_result import TaskResult
 
@@ -47,7 +47,7 @@ class TaskStatusResponse(BaseModel):
 def get_task_status(
     task_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("stt:use")),
+    current_user: User = Depends(get_current_user),
 ):
     """Poll an async task.  Returns 404 if the task_id is unknown or belongs
     to a different user (prevents enumeration)."""

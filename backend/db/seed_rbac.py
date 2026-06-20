@@ -6,6 +6,7 @@ from Models.user import User
 from Models.rbac import Role, Permission
 from purchase_management.permissions import PERMISSIONS as PURCHASE_MANAGEMENT_PERMISSIONS
 from shared.currency.permissions import PERMISSIONS as CURRENCY_PERMISSIONS
+from material_management.permissions import PERMISSIONS as MATERIAL_MANAGEMENT_PERMISSIONS
 from supplier_management.permissions import PERMISSIONS as SUPPLIER_MANAGEMENT_PERMISSIONS
 
 
@@ -194,6 +195,7 @@ def seed() -> None:
         permissions_data.extend(PURCHASE_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(CURRENCY_PERMISSIONS)
         permissions_data.extend(SUPPLIER_MANAGEMENT_PERMISSIONS)
+        permissions_data.extend(MATERIAL_MANAGEMENT_PERMISSIONS)
 
         permissions = [
             get_or_create_permission(db, name, resource, action, description)

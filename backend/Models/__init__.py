@@ -54,6 +54,14 @@ from supplier_management.models import (
     SupplierEvaluation,
 )
 
+from material_management.models import (
+    ItemCategory,
+    Unit,
+    Item,
+    ItemAlternative,
+    ItemDocument,
+)
+
 from purchase_management.models import (
     PurchaseOrder,
     PurchasePhase,
@@ -122,6 +130,11 @@ __all__ = [
     "SupplierCategory",
     "SupplierDocument",
     "SupplierEvaluation",
+    "ItemCategory",
+    "Unit",
+    "Item",
+    "ItemAlternative",
+    "ItemDocument",
     "PurchaseOrder",
     "PurchasePhase",
     "PurchasePhaseItem",

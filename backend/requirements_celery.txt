@@ -1,5 +1,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
-torch
+numpy==2.4.2
+torch==2.10.0
+torchvision==0.25.0
 mineru==2.6.4
 dill==0.4.0
 doclayout_yolo==0.0.4
@@ -9,3 +11,4 @@ pyclipper==1.4.0
 shapely==2.1.2
 transformers==4.57.3
 ultralytics==8.3.234
+opencv-python==4.13.0.92

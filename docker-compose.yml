@@ -36,9 +36,9 @@ services:
 
   celery:
     image: rag_langchain_app-celery
-    # build:
-    #   context: ./backend
-    #   target: celery
+    build:
+      context: ./backend
+      target: celery
     # deploy:
     #   resources:
     #     reservations:

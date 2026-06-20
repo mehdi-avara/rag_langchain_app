@@ -298,15 +298,49 @@ def _get_phase_or_404(db: Session, user: User, po_id: int, phase_id: int) -> Pur
     return phase
 
 
+def _resolve_item_for_purchase(
+    db: Session,
+    user: User,
+    item_id: Optional[int],
+    item_name: Optional[str],
+    item_code: Optional[str],
+    unit: Optional[str],
+) -> tuple[Optional[int], str, Optional[str], str]:
+    if item_id is None:
+        normalized_name = (item_name or "").strip()
+        if not normalized_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="item_id or item_name is required",
+            )
+        return None, normalized_name, item_code, (unit or "pcs").strip() or "pcs"
+
+    from material_management.services import get_item_reference
+
+    reference = get_item_reference(
+        db=db,
+        current_user=user,
+        item_id=item_id,
+    )
+
+    return (
+        reference["id"],
+        reference["name"],
+        reference["item_code"],
+        reference["unit_code"],
+    )
+
+
 def add_phase_item(
     db: Session,
     user: User,
     po_id: int,
     phase_id: int,
-    item_name: str,
+    item_id: Optional[int],
+    item_name: Optional[str],
     item_code: Optional[str],
     quantity: Decimal,
-    unit: str,
+    unit: Optional[str],
     unit_price: Decimal,
     currency_id: int,
     unit_price_base: Decimal,
@@ -315,14 +349,28 @@ def add_phase_item(
     notes: Optional[str],
 ) -> PurchasePhaseItem:
     phase = _get_phase_or_404(db, user, po_id, phase_id)
+
+    resolved_item_id, resolved_item_name, resolved_item_code, resolved_unit = (
+        _resolve_item_for_purchase(
+            db=db,
+            user=user,
+            item_id=item_id,
+            item_name=item_name,
+            item_code=item_code,
+            unit=unit,
+        )
+    )
+
     line_total = quantity * unit_price
     line_total_base = quantity * unit_price_base
+
     item = PurchasePhaseItem(
         phase_id=phase.id,
-        item_name=item_name,
-        item_code=item_code,
+        item_id=resolved_item_id,
+        item_name=resolved_item_name,
+        item_code=resolved_item_code,
         quantity=quantity,
-        unit=unit,
+        unit=resolved_unit,
         unit_price=unit_price,
         currency_id=currency_id,
         unit_price_base=unit_price_base,
@@ -353,12 +401,36 @@ def update_phase_item(
     ).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
+
+    missing = object()
+    supplied_item_id = kwargs.pop("item_id", missing)
+
+    if supplied_item_id is not missing:
+        if supplied_item_id is None:
+            item.item_id = None
+        else:
+            resolved_item_id, resolved_item_name, resolved_item_code, resolved_unit = (
+                _resolve_item_for_purchase(
+                    db=db,
+                    user=user,
+                    item_id=supplied_item_id,
+                    item_name=None,
+                    item_code=None,
+                    unit=None,
+                )
+            )
+            item.item_id = resolved_item_id
+            item.item_name = resolved_item_name
+            item.item_code = resolved_item_code
+            item.unit = resolved_unit
+
     for key, value in kwargs.items():
         if value is not None:
             setattr(item, key, value)
-    # Recalculate line totals if qty/price changed
+
     item.line_total = item.quantity * item.unit_price
     item.line_total_base = item.quantity * item.unit_price_base
+
     db.commit()
     db.refresh(item)
     return item

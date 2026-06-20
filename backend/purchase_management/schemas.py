@@ -5,16 +5,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-
-# ── PurchasePhaseItem ─────────────────────────────────────────────────────────
 
 class PurchasePhaseItemCreate(BaseModel):
-    item_name: str = Field(..., max_length=255)
+    item_id: Optional[int] = Field(None, gt=0)
+    item_name: Optional[str] = Field(None, max_length=255)
     item_code: Optional[str] = Field(None, max_length=100)
     quantity: Decimal = Field(..., gt=0)
-    unit: str = Field("pcs", max_length=30)
+    unit: Optional[str] = Field(None, max_length=30)
     unit_price: Decimal = Field(Decimal("0"), ge=0)
     currency_id: int
     unit_price_base: Decimal = Field(Decimal("0"), ge=0)
@@ -22,23 +21,31 @@ class PurchasePhaseItemCreate(BaseModel):
     exchange_rate_used: Decimal = Field(Decimal("1"), gt=0)
     notes: Optional[str] = None
 
+    @model_validator(mode="after")
+    def require_item_reference(self):
+        if self.item_id is None and not (self.item_name or "").strip():
+            raise ValueError("item_id or item_name is required")
+        return self
+
 
 class PurchasePhaseItemUpdate(BaseModel):
+    item_id: Optional[int] = Field(None, gt=0)
     item_name: Optional[str] = Field(None, max_length=255)
-    item_code: Optional[str] = None
+    item_code: Optional[str] = Field(None, max_length=100)
     quantity: Optional[Decimal] = Field(None, gt=0)
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
+    unit: Optional[str] = Field(None, max_length=30)
+    unit_price: Optional[Decimal] = Field(None, ge=0)
     currency_id: Optional[int] = None
-    unit_price_base: Optional[Decimal] = None
+    unit_price_base: Optional[Decimal] = Field(None, ge=0)
     base_currency_id: Optional[int] = None
-    exchange_rate_used: Optional[Decimal] = None
+    exchange_rate_used: Optional[Decimal] = Field(None, gt=0)
     notes: Optional[str] = None
 
 
 class PurchasePhaseItemRead(BaseModel):
     id: int
     phase_id: int
+    item_id: Optional[int]
     item_name: str
     item_code: Optional[str]
     quantity: Decimal
@@ -57,8 +64,6 @@ class PurchasePhaseItemRead(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── PurchasePhase ─────────────────────────────────────────────────────────────
 
 class PurchasePhaseCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
@@ -96,8 +101,6 @@ class PurchasePhaseRead(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── PurchaseOrder ─────────────────────────────────────────────────────────────
 
 class PurchaseOrderCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
@@ -148,8 +151,6 @@ class PurchaseOrderRead(BaseModel):
         from_attributes = True
 
 
-# ── PurchaseOrderCost ─────────────────────────────────────────────────────────
-
 class PurchaseOrderCostCreate(BaseModel):
     cost_type: str = Field(..., description="freight | customs | tax | insurance | other")
     description: Optional[str] = None
@@ -179,8 +180,6 @@ class PurchaseOrderCostRead(BaseModel):
         from_attributes = True
 
 
-# ── Receipt link ──────────────────────────────────────────────────────────────
-
 class ReceiptLinkCreate(BaseModel):
     financial_receipt_id: int
 
@@ -195,8 +194,6 @@ class ReceiptLinkRead(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── Summary ───────────────────────────────────────────────────────────────────
 
 class PurchaseOrderSummary(BaseModel):
     purchase_order_id: int

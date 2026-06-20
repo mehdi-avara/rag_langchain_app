@@ -171,10 +171,12 @@ class PurchasePhaseItem(Base):
     __tablename__ = "purchase_phase_items"
     __table_args__ = (
         Index("ix_purchase_phase_items_phase_id", "phase_id"),
+        Index("ix_purchase_phase_items_item_id", "item_id"),
     )
 
     id = Column(Integer, primary_key=True)
     phase_id = Column(Integer, ForeignKey("purchase_phases.id", ondelete="CASCADE"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
 
     # Phase 0: free text; Phase 1: FK to material_management items
     item_name = Column(String(255), nullable=False)
