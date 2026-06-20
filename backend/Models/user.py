@@ -16,7 +16,7 @@ class User(Base):
     Last_name = Column(String, nullable=True)
     pw_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")
-    is_active = Column(Boolean, nullable=False, default=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     deactivated_at = Column(DateTime, nullable=True)
     password_changed_at = Column(DateTime, nullable=True)

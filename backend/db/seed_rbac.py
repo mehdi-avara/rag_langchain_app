@@ -4,6 +4,8 @@ from passlib.hash import bcrypt
 from db.session import SessionLocal
 from Models.user import User
 from Models.rbac import Role, Permission
+from purchase_management.permissions import PERMISSIONS as PURCHASE_MANAGEMENT_PERMISSIONS
+from shared.currency.permissions import PERMISSIONS as CURRENCY_PERMISSIONS
 
 
 def get_or_create_permission(
@@ -186,16 +188,10 @@ def seed() -> None:
             ("property_management:update", "property_management", "update", "Update warehouse and property data"),
             ("property_management:delete", "property_management", "delete", "Delete warehouse and property data"),
             ("property_management:summary", "property_management", "summary", "Read net worth summary"),
-            ("purchase_management:orders:read", "purchase_management.orders", "read", "Read purchase orders"),
-            ("purchase_management:orders:create", "purchase_management.orders", "create", "Create purchase orders"),
-            ("purchase_management:orders:update", "purchase_management.orders", "update", "Update purchase orders"),
-            ("purchase_management:orders:delete", "purchase_management.orders", "delete", "Delete purchase orders"),
-            ("purchase_management:orders:approve", "purchase_management.orders", "approve", "Approve purchase orders"),
-            ("purchase_management:orders:search", "purchase_management.orders", "search", "Search purchase orders"),
-            ("purchase_management:phases:manage", "purchase_management.phases", "manage", "Manage purchase order phases and items"),
-            ("purchase_management:costs:manage", "purchase_management.costs", "manage", "Manage purchase order costs"),
-            ("purchase_management:summary", "purchase_management", "summary", "Read purchase summaries"),
         ]
+
+        permissions_data.extend(PURCHASE_MANAGEMENT_PERMISSIONS)
+        permissions_data.extend(CURRENCY_PERMISSIONS)
 
         permissions = [
             get_or_create_permission(db, name, resource, action, description)

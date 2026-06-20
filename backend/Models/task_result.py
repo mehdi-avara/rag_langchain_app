@@ -18,34 +18,28 @@ class TaskResult(Base):
     __tablename__ = "task_results"
 
     # ── Identity ──────────────────────────────────────────────────────────────
-    id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        comment="Public polling token — returned in the 202 response body",
-    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
     # Celery's own task id (set right after dispatch, may be NULL for a moment)
     celery_task_id = Column(String(255), nullable=True, index=True)
 
     # ── Classification ────────────────────────────────────────────────────────
-    task_type = Column(
-        String(60),
-        nullable=False,
-        comment="e.g. stt_transcription, pdf_processing",
-    )
+    task_type = Column(String(60), nullable=False, index=True)
 
     # ── State machine ─────────────────────────────────────────────────────────
     # pending → in_progress → success | failure
     status = Column(String(20), nullable=False, default="pending", index=True)
 
     # ── Payload ───────────────────────────────────────────────────────────────
-    result_json = Column(JSONB, nullable=True, comment="Task output on success")
-    error_message = Column(Text, nullable=True, comment="Error detail on failure")
+    result_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
 
     # ── Ownership ─────────────────────────────────────────────────────────────
     created_by_user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     created_by = relationship("User", foreign_keys=[created_by_user_id])
 
