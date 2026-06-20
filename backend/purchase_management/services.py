@@ -80,10 +80,31 @@ def list_purchase_orders(
     return q.order_by(PurchaseOrder.created_at.desc()).offset((page - 1) * size).limit(size).all()
 
 
+def _resolve_supplier_for_purchase(
+    db: Session,
+    user: User,
+    supplier_id: Optional[int],
+    supplier_name: Optional[str],
+) -> tuple[Optional[int], Optional[str]]:
+    if supplier_id is None:
+        return None, supplier_name
+
+    from supplier_management.services import get_supplier_or_404
+
+    supplier = get_supplier_or_404(
+        db=db,
+        supplier_id=supplier_id,
+        current_user=user,
+    )
+
+    return supplier.id, supplier.name
+
+
 def create_purchase_order(
     db: Session,
     user: User,
     title: Optional[str],
+    supplier_id: Optional[int],
     supplier_name: Optional[str],
     currency_id: int,
     base_currency_id: int,
@@ -91,11 +112,19 @@ def create_purchase_order(
     description: Optional[str],
 ) -> PurchaseOrder:
     reference_number = _next_reference_number(db, _tenant_id(user))
+    resolved_supplier_id, resolved_supplier_name = _resolve_supplier_for_purchase(
+        db=db,
+        user=user,
+        supplier_id=supplier_id,
+        supplier_name=supplier_name,
+    )
+
     po = PurchaseOrder(
         company_id=_tenant_id(user),
         reference_number=reference_number,
         title=title,
-        supplier_name=supplier_name,
+        supplier_id=resolved_supplier_id,
+        supplier_name=resolved_supplier_name,
         currency_id=currency_id,
         base_currency_id=base_currency_id,
         exchange_rate_used=exchange_rate_used,
@@ -112,15 +141,41 @@ def create_purchase_order(
 
 def update_purchase_order(db: Session, user: User, po_id: int, **kwargs) -> PurchaseOrder:
     po = get_po_or_404(db, po_id, user)
+
     if po.status == PurchaseOrderStatus.CANCELLED.value:
         raise HTTPException(status_code=422, detail="Cannot edit a cancelled purchase order")
+
+    missing = object()
+    supplied_supplier_id = kwargs.pop("supplier_id", missing)
+    supplied_supplier_name = kwargs.pop("supplier_name", missing)
+
+    if supplied_supplier_id is not missing:
+        if supplied_supplier_id is None:
+            po.supplier_id = None
+            po.supplier_name = (
+                supplied_supplier_name
+                if supplied_supplier_name is not missing
+                else None
+            )
+        else:
+            resolved_supplier_id, resolved_supplier_name = _resolve_supplier_for_purchase(
+                db=db,
+                user=user,
+                supplier_id=supplied_supplier_id,
+                supplier_name=None,
+            )
+            po.supplier_id = resolved_supplier_id
+            po.supplier_name = resolved_supplier_name
+    elif supplied_supplier_name is not missing:
+        po.supplier_name = supplied_supplier_name
+
     for key, value in kwargs.items():
         if value is not None:
             setattr(po, key, value)
+
     db.commit()
     db.refresh(po)
     return po
-
 
 def cancel_purchase_order(db: Session, user: User, po_id: int) -> PurchaseOrder:
     po = get_po_or_404(db, po_id, user)

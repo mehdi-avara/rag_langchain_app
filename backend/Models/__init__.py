@@ -46,6 +46,14 @@ from property_management.models import (
 # The buying_management/ folder remains on disk but is no longer imported.
 # Tables were dropped in migration a2_phase_0_2_purchase.
 
+from supplier_management.models import (
+    Supplier,
+    SupplierContact,
+    SupplierCategory,
+    SupplierDocument,
+    SupplierEvaluation,
+)
+
 from purchase_management.models import (
     PurchaseOrder,
     PurchasePhase,
@@ -109,6 +117,11 @@ __all__ = [
     "FinancialDirection",
     "WarehouseItem",
     "OwnedProperty",
+    "Supplier",
+    "SupplierContact",
+    "SupplierCategory",
+    "SupplierDocument",
+    "SupplierEvaluation",
     "PurchaseOrder",
     "PurchasePhase",
     "PurchasePhaseItem",

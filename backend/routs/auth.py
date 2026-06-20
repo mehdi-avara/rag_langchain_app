@@ -145,7 +145,15 @@ async def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         role="admin",
     )
 
-    admin_role = db.query(Role).filter(Role.name == "admin", Role.is_active.is_(True)).first()
+    admin_role = (
+        db.query(Role)
+        .filter(
+            Role.name == "admin",
+            Role.company_id.is_(None),
+            Role.is_active.is_(True),
+        )
+        .first()
+    )
     if admin_role:
         user.roles.append(admin_role)
 

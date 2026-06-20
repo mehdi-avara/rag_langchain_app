@@ -101,6 +101,7 @@ class PurchasePhaseRead(BaseModel):
 
 class PurchaseOrderCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
+    supplier_id: Optional[int] = Field(None, gt=0)
     supplier_name: Optional[str] = Field(None, max_length=255)
     currency_id: int
     base_currency_id: int
@@ -110,6 +111,7 @@ class PurchaseOrderCreate(BaseModel):
 
 class PurchaseOrderUpdate(BaseModel):
     title: Optional[str] = None
+    supplier_id: Optional[int] = Field(None, gt=0)
     supplier_name: Optional[str] = None
     currency_id: Optional[int] = None
     base_currency_id: Optional[int] = None

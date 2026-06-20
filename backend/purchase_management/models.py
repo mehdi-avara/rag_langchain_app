@@ -83,7 +83,7 @@ class PurchaseOrder(Base):
     title = Column(String(255), nullable=True)
 
     # Phase 0: free-text supplier; Phase 1: FK to suppliers.id
-    supplier_id = Column(Integer, nullable=True, index=True)  # NOT a FK import — populated in Phase 1
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
     supplier_name = Column(String(255), nullable=True, index=True)
 
     # Multi-currency (Phase 0.3 must run first)

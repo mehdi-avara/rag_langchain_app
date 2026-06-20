@@ -54,6 +54,7 @@ def create_order(
     return create_purchase_order(
         db, current_user,
         title=payload.title,
+        supplier_id=payload.supplier_id,
         supplier_name=payload.supplier_name,
         currency_id=payload.currency_id,
         base_currency_id=payload.base_currency_id,
@@ -78,7 +79,7 @@ def patch_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("purchase_management:orders:update")),
 ):
-    return update_purchase_order(db, current_user, po_id, **payload.model_dump(exclude_none=True))
+    return update_purchase_order(db, current_user, po_id, **payload.model_dump(exclude_unset=True))
 
 
 @router.delete("/purchase/orders/{po_id}", status_code=204)
