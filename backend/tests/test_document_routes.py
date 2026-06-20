@@ -97,6 +97,7 @@ def make_doc(doc_id=10, owner_id=3, filename="document.pdf"):
         n_chunks=3,
         status="done",
         abstract=None,
+        current_version_id=1,
         file_path=str(doc_id),
         created_at=datetime(2026, 5, 16, 10, 0, 0),
     )

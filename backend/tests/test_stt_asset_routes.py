@@ -136,36 +136,57 @@ def test_create_audio_transcribe_upload_url_rejects_bad_extension():
     assert exc.value.status_code == 415
 
 
-@pytest.mark.asyncio
-async def test_complete_audio_transcribe_upload_downloads_asset_and_calls_stt(monkeypatch):
-    db = object()
+def test_complete_audio_transcribe_upload_creates_task_and_dispatches_celery(monkeypatch):
+    class FakeDB:
+        def __init__(self):
+            self.added = []
+            self.flushed = False
+            self.committed = False
+
+        def add(self, obj):
+            self.added.append(obj)
+
+        def flush(self):
+            self.flushed = True
+
+        def commit(self):
+            self.committed = True
+
+    db = FakeDB()
     current_user = make_user()
     manager = FakeStorageManager(db)
     calls = {}
 
-    async def fake_send_audio_to_stt(filename, content_type, content):
-        calls["stt"] = (filename, content_type, content)
-        return {"text": "hello"}
+    from core.celery.celery_app import celery_app
+
+    def fake_send_task(name, args):
+        calls["task"] = (name, args)
+        return SimpleNamespace(id="celery-task-smoke")
 
     monkeypatch.setattr(stt_routes, "StorageManager", lambda db_arg: manager)
-    monkeypatch.setattr(stt_routes, "_send_audio_to_stt", fake_send_audio_to_stt)
+    monkeypatch.setattr(celery_app, "send_task", fake_send_task)
 
-    payload = AssetCompleteUploadIn(checksum="final-checksum")
-
-    result = await stt_routes.complete_audio_transcribe_upload(
+    result = stt_routes.complete_audio_transcribe_upload(
         asset_id=10,
-        payload=payload,
+        payload=AssetCompleteUploadIn(checksum="final-checksum"),
+        language=None,
         db=db,
         current_user=current_user,
     )
 
-    assert result == {"text": "hello"}
+    assert result.task_id
     assert manager.completed_payloads[0]["asset_id"] == 10
     assert manager.completed_payloads[0]["user"] is current_user
     assert manager.completed_payloads[0]["checksum"] == "final-checksum"
-    assert manager.download_payloads[0]["asset_id"] == 10
-    assert manager.download_payloads[0]["user"] is current_user
-    assert calls["stt"] == ("voice.mp3", "audio/mpeg", b"audio-bytes")
+    assert manager.download_payloads == []
+    assert calls["task"] == ("stt.transcribe_audio", [10, 3, None])
+    assert db.flushed is True
+    assert db.committed is True
+    assert len(db.added) == 1
+    assert db.added[0].task_type == "stt_transcription"
+    assert db.added[0].status == "pending"
+    assert db.added[0].created_by_user_id == 3
+    assert db.added[0].celery_task_id == "celery-task-smoke"
 
 
 @pytest.mark.asyncio

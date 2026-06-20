@@ -325,11 +325,18 @@ def test_document_complete_upload_creates_document_and_local_pdf(tmp_path, monke
 
     class FakeMineruTask:
         @staticmethod
-        def delay(doc_id, pdf_path=None, asset_id=None, owner_id=None):
+        def delay(
+            doc_id,
+            pdf_path=None,
+            asset_id=None,
+            owner_id=None,
+            document_version_id=None,
+        ):
             queued["doc_id"] = doc_id
             queued["pdf_path"] = pdf_path
             queued["asset_id"] = asset_id
             queued["owner_id"] = owner_id
+            queued["document_version_id"] = document_version_id
 
     fake_tasks.mineru_process_pdf = FakeMineruTask()
     monkeypatch.setitem(sys.modules, "core.celery.tasks", fake_tasks)
@@ -361,6 +368,7 @@ def test_document_complete_upload_creates_document_and_local_pdf(tmp_path, monke
         "pdf_path": None,
         "asset_id": 77,
         "owner_id": 3,
+        "document_version_id": 101,
     }
 
 

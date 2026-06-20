@@ -159,6 +159,13 @@ def test_seed_rbac_includes_property_and_customer_permissions(monkeypatch):
     captured_permissions = []
 
     class FakeDB:
+        def query(self, _model):
+            return SimpleNamespace(
+                filter=lambda *_args, **_kwargs: SimpleNamespace(
+                    first=lambda: None
+                )
+            )
+
         def commit(self):
             return None
 
@@ -197,6 +204,7 @@ def test_seed_rbac_includes_property_and_customer_permissions(monkeypatch):
 
     seed_rbac.seed()
 
-    assert "financial_management:customers" in captured_permissions
+    assert "financial_management:customers:read" in captured_permissions
     assert "property_management:read" in captured_permissions
     assert "property_management:summary" in captured_permissions
+    assert "supplier_management:read" in captured_permissions
