@@ -10,6 +10,7 @@ from material_management.permissions import PERMISSIONS as MATERIAL_MANAGEMENT_P
 from requisition_management.permissions import PERMISSIONS as REQUISITION_MANAGEMENT_PERMISSIONS
 from rfq_management.permissions import PERMISSIONS as RFQ_MANAGEMENT_PERMISSIONS
 from goods_receipt_management.permissions import PERMISSIONS as GOODS_RECEIPT_MANAGEMENT_PERMISSIONS
+from warehouse_management.permissions import PERMISSIONS as WAREHOUSE_MANAGEMENT_PERMISSIONS
 from supplier_management.permissions import PERMISSIONS as SUPPLIER_MANAGEMENT_PERMISSIONS
 
 
@@ -202,6 +203,7 @@ def seed() -> None:
         permissions_data.extend(REQUISITION_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(RFQ_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(GOODS_RECEIPT_MANAGEMENT_PERMISSIONS)
+        permissions_data.extend(WAREHOUSE_MANAGEMENT_PERMISSIONS)
 
         permissions = [
             get_or_create_permission(db, name, resource, action, description)

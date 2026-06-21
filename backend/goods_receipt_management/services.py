@@ -727,6 +727,50 @@ def dispatch_warehouse_grn_event(goods_receipt_id: int) -> None:
         )
 
 
+
+def validate_warehouse_references_for_post(
+    db: Session,
+    current_user: User,
+    goods_receipt: GoodsReceiptNote,
+) -> None:
+    from warehouse_management.services import (
+        get_storage_location_reference,
+        get_warehouse_reference,
+    )
+
+    if goods_receipt.warehouse_id is not None:
+        get_warehouse_reference(
+            db=db,
+            current_user=current_user,
+            warehouse_id=goods_receipt.warehouse_id,
+        )
+
+    for goods_receipt_item in goods_receipt.items:
+        if goods_receipt_item.storage_location_id is None:
+            continue
+
+        location = get_storage_location_reference(
+            db=db,
+            current_user=current_user,
+            storage_location_id=goods_receipt_item.storage_location_id,
+        )
+
+        if (
+            goods_receipt.warehouse_id is not None
+            and location["warehouse_id"] != goods_receipt.warehouse_id
+        ):
+            from core.exceptions.error_codes import (
+                STORAGE_LOCATION_WAREHOUSE_MISMATCH,
+            )
+
+            raise_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                STORAGE_LOCATION_WAREHOUSE_MISMATCH,
+                "Storage location does not belong to the goods receipt warehouse",
+            )
+
+
+
 def post_goods_receipt(
     db: Session,
     current_user: User,
@@ -745,6 +789,12 @@ def post_goods_receipt(
             GOODS_RECEIPT_HAS_NO_ITEMS,
             "A goods receipt note must contain at least one item before posting",
         )
+
+    validate_warehouse_references_for_post(
+        db=db,
+        current_user=current_user,
+        goods_receipt=goods_receipt,
+    )
 
     for goods_receipt_item in goods_receipt.items:
         validate_quantities(
@@ -793,6 +843,25 @@ def post_goods_receipt(
         current_user=current_user,
         goods_receipt_id=goods_receipt.id,
     )
+
+
+def list_posted_goods_receipt_ids_for_warehouse(
+    db: Session,
+    company_id: Optional[int] = None,
+) -> list[int]:
+    query = db.query(GoodsReceiptNote.id).filter(
+        GoodsReceiptNote.status == GoodsReceiptStatus.POSTED.value
+    )
+
+    if company_id is not None:
+        query = query.filter(GoodsReceiptNote.company_id == company_id)
+
+    return [
+        goods_receipt_id
+        for (goods_receipt_id,) in query.order_by(
+            GoodsReceiptNote.id.asc()
+        ).all()
+    ]
 
 
 def get_posted_goods_receipt_for_warehouse(

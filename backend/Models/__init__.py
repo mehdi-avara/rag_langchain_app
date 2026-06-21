@@ -37,10 +37,7 @@ from financial_management.models import (
     FinancialDirection,
 )
 
-from property_management.models import (
-    OwnedProperty,
-    WarehouseItem,
-)
+from property_management.models import OwnedProperty
 
 # buying_management removed in Phase 0.2 — replaced by purchase_management
 # The buying_management/ folder remains on disk but is no longer imported.
@@ -79,6 +76,16 @@ from rfq_management.models import (
 from goods_receipt_management.models import (
     GoodsReceiptNote,
     GoodsReceiptItem,
+)
+
+from warehouse_management.models import (
+    Warehouse,
+    Zone,
+    StorageLocation,
+    StockItem,
+    StockMovement,
+    StockCount,
+    StockCountLine,
 )
 
 from purchase_management.models import (
@@ -142,7 +149,6 @@ __all__ = [
     "FinancialReceiptFile",
     "FinancialReceiptCommentLink",
     "FinancialDirection",
-    "WarehouseItem",
     "OwnedProperty",
     "Supplier",
     "SupplierContact",
@@ -164,6 +170,13 @@ __all__ = [
     "QuotationResponseItem",
     "GoodsReceiptNote",
     "GoodsReceiptItem",
+    "Warehouse",
+    "Zone",
+    "StorageLocation",
+    "StockItem",
+    "StockMovement",
+    "StockCount",
+    "StockCountLine",
     "PurchaseOrder",
     "PurchasePhase",
     "PurchasePhaseItem",

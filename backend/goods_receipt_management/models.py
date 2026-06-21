@@ -67,7 +67,11 @@ class GoodsReceiptNote(Base):
     )
     receipt_date = Column(Date, nullable=False)
     delivery_note_number = Column(String(100), nullable=True)
-    warehouse_id = Column(Integer, nullable=True)
+    warehouse_id = Column(
+        Integer,
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     status = Column(
         String(20),
         nullable=False,
@@ -130,7 +134,11 @@ class GoodsReceiptItem(Base):
     accepted_quantity = Column(Numeric(18, 4), nullable=False)
     rejected_quantity = Column(Numeric(18, 4), nullable=False)
     rejection_reason = Column(Text, nullable=True)
-    storage_location_id = Column(Integer, nullable=True)
+    storage_location_id = Column(
+        Integer,
+        ForeignKey("storage_locations.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     unit_cost = Column(Numeric(28, 10), nullable=False)
     currency_id = Column(
         Integer,

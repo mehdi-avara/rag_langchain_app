@@ -35,7 +35,6 @@ class User(Base):
     financial_cards = relationship("FinancialCard", back_populates="owner", cascade="all, delete-orphan")
     financial_customers = relationship("FinancialCustomer", back_populates="owner", cascade="all, delete-orphan")
     financial_receipts = relationship("FinancialReceipt", back_populates="owner", cascade="all, delete-orphan")
-    warehouse_items = relationship("WarehouseItem", back_populates="owner", cascade="all, delete-orphan")
     owned_properties = relationship("OwnedProperty", back_populates="owner", cascade="all, delete-orphan")
 
     financial_receipt_files = relationship(
