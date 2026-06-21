@@ -68,6 +68,14 @@ from requisition_management.models import (
     MaterialRequisitionStatusHistory,
 )
 
+from rfq_management.models import (
+    RequestForQuotation,
+    RFQSupplier,
+    RFQItem,
+    QuotationResponse,
+    QuotationResponseItem,
+)
+
 from purchase_management.models import (
     PurchaseOrder,
     PurchasePhase,
@@ -144,6 +152,11 @@ __all__ = [
     "MaterialRequisition",
     "MaterialRequisitionItem",
     "MaterialRequisitionStatusHistory",
+    "RequestForQuotation",
+    "RFQSupplier",
+    "RFQItem",
+    "QuotationResponse",
+    "QuotationResponseItem",
     "PurchaseOrder",
     "PurchasePhase",
     "PurchasePhaseItem",

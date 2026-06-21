@@ -26,6 +26,7 @@ from purchase_management.routes import purchase_router
 from supplier_management.routes import supplier_router
 from material_management.routes import material_router
 from requisition_management.routes import requisition_router
+from rfq_management.routes import rfq_router
 from shared.currency.routes import router as currency_router
 from routs.tasks import router as tasks_router
 from db.session import SessionLocal
@@ -97,6 +98,7 @@ app.include_router(purchase_router, tags=["purchase_management"])
 app.include_router(supplier_router, tags=["supplier_management"])
 app.include_router(material_router, tags=["material_management"])
 app.include_router(requisition_router, tags=["requisition_management"])
+app.include_router(rfq_router, tags=["rfq_management"])
 app.include_router(currency_router, prefix="/currencies", tags=["currencies"])
 app.include_router(tasks_router, tags=["tasks"])
 app.include_router(di_router)
