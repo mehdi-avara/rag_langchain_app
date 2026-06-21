@@ -62,6 +62,12 @@ from material_management.models import (
     ItemDocument,
 )
 
+from requisition_management.models import (
+    MaterialRequisition,
+    MaterialRequisitionItem,
+    MaterialRequisitionStatusHistory,
+)
+
 from purchase_management.models import (
     PurchaseOrder,
     PurchasePhase,
@@ -135,6 +141,9 @@ __all__ = [
     "Item",
     "ItemAlternative",
     "ItemDocument",
+    "MaterialRequisition",
+    "MaterialRequisitionItem",
+    "MaterialRequisitionStatusHistory",
     "PurchaseOrder",
     "PurchasePhase",
     "PurchasePhaseItem",
