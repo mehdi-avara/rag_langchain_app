@@ -33,6 +33,7 @@ class PurchaseOrderStatus(str, enum.Enum):
     DRAFT = "draft"
     ORDERED = "ordered"
     SHIPPED = "shipped"
+    PARTIALLY_RECEIVED = "partially_received"
     RECEIVED = "received"
     CLOSED = "closed"
     CANCELLED = "cancelled"
@@ -183,6 +184,7 @@ class PurchasePhaseItem(Base):
     item_code = Column(String(100), nullable=True, index=True)
 
     quantity = Column(Numeric(18, 4), nullable=False)
+    received_quantity = Column(Numeric(18, 4), nullable=False, default=0)
     unit = Column(String(30), nullable=False, default="pcs")
 
     # Multi-currency money fields (4-field pattern)

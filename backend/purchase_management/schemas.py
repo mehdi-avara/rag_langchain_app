@@ -49,6 +49,7 @@ class PurchasePhaseItemRead(BaseModel):
     item_name: str
     item_code: Optional[str]
     quantity: Decimal
+    received_quantity: Decimal
     unit: str
     unit_price: Decimal
     currency_id: int

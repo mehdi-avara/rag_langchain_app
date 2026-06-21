@@ -76,6 +76,11 @@ from rfq_management.models import (
     QuotationResponseItem,
 )
 
+from goods_receipt_management.models import (
+    GoodsReceiptNote,
+    GoodsReceiptItem,
+)
+
 from purchase_management.models import (
     PurchaseOrder,
     PurchasePhase,
@@ -157,6 +162,8 @@ __all__ = [
     "RFQItem",
     "QuotationResponse",
     "QuotationResponseItem",
+    "GoodsReceiptNote",
+    "GoodsReceiptItem",
     "PurchaseOrder",
     "PurchasePhase",
     "PurchasePhaseItem",

@@ -1,16 +1,18 @@
-"""Business logic for purchase_management.
-
-Cross-module rule: when a phase moves to 'received', dispatch a Celery task
-to notify the warehouse. No direct import from warehouse_management.
-"""
+"""Business logic for purchase_management."""
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import HTTPException, status
+from core.exceptions.error_codes import (
+    PURCHASE_ORDER_NOT_RECEIVABLE,
+    PURCHASE_PHASE_ITEM_NOT_FOUND,
+    PURCHASE_PHASE_ITEM_OVER_RECEIPT,
+    PURCHASE_PHASE_NOT_RECEIVABLE,
+)
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -248,41 +250,17 @@ def update_phase(db: Session, user: User, po_id: int, phase_id: int, **kwargs) -
         PurchasePhase.id == phase_id,
         PurchasePhase.purchase_order_id == po.id,
     ).first()
+
     if not phase:
         raise HTTPException(status_code=404, detail="Phase not found")
 
-    new_status = kwargs.get("status")
     for key, value in kwargs.items():
         if value is not None:
             setattr(phase, key, value)
+
     db.commit()
-
-    # Cross-module event: when a phase is received, notify warehouse via Celery
-    if new_status == PurchasePhaseStatus.RECEIVED.value:
-        _dispatch_warehouse_receipt_event(phase_id=phase.id)
-
     db.refresh(phase)
     return phase
-
-
-def _dispatch_warehouse_receipt_event(phase_id: int) -> None:
-    """Dispatch Celery task to notify the warehouse of a received phase.
-
-    The warehouse module's Celery task reads phase items and creates StockMovement records.
-    No direct import from warehouse_management — only the task name is referenced.
-    """
-    try:
-        from core.celery.celery_app import celery_app
-        celery_app.send_task(
-            "warehouse_management.tasks.on_purchase_phase_received",
-            args=[phase_id],
-        )
-    except Exception:
-        # Task queue unavailable — log and continue. Warehouse can reconcile manually.
-        import logging
-        logging.getLogger(__name__).warning(
-            "Could not dispatch warehouse receipt event for phase %s", phase_id
-        )
 
 
 # ── PurchasePhaseItem CRUD ────────────────────────────────────────────────────
@@ -434,6 +412,250 @@ def update_phase_item(
     db.commit()
     db.refresh(item)
     return item
+
+
+def purchase_error(status_code: int, code: str, message: str):
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message},
+    )
+
+
+def get_phase_reference_for_goods_receipt(
+    db: Session,
+    current_user: User,
+    purchase_phase_id: int,
+) -> dict:
+    row = (
+        db.query(PurchaseOrder, PurchasePhase)
+        .join(
+            PurchasePhase,
+            PurchasePhase.purchase_order_id == PurchaseOrder.id,
+        )
+        .filter(
+            PurchasePhase.id == purchase_phase_id,
+            PurchaseOrder.company_id == _tenant_id(current_user),
+        )
+        .first()
+    )
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Purchase phase not found",
+        )
+
+    purchase_order, purchase_phase = row
+
+    return {
+        "purchase_order_id": purchase_order.id,
+        "purchase_phase_id": purchase_phase.id,
+    }
+
+
+def get_phase_item_reference_for_goods_receipt(
+    db: Session,
+    current_user: User,
+    purchase_order_id: int,
+    purchase_phase_id: int,
+    purchase_phase_item_id: int,
+) -> dict:
+    phase = _get_phase_or_404(
+        db=db,
+        user=current_user,
+        po_id=purchase_order_id,
+        phase_id=purchase_phase_id,
+    )
+
+    phase_item = (
+        db.query(PurchasePhaseItem)
+        .filter(
+            PurchasePhaseItem.id == purchase_phase_item_id,
+            PurchasePhaseItem.phase_id == phase.id,
+        )
+        .first()
+    )
+
+    if phase_item is None:
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_ITEM_NOT_FOUND,
+            "Purchase phase item not found",
+        )
+
+    return {
+        "id": phase_item.id,
+        "item_id": phase_item.item_id,
+        "item_code": phase_item.item_code,
+        "item_name": phase_item.item_name,
+        "unit_code": phase_item.unit,
+        "quantity": phase_item.quantity,
+        "received_quantity": phase_item.received_quantity,
+        "unit_price": phase_item.unit_price,
+        "currency_id": phase_item.currency_id,
+        "unit_price_base": phase_item.unit_price_base,
+        "base_currency_id": phase_item.base_currency_id,
+        "exchange_rate_used": phase_item.exchange_rate_used,
+    }
+
+
+def apply_goods_receipt(
+    db: Session,
+    current_user: User,
+    purchase_order_id: int,
+    purchase_phase_id: int,
+    receipt_date: date,
+    receipt_items: list[dict],
+) -> None:
+    purchase_order = (
+        db.query(PurchaseOrder)
+        .filter(
+            PurchaseOrder.id == purchase_order_id,
+            PurchaseOrder.company_id == _tenant_id(current_user),
+        )
+        .with_for_update()
+        .first()
+    )
+
+    if purchase_order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Purchase order not found",
+        )
+
+    if purchase_order.status in {
+        PurchaseOrderStatus.DRAFT.value,
+        PurchaseOrderStatus.CANCELLED.value,
+        PurchaseOrderStatus.CLOSED.value,
+    }:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_NOT_RECEIVABLE,
+            "Purchase order cannot receive goods in its current status",
+        )
+
+    phase = (
+        db.query(PurchasePhase)
+        .filter(
+            PurchasePhase.id == purchase_phase_id,
+            PurchasePhase.purchase_order_id == purchase_order.id,
+        )
+        .with_for_update()
+        .first()
+    )
+
+    if phase is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Purchase phase not found",
+        )
+
+    if phase.status in {
+        PurchasePhaseStatus.DRAFT.value,
+        PurchasePhaseStatus.CLOSED.value,
+    }:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_PHASE_NOT_RECEIVABLE,
+            "Purchase phase cannot receive goods in its current status",
+        )
+
+    phase_item_ids = [
+        receipt_item["purchase_phase_item_id"]
+        for receipt_item in receipt_items
+    ]
+
+    phase_items = (
+        db.query(PurchasePhaseItem)
+        .filter(
+            PurchasePhaseItem.phase_id == phase.id,
+            PurchasePhaseItem.id.in_(phase_item_ids),
+        )
+        .with_for_update()
+        .all()
+    )
+
+    phase_items_by_id = {
+        phase_item.id: phase_item
+        for phase_item in phase_items
+    }
+
+    if len(phase_items_by_id) != len(set(phase_item_ids)):
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_ITEM_NOT_FOUND,
+            "One or more purchase phase items were not found",
+        )
+
+    for receipt_item in receipt_items:
+        phase_item = phase_items_by_id[
+            receipt_item["purchase_phase_item_id"]
+        ]
+        accepted_quantity = Decimal(str(receipt_item["accepted_quantity"]))
+        new_received_quantity = (
+            Decimal(str(phase_item.received_quantity))
+            + accepted_quantity
+        )
+
+        if new_received_quantity > Decimal(str(phase_item.quantity)):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_PHASE_ITEM_OVER_RECEIPT,
+                "Accepted quantity exceeds the remaining purchase phase quantity",
+            )
+
+    for receipt_item in receipt_items:
+        phase_item = phase_items_by_id[
+            receipt_item["purchase_phase_item_id"]
+        ]
+        phase_item.received_quantity = (
+            Decimal(str(phase_item.received_quantity))
+            + Decimal(str(receipt_item["accepted_quantity"]))
+        )
+
+    all_phase_items = (
+        db.query(PurchasePhaseItem)
+        .filter(PurchasePhaseItem.phase_id == phase.id)
+        .all()
+    )
+
+    if all_phase_items and all(
+        Decimal(str(item.received_quantity))
+        >= Decimal(str(item.quantity))
+        for item in all_phase_items
+    ):
+        phase.status = PurchasePhaseStatus.RECEIVED.value
+        phase.actual_delivery_date = datetime.combine(
+            receipt_date,
+            datetime.min.time(),
+        )
+    elif any(
+        Decimal(str(item.received_quantity)) > 0
+        for item in all_phase_items
+    ) and phase.status == PurchasePhaseStatus.ORDERED.value:
+        phase.status = PurchasePhaseStatus.SHIPPED.value
+
+    all_purchase_items = (
+        db.query(PurchasePhaseItem)
+        .join(
+            PurchasePhase,
+            PurchasePhaseItem.phase_id == PurchasePhase.id,
+        )
+        .filter(PurchasePhase.purchase_order_id == purchase_order.id)
+        .all()
+    )
+
+    if all_purchase_items and all(
+        Decimal(str(item.received_quantity))
+        >= Decimal(str(item.quantity))
+        for item in all_purchase_items
+    ):
+        purchase_order.status = PurchaseOrderStatus.RECEIVED.value
+    elif any(
+        Decimal(str(item.received_quantity)) > 0
+        for item in all_purchase_items
+    ):
+        purchase_order.status = PurchaseOrderStatus.PARTIALLY_RECEIVED.value
 
 
 # ── PurchaseOrderCost ─────────────────────────────────────────────────────────
