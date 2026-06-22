@@ -23,6 +23,7 @@ from ..services import (
     add_receipt_link,
     cancel_purchase_order,
     create_purchase_order,
+    create_purchase_order_from_rfq,
     get_po_or_404,
     get_summary,
     list_purchase_orders,
@@ -60,6 +61,28 @@ def create_order(
         base_currency_id=payload.base_currency_id,
         exchange_rate_used=payload.exchange_rate_used,
         description=payload.description,
+    )
+
+
+@router.post(
+    "/purchase/orders/from-rfq/{rfq_id}",
+    response_model=PurchaseOrderRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_order_from_rfq(
+    rfq_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission("purchase_management:orders:create")
+    ),
+    _rfq_reader: User = Depends(
+        require_permission("rfq_management:read")
+    ),
+):
+    return create_purchase_order_from_rfq(
+        db=db,
+        user=current_user,
+        rfq_id=rfq_id,
     )
 
 

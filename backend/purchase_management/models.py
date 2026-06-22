@@ -72,6 +72,7 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
     __table_args__ = (
         UniqueConstraint("company_id", "reference_number", name="uq_po_company_reference"),
+        UniqueConstraint("company_id", "rfq_id", name="uq_purchase_orders_company_rfq"),
         Index("ix_purchase_orders_company_id", "company_id"),
         Index("ix_purchase_orders_status", "status"),
         Index("ix_purchase_orders_approval_status", "approval_status"),
@@ -82,6 +83,18 @@ class PurchaseOrder(Base):
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
     reference_number = Column(String(50), nullable=False, index=True)
     title = Column(String(255), nullable=True)
+    rfq_id = Column(
+        Integer,
+        ForeignKey("rfqs.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    winning_quotation_response_id = Column(
+        Integer,
+        ForeignKey("quotation_responses.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
 
     # Phase 0: free-text supplier; Phase 1: FK to suppliers.id
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)

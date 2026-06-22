@@ -134,6 +134,8 @@ class PurchaseOrderRead(BaseModel):
     company_id: int
     reference_number: str
     title: Optional[str]
+    rfq_id: Optional[int]
+    winning_quotation_response_id: Optional[int]
     supplier_id: Optional[int]
     supplier_name: Optional[str]
     currency_id: int

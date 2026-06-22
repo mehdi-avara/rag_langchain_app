@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import HTTPException, status
 from core.exceptions.error_codes import (
     PURCHASE_ORDER_NOT_RECEIVABLE,
+    PURCHASE_ORDER_RFQ_ALREADY_LINKED,
+    PURCHASE_ORDER_RFQ_INVALID_WINNER,
     PURCHASE_PHASE_ITEM_NOT_FOUND,
     PURCHASE_PHASE_ITEM_OVER_RECEIPT,
     PURCHASE_PHASE_NOT_RECEIVABLE,
 )
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from Models import User
@@ -51,6 +54,53 @@ def _next_reference_number(db: Session, company_id: int) -> str:
 
 def _tenant_id(user: User) -> int:
     return user.company_id
+
+
+def _get_purchase_order_for_rfq(
+    db: Session,
+    user: User,
+    rfq_id: int,
+) -> Optional[PurchaseOrder]:
+    return (
+        db.query(PurchaseOrder)
+        .filter(
+            PurchaseOrder.company_id == _tenant_id(user),
+            PurchaseOrder.rfq_id == rfq_id,
+        )
+        .first()
+    )
+
+
+def _get_winning_quotation_reference_for_purchase(
+    db: Session,
+    user: User,
+    rfq_id: int,
+) -> dict:
+    from rfq_management.services import get_winning_quotation_reference_for_purchase
+
+    return get_winning_quotation_reference_for_purchase(
+        db=db,
+        current_user=user,
+        rfq_id=rfq_id,
+    )
+
+
+def _mark_requisition_ordered_from_purchase_order(
+    db: Session,
+    user: User,
+    requisition_id: int,
+    purchase_order_reference: str,
+) -> None:
+    from requisition_management.services import (
+        mark_requisition_ordered_from_purchase_order,
+    )
+
+    mark_requisition_ordered_from_purchase_order(
+        db=db,
+        current_user=user,
+        requisition_id=requisition_id,
+        purchase_order_reference=purchase_order_reference,
+    )
 
 
 # ── PurchaseOrder CRUD ────────────────────────────────────────────────────────
@@ -141,6 +191,171 @@ def create_purchase_order(
     return po
 
 
+def create_purchase_order_from_rfq(
+    db: Session,
+    user: User,
+    rfq_id: int,
+) -> PurchaseOrder:
+    existing = _get_purchase_order_for_rfq(
+        db=db,
+        user=user,
+        rfq_id=rfq_id,
+    )
+
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": PURCHASE_ORDER_RFQ_ALREADY_LINKED,
+                "message": "A purchase order already exists for this RFQ",
+            },
+        )
+
+    source = _get_winning_quotation_reference_for_purchase(
+        db=db,
+        user=user,
+        rfq_id=rfq_id,
+    )
+
+    for _ in range(5):
+        try:
+            reference_number = _next_reference_number(
+                db=db,
+                company_id=_tenant_id(user),
+            )
+
+            description_parts = [
+                f"Created from RFQ {source['rfq_number']}.",
+                (source.get("description") or "").strip(),
+            ]
+            description = " ".join(
+                part for part in description_parts if part
+            )
+
+            purchase_order = PurchaseOrder(
+                company_id=_tenant_id(user),
+                reference_number=reference_number,
+                title=source["title"],
+                rfq_id=source["rfq_id"],
+                winning_quotation_response_id=source[
+                    "winning_quotation_response_id"
+                ],
+                supplier_id=source["supplier_id"],
+                supplier_name=source["supplier_name"],
+                currency_id=source["currency_id"],
+                base_currency_id=source["base_currency_id"],
+                exchange_rate_used=source["exchange_rate_used"],
+                description=description,
+                created_by_user_id=user.id,
+                status=PurchaseOrderStatus.DRAFT.value,
+                approval_status=PurchaseApprovalStatus.DRAFT.value,
+            )
+            db.add(purchase_order)
+            db.flush()
+
+            delivery_days = source.get("delivery_days")
+            expected_delivery_date = (
+                datetime.utcnow() + timedelta(days=delivery_days)
+                if delivery_days is not None
+                else None
+            )
+
+            purchase_phase = PurchasePhase(
+                purchase_order_id=purchase_order.id,
+                phase_number=1,
+                title=f"RFQ {source['rfq_number']} delivery",
+                description="Generated from the selected quotation response",
+                status=PurchasePhaseStatus.DRAFT.value,
+                currency_id=source["currency_id"],
+                exchange_rate_used=source["exchange_rate_used"],
+                expected_delivery_date=expected_delivery_date,
+            )
+            db.add(purchase_phase)
+            db.flush()
+
+            for source_item in source["items"]:
+                if source_item["item_id"] is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": PURCHASE_ORDER_RFQ_INVALID_WINNER,
+                            "message": "Winning quotation contains an item without a material reference",
+                        },
+                    )
+
+                quantity = Decimal(str(source_item["quantity"]))
+                unit_price = Decimal(str(source_item["unit_price"]))
+                unit_price_base = Decimal(
+                    str(source_item["unit_price_base"])
+                )
+
+                db.add(
+                    PurchasePhaseItem(
+                        phase_id=purchase_phase.id,
+                        item_id=source_item["item_id"],
+                        item_name=source_item["item_name"],
+                        item_code=source_item["item_code"],
+                        quantity=quantity,
+                        unit=source_item["unit_code"],
+                        unit_price=unit_price,
+                        currency_id=source_item["currency_id"],
+                        unit_price_base=unit_price_base,
+                        base_currency_id=source_item["base_currency_id"],
+                        exchange_rate_used=source_item[
+                            "exchange_rate_used"
+                        ],
+                        line_total=quantity * unit_price,
+                        line_total_base=quantity * unit_price_base,
+                        notes=source_item.get("notes"),
+                    )
+                )
+
+            if source.get("mr_id") is not None:
+                _mark_requisition_ordered_from_purchase_order(
+                    db=db,
+                    user=user,
+                    requisition_id=source["mr_id"],
+                    purchase_order_reference=reference_number,
+                )
+
+            db.commit()
+            return get_po_or_404(
+                db=db,
+                po_id=purchase_order.id,
+                user=user,
+            )
+
+        except IntegrityError as exc:
+            db.rollback()
+            detail = str(exc.orig)
+
+            if "uq_purchase_orders_company_rfq" in detail:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": PURCHASE_ORDER_RFQ_ALREADY_LINKED,
+                        "message": "A purchase order already exists for this RFQ",
+                    },
+                ) from exc
+
+            if "uq_po_company_reference" in detail:
+                continue
+
+            raise
+
+        except Exception:
+            db.rollback()
+            raise
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": PURCHASE_ORDER_RFQ_INVALID_WINNER,
+            "message": "Could not generate a unique purchase order reference",
+        },
+    )
+
+
 def update_purchase_order(db: Session, user: User, po_id: int, **kwargs) -> PurchaseOrder:
     po = get_po_or_404(db, po_id, user)
 
@@ -197,7 +412,11 @@ def process_approval(db: Session, user: User, po_id: int, action: str, note: Opt
         if po.approval_status != PurchaseApprovalStatus.PENDING.value:
             raise HTTPException(status_code=422, detail="Only pending orders can be approved")
         po.approval_status = PurchaseApprovalStatus.APPROVED.value
+        po.status = PurchaseOrderStatus.ORDERED.value
         po.approved_by_user_id = user.id
+        for phase in po.phases:
+            if phase.status == PurchasePhaseStatus.DRAFT.value:
+                phase.status = PurchasePhaseStatus.ORDERED.value
     elif action == "reject":
         if po.approval_status not in (PurchaseApprovalStatus.PENDING.value,):
             raise HTTPException(status_code=422, detail="Only pending orders can be rejected")

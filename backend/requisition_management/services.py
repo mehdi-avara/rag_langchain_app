@@ -699,3 +699,40 @@ def list_status_history(
         requisition_id,
     )
     return requisition.status_history
+
+def mark_requisition_ordered_from_purchase_order(
+    db: Session,
+    current_user: User,
+    requisition_id: int,
+    purchase_order_reference: str,
+) -> MaterialRequisition:
+    requisition = get_requisition_or_404(
+        db=db,
+        current_user=current_user,
+        requisition_id=requisition_id,
+    )
+
+    if requisition.status == MaterialRequisitionStatus.ORDERED.value:
+        return requisition
+
+    if requisition.status != MaterialRequisitionStatus.APPROVED.value:
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            MATERIAL_REQUISITION_INVALID_STATUS_TRANSITION,
+            "Only approved material requisitions can be marked as ordered",
+        )
+
+    previous_status = requisition.status
+    requisition.status = MaterialRequisitionStatus.ORDERED.value
+
+    _record_status_history(
+        db=db,
+        requisition=requisition,
+        from_status=previous_status,
+        to_status=MaterialRequisitionStatus.ORDERED.value,
+        action="purchase_order_created",
+        current_user=current_user,
+        note=f"Purchase order {purchase_order_reference} was created",
+    )
+
+    return requisition

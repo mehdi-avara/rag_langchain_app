@@ -32,6 +32,10 @@ from core.exceptions.error_codes import (
     RFQ_SUPPLIER_ALREADY_EXISTS,
     RFQ_SUPPLIER_NOT_FOUND,
     RFQ_WINNER_ALREADY_SELECTED,
+    RFQ_WINNING_QUOTATION_CURRENCY_MISMATCH,
+    RFQ_WINNING_QUOTATION_INCOMPLETE,
+    RFQ_WINNING_QUOTATION_NOT_SELECTED,
+    RFQ_WINNING_QUOTATION_SUPPLIER_MISSING,
     USER_HAS_NO_COMPANY,
 )
 
@@ -203,6 +207,70 @@ def _get_response_or_404(
         )
 
     return response
+
+
+def _validate_winning_quotation_for_purchase(
+    rfq: RequestForQuotation,
+    winning_response: QuotationResponse,
+) -> QuotationResponseItem:
+    if not winning_response.items:
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            QUOTATION_RESPONSE_HAS_NO_ITEMS,
+            "A quotation response without items cannot be selected",
+        )
+
+    if winning_response.supplier_id is None:
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            RFQ_WINNING_QUOTATION_SUPPLIER_MISSING,
+            "The winning quotation response no longer has a supplier reference",
+        )
+
+    rfq_items_by_id = {
+        item.id: item
+        for item in rfq.items
+    }
+    response_items_by_rfq_item_id = {
+        item.rfq_item_id: item
+        for item in winning_response.items
+    }
+
+    if (
+        not rfq_items_by_id
+        or set(rfq_items_by_id) != set(response_items_by_rfq_item_id)
+    ):
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            RFQ_WINNING_QUOTATION_INCOMPLETE,
+            "The winning quotation response must cover every RFQ item exactly once",
+        )
+
+    currency_ids = {
+        item.currency_id
+        for item in winning_response.items
+    }
+    base_currency_ids = {
+        item.base_currency_id
+        for item in winning_response.items
+    }
+    exchange_rates = {
+        item.exchange_rate_used
+        for item in winning_response.items
+    }
+
+    if (
+        len(currency_ids) != 1
+        or len(base_currency_ids) != 1
+        or len(exchange_rates) != 1
+    ):
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            RFQ_WINNING_QUOTATION_CURRENCY_MISMATCH,
+            "All winning quotation items must use one currency, base currency, and exchange rate",
+        )
+
+    return winning_response.items[0]
 
 
 def _get_response_item_or_404(
@@ -1136,12 +1204,10 @@ def select_winning_quotation(
         quotation_response_id=quotation_response_id,
     )
 
-    if not response.items:
-        _raise(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            QUOTATION_RESPONSE_HAS_NO_ITEMS,
-            "A quotation response without items cannot be selected",
-        )
+    _validate_winning_quotation_for_purchase(
+        rfq=rfq,
+        winning_response=response,
+    )
 
     winner_exists = any(existing.is_winner for existing in rfq.responses)
 
@@ -1243,5 +1309,84 @@ def get_rfq_comparison(
         "deadline_date": rfq.deadline_date,
         "status": rfq.status,
         "suppliers": suppliers,
+        "items": items,
+    }
+
+def get_winning_quotation_reference_for_purchase(
+    db: Session,
+    current_user: User,
+    rfq_id: int,
+) -> dict[str, Any]:
+    rfq = get_rfq_or_404(
+        db=db,
+        current_user=current_user,
+        rfq_id=rfq_id,
+    )
+
+    winning_response = next(
+        (
+            response
+            for response in rfq.responses
+            if response.is_winner
+        ),
+        None,
+    )
+
+    if winning_response is None:
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            RFQ_WINNING_QUOTATION_NOT_SELECTED,
+            "A winning quotation response must be selected before creating a purchase order",
+        )
+
+    first_quote_item = _validate_winning_quotation_for_purchase(
+        rfq=rfq,
+        winning_response=winning_response,
+    )
+    response_items_by_rfq_item_id = {
+        item.rfq_item_id: item
+        for item in winning_response.items
+    }
+    items: list[dict[str, Any]] = []
+
+    for rfq_item in rfq.items:
+        if rfq_item.item_id is None:
+            _raise(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                RFQ_WINNING_QUOTATION_INCOMPLETE,
+                "An RFQ item no longer has a material reference",
+            )
+
+        quote_item = response_items_by_rfq_item_id[rfq_item.id]
+
+        items.append(
+            {
+                "item_id": rfq_item.item_id,
+                "item_code": rfq_item.item_code,
+                "item_name": rfq_item.item_name,
+                "unit_code": rfq_item.unit_code,
+                "quantity": rfq_item.quantity,
+                "unit_price": quote_item.unit_price,
+                "currency_id": quote_item.currency_id,
+                "unit_price_base": quote_item.unit_price_base,
+                "base_currency_id": quote_item.base_currency_id,
+                "exchange_rate_used": quote_item.exchange_rate_used,
+                "notes": quote_item.notes,
+            }
+        )
+
+    return {
+        "rfq_id": rfq.id,
+        "rfq_number": rfq.rfq_number,
+        "mr_id": rfq.mr_id,
+        "title": rfq.title,
+        "description": rfq.description,
+        "supplier_id": winning_response.supplier_id,
+        "supplier_name": winning_response.supplier_name,
+        "winning_quotation_response_id": winning_response.id,
+        "currency_id": first_quote_item.currency_id,
+        "base_currency_id": first_quote_item.base_currency_id,
+        "exchange_rate_used": first_quote_item.exchange_rate_used,
+        "delivery_days": winning_response.delivery_days,
         "items": items,
     }
