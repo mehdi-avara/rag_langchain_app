@@ -64,25 +64,6 @@ def post_currency(
     )
 
 
-@router.patch("/{currency_id}", response_model=CurrencyRead, summary="Update a currency")
-def patch_currency(
-    currency_id: int,
-    payload: CurrencyUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("currencies:manage")),
-):
-    return update_currency(db, currency_id, **payload.model_dump(exclude_none=True))
-
-
-@router.get("/{currency_id}", response_model=CurrencyRead, summary="Get currency by ID")
-def get_currency(
-    currency_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("currencies:read")),
-):
-    return get_currency_or_404(db, currency_id)
-
-
 # ── Exchange rate endpoints ───────────────────────────────────────────────────
 
 @router.get("/exchange-rates", response_model=List[ExchangeRateRead], summary="List exchange rates")
@@ -166,3 +147,22 @@ def convert_amount(
         rate_used=rate,
         rate_date=on_date,
     )
+
+
+@router.get("/{currency_id}", response_model=CurrencyRead, summary="Get currency by ID")
+def get_currency(
+    currency_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("currencies:read")),
+):
+    return get_currency_or_404(db, currency_id)
+
+
+@router.patch("/{currency_id}", response_model=CurrencyRead, summary="Update a currency")
+def patch_currency(
+    currency_id: int,
+    payload: CurrencyUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("currencies:manage")),
+):
+    return update_currency(db, currency_id, **payload.model_dump(exclude_none=True))
