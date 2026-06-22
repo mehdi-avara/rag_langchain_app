@@ -30,6 +30,8 @@ from rfq_management.routes import rfq_router
 from goods_receipt_management.routes import goods_receipt_router
 from warehouse_management.routes import warehouse_router
 from shared.currency.routes import router as currency_router
+from shared.export.routes import router as export_router
+from shared.reporting.routes import router as reporting_router
 from routs.tasks import router as tasks_router
 from db.session import SessionLocal
 from db.init_db import seed_default_user
@@ -96,6 +98,8 @@ app.include_router(model_router, tags=["models"])
 app.include_router(tag_router, tags=["system_tags"])
 app.include_router(financial_router, tags=["financial_management"])
 app.include_router(property_router, tags=["property_management"])
+app.include_router(export_router, tags=["exports"])
+app.include_router(reporting_router, tags=["reporting"])
 app.include_router(purchase_router, tags=["purchase_management"])
 app.include_router(supplier_router, tags=["supplier_management"])
 app.include_router(material_router, tags=["material_management"])

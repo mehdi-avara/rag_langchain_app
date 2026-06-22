@@ -12,6 +12,7 @@ celery_app = Celery(
         "core.celery.tasks",
         "material_management.tasks",
         "warehouse_management.tasks",
+        "shared.export.tasks",
     ],
 )
 

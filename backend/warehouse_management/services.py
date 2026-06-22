@@ -2118,3 +2118,165 @@ def backfill_posted_goods_receipts(
         "created_movements": created_movements,
         "skipped_movements": skipped_movements,
     }
+
+
+def export_stock_rows(
+    db: Session,
+    current_user: User,
+    query_text: Optional[str] = None,
+    item_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
+    storage_location_id: Optional[int] = None,
+    low_stock_only: bool = False,
+    limit: int = 10000,
+) -> list[dict[str, Any]]:
+    from material_management.services import get_item_references
+
+    company_id = tenant_id(current_user)
+
+    query = (
+        db.query(StockItem, StorageLocation, Zone, Warehouse)
+        .join(
+            StorageLocation,
+            StockItem.storage_location_id == StorageLocation.id,
+        )
+        .join(Zone, StorageLocation.zone_id == Zone.id)
+        .join(Warehouse, Zone.warehouse_id == Warehouse.id)
+        .filter(StockItem.company_id == company_id)
+    )
+
+    if item_id is not None:
+        query = query.filter(StockItem.item_id == item_id)
+
+    if warehouse_id is not None:
+        query = query.filter(Warehouse.id == warehouse_id)
+
+    if storage_location_id is not None:
+        query = query.filter(StorageLocation.id == storage_location_id)
+
+    if low_stock_only:
+        query = query.filter(
+            StockItem.reorder_point.isnot(None),
+            StockItem.quantity_available <= StockItem.reorder_point,
+        )
+
+    rows = query.order_by(
+        Warehouse.code.asc(),
+        Zone.code.asc(),
+        StorageLocation.code.asc(),
+        StockItem.item_id.asc(),
+    ).all()
+
+    references = get_item_references(
+        db=db,
+        current_user=current_user,
+        item_ids=[stock_item.item_id for stock_item, _, _, _ in rows],
+    )
+
+    normalized_query = (query_text or "").strip().lower()
+    result: list[dict[str, Any]] = []
+
+    for stock_item, location, zone, warehouse in rows:
+        item = references.get(stock_item.item_id, {})
+        haystack = " ".join(
+            str(value or "").lower()
+            for value in (
+                item.get("item_code"),
+                item.get("name"),
+                item.get("unit_code"),
+                warehouse.code,
+                warehouse.name,
+                zone.code,
+                zone.name,
+                location.code,
+                location.name,
+            )
+        )
+
+        if normalized_query and normalized_query not in haystack:
+            continue
+
+        is_low_stock = (
+            stock_item.reorder_point is not None
+            and decimal_value(stock_item.quantity_available)
+            <= decimal_value(stock_item.reorder_point)
+        )
+
+        result.append(
+            {
+                "warehouse_code": warehouse.code,
+                "warehouse_name": warehouse.name,
+                "zone_code": zone.code,
+                "storage_location_code": location.code,
+                "item_code": item.get("item_code"),
+                "item_name": item.get("name"),
+                "quantity_on_hand": stock_item.quantity_on_hand,
+                "quantity_reserved": stock_item.quantity_reserved,
+                "quantity_available": stock_item.quantity_available,
+                "reorder_point": stock_item.reorder_point,
+                "unit_cost_base": stock_item.unit_cost_base,
+                "inventory_value_base": (
+                    decimal_value(stock_item.quantity_on_hand)
+                    * decimal_value(stock_item.unit_cost_base)
+                ),
+                "low_stock": is_low_stock,
+                "updated_at": stock_item.updated_at,
+            }
+        )
+
+        if len(result) >= limit:
+            break
+
+    return result
+
+
+def export_stock_movement_rows(
+    db: Session,
+    current_user: User,
+    item_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
+    reference_type: Optional[str] = None,
+    reference_id: Optional[int] = None,
+    limit: int = 10000,
+) -> list[dict[str, Any]]:
+    from material_management.services import get_item_references
+
+    movements = list_stock_movements(
+        db=db,
+        current_user=current_user,
+        item_id=item_id,
+        warehouse_id=warehouse_id,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        page=1,
+        size=limit,
+    )
+
+    references = get_item_references(
+        db=db,
+        current_user=current_user,
+        item_ids=[movement.item_id for movement in movements],
+    )
+
+    return [
+        {
+            "movement_number": movement.movement_number,
+            "movement_type": movement.movement_type,
+            "item_id": movement.item_id,
+            "item_code": references.get(movement.item_id, {}).get(
+                "item_code"
+            ),
+            "item_name": references.get(movement.item_id, {}).get("name"),
+            "quantity": movement.quantity,
+            "unit_cost_base": movement.unit_cost_base,
+            "movement_value_base": (
+                decimal_value(movement.quantity)
+                * decimal_value(movement.unit_cost_base)
+            ),
+            "reference_type": movement.reference_type,
+            "reference_id": movement.reference_id,
+            "movement_date": movement.movement_date,
+            "notes": movement.notes,
+        }
+        for movement in movements
+    ]

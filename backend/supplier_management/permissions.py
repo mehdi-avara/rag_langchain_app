@@ -5,4 +5,5 @@ PERMISSIONS = [
     ("supplier_management:delete", "supplier_management", "delete", "Delete suppliers"),
     ("supplier_management:search", "supplier_management", "search", "Search suppliers"),
     ("supplier_management:ask", "supplier_management", "ask", "Ask AI about suppliers"),
+    ("supplier_management:export", "supplier_management", "export", "Export suppliers"),
 ]

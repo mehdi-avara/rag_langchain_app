@@ -998,3 +998,100 @@ def _build_searchable_text(po: PurchaseOrder) -> str:
         po.description or "",
     ]
     return " ".join(p for p in parts if p).strip()
+
+
+def export_purchase_order_rows(
+    db: Session,
+    current_user: User,
+    query_text: Optional[str] = None,
+    po_status: Optional[str] = None,
+    approval_status: Optional[str] = None,
+    limit: int = 10000,
+) -> list[dict]:
+    from decimal import Decimal
+
+    from sqlalchemy import or_
+    from sqlalchemy.orm import selectinload
+
+    query = (
+        db.query(PurchaseOrder)
+        .options(
+            selectinload(PurchaseOrder.phases).selectinload(
+                PurchasePhase.items
+            ),
+            selectinload(PurchaseOrder.costs),
+        )
+        .filter(PurchaseOrder.company_id == _tenant_id(current_user))
+    )
+
+    if po_status:
+        query = query.filter(PurchaseOrder.status == po_status)
+
+    if approval_status:
+        query = query.filter(
+            PurchaseOrder.approval_status == approval_status
+        )
+
+    if query_text:
+        pattern = f"%{query_text.strip()}%"
+        query = query.filter(
+            or_(
+                PurchaseOrder.reference_number.ilike(pattern),
+                PurchaseOrder.title.ilike(pattern),
+                PurchaseOrder.supplier_name.ilike(pattern),
+                PurchaseOrder.description.ilike(pattern),
+            )
+        )
+
+    orders = (
+        query.order_by(
+            PurchaseOrder.created_at.desc(),
+            PurchaseOrder.id.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+    result: list[dict] = []
+
+    for order in orders:
+        phase_items = [
+            item
+            for phase in order.phases or []
+            for item in phase.items or []
+        ]
+        total_in_base = sum(
+            (
+                Decimal(str(item.line_total_base or 0))
+                for item in phase_items
+            ),
+            Decimal("0"),
+        )
+        additional_costs_base = sum(
+            (
+                Decimal(str(cost.amount_base or 0))
+                for cost in order.costs or []
+            ),
+            Decimal("0"),
+        )
+
+        result.append(
+            {
+                "reference_number": order.reference_number,
+                "title": order.title,
+                "supplier_name": order.supplier_name,
+                "status": order.status,
+                "approval_status": order.approval_status,
+                "rfq_id": order.rfq_id,
+                "phase_count": len(order.phases or []),
+                "item_count": len(phase_items),
+                "total_in_base": total_in_base,
+                "additional_costs_base": additional_costs_base,
+                "grand_total_base": (
+                    total_in_base + additional_costs_base
+                ),
+                "created_at": order.created_at,
+            }
+        )
+
+    return result

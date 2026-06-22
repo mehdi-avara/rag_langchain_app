@@ -6,4 +6,5 @@ PERMISSIONS = [
     ("material_management:search", "material_management", "search", "Search material items"),
     ("material_management:ask", "material_management", "ask", "Ask AI about material items"),
     ("material_management:import", "material_management", "import", "Import material items"),
+    ("material_management:export", "material_management", "export", "Export material items"),
 ]

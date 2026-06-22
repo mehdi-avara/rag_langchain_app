@@ -5,4 +5,5 @@ PERMISSIONS = [
     ("rfq_management:delete", "rfq_management", "delete", "Delete draft RFQs"),
     ("rfq_management:approve", "rfq_management", "approve", "Select winning quotation"),
     ("rfq_management:search", "rfq_management", "search", "Search RFQs and quotation responses"),
+    ("rfq_management:export", "rfq_management", "export", "Export RFQs and quotation responses"),
 ]

@@ -1024,3 +1024,39 @@ def upsert_item_from_import_row(
     item.description_embedding = safe_embed_item_text(item_searchable_text(item))
     db.flush()
     return outcome
+
+
+def get_item_references(
+    db: Session,
+    current_user: User,
+    item_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    normalized_ids = sorted(
+        {
+            int(item_id)
+            for item_id in item_ids
+            if item_id is not None and int(item_id) > 0
+        }
+    )
+
+    if not normalized_ids:
+        return {}
+
+    items = (
+        _item_query(db)
+        .filter(
+            Item.company_id == tenant_id(current_user),
+            Item.id.in_(normalized_ids),
+        )
+        .all()
+    )
+
+    return {
+        item.id: {
+            "id": item.id,
+            "item_code": item.item_code,
+            "name": item.name,
+            "unit_code": item.unit.code if item.unit is not None else None,
+        }
+        for item in items
+    }

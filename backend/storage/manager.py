@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 from pathlib import Path
 
 import boto3
@@ -201,7 +202,14 @@ class StorageManager:
         if asset.status != FileAssetStatus.READY.value:
             raise HTTPException(status_code=409, detail="Asset is not ready")
 
+        if disposition not in {"attachment", "inline"}:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid content disposition",
+            )
+
         expires = expires_seconds or settings.S3_DOWNLOAD_EXPIRES_SECONDS
+        filename = _clean_filename(asset.original_filename).replace('"', "")
 
         download_url = self.presign_client.generate_presigned_url(
             ClientMethod="get_object",
@@ -209,11 +217,85 @@ class StorageManager:
                 "Bucket": asset.bucket,
                 "Key": asset.storage_key,
                 "ResponseContentType": asset.content_type,
+                "ResponseContentDisposition": (
+                    f'{disposition}; filename="{filename}"'
+                ),
             },
             ExpiresIn=expires,
         )
 
         return download_url
+
+    def create_generated_asset(
+        self,
+        *,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        owner: User,
+        purpose: str,
+        commit: bool = True,
+    ) -> FileAsset:
+        if owner.company_id is None:
+            raise HTTPException(status_code=403, detail="User has no company")
+
+        if not content:
+            raise HTTPException(status_code=422, detail="Generated file is empty")
+
+        self._ensure_bucket()
+
+        asset = FileAsset(
+            owner_id=owner.id,
+            company_id=owner.company_id,
+            original_filename=_clean_filename(filename),
+            content_type=content_type,
+            size_bytes=len(content),
+            checksum=hashlib.sha256(content).hexdigest(),
+            bucket=self.bucket,
+            storage_key="pending",
+            storage_backend="s3",
+            status=FileAssetStatus.PENDING.value,
+            purpose=purpose,
+        )
+
+        self.db.add(asset)
+        self.db.flush()
+
+        asset.storage_key = (
+            f"companies/{owner.company_id}/exports/{asset.id}/{asset.original_filename}"
+        )
+
+        try:
+            self.client.put_object(
+                Bucket=asset.bucket,
+                Key=asset.storage_key,
+                Body=content,
+                ContentType=asset.content_type,
+            )
+        except ClientError as exc:
+            asset.status = FileAssetStatus.FAILED.value
+            asset.error_message = str(exc)
+
+            if commit:
+                self.db.commit()
+            else:
+                self.db.flush()
+
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to store generated asset",
+            ) from exc
+
+        asset.status = FileAssetStatus.READY.value
+        asset.error_message = None
+
+        if commit:
+            self.db.commit()
+            self.db.refresh(asset)
+        else:
+            self.db.flush()
+
+        return asset
 
     def delete_file(self, *, asset_id: int, user: User, hard_delete: bool = False) -> None:
         asset = self._get_asset_or_404(asset_id)

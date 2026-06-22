@@ -12,6 +12,7 @@ from .ai_model import ChatAIModels
 from .embedding_config import EmbeddingConfig
 from .file_asset import FileAsset, FileAssetStatus
 from .task_result import TaskResult
+from shared.export.models import ExportAuditLog
 
 from model_management.models import (
     ManagedModel,
@@ -130,6 +131,7 @@ __all__ = [
     "FileAsset",
     "FileAssetStatus",
     "TaskResult",
+    "ExportAuditLog",
     "CommentType",
     "DocumentStatusType",
     "Chat",
