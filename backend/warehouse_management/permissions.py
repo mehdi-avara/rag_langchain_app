@@ -6,6 +6,7 @@ PERMISSIONS = [
     ("warehouse_management:movements:read", "warehouse_management.movements", "read", "View stock movement history"),
     ("warehouse_management:movements:create", "warehouse_management.movements", "create", "Create manual stock movements and GRN backfills"),
     ("warehouse_management:search", "warehouse_management", "search", "Search warehouse stock"),
+    ("warehouse_management:ask", "warehouse_management", "ask", "Ask AI about warehouse stock"),
     ("warehouse_management:summary", "warehouse_management", "summary", "View warehouse inventory summaries"),
     ("warehouse_management:export", "warehouse_management", "export", "Export warehouse data"),
 ]

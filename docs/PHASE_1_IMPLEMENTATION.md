@@ -57,11 +57,20 @@ a real `item_id` FK → `items`.
 
 ## A3. Multi-currency — the 4-field money rule
 
-Every monetary amount uses **four columns**: `amount`, `currency_id` **FK → `currencies.id`**, `amount_base`
-(company base currency), `exchange_rate_used` (Numeric 28,10, frozen at transaction time). Company base
-currency on `Company.base_currency_id`. Dashboards aggregate in base currency. Rounding follows
-`currency.decimal_places`. Applies in Phase 1 to: GRN landed cost, supplier evaluation price comparison,
-inventory valuation (weighted-average cost always stored with currency).
+Every **transactional** monetary amount uses four columns: `amount`, `currency_id`
+**FK → `currencies.id`**, `amount_base` (company base currency), and
+`exchange_rate_used` (Numeric 28,10, frozen at transaction time). Company base currency is
+on `Company.base_currency_id`. Dashboards aggregate in base currency. Rounding follows
+`currency.decimal_places`.
+
+`StockItem` is a derived weighted-average inventory snapshot rather than an individual monetary
+transaction. It retains `unit_cost`, `unit_cost_currency_id`, and `unit_cost_base`; it intentionally
+does not keep one `exchange_rate_used` because one stock balance may aggregate receipts recorded at
+different exchange rates. The authoritative transaction-level exchange-rate record remains
+`StockMovement`, which follows the complete four-column rule.
+
+Applies in Phase 1 to MR estimates, RFQ quotation prices, GRN unit cost, purchase order prices and
+costs, stock movements, and inventory valuation.
 
 ## A4. Standard search pattern (every searchable module)
 
@@ -75,6 +84,18 @@ Each module ships a `search/` subfolder (`repository.py`/`service.py`/`routes.py
 
 Endpoint `POST /{module}/search` body `{query, ids:[], mode, limit}`, permission `{module}:...:search`;
 `ensure_{entity}_embeddings()` backfills before semantic runs; list endpoints support `?q=`.
+
+## A4.1 Linked-item semantic bridge
+
+For procurement and inventory workflow modules, semantic retrieval is anchored in the canonical
+`material_management.Item` embedding rather than duplicating vectors across transactional records.
+`requisition_management`, `rfq_management`, `goods_receipt_management`, and
+`warehouse_management` each provide their own `search/` package and `POST /{module}/search`
+contract. In `vector` and `hybrid` modes, they retrieve semantic Item matches through the
+material-management service, then retrieve only tenant-scoped workflow records linked by real
+`item_id` FKs. Keyword search continues to cover each module's own numbers, statuses, dates,
+notes, supplier snapshots, and workflow metadata. If vector retrieval is unavailable, the response
+uses the explicit `text_fallback` or `item_text_fallback` match source.
 
 ## A5. RBAC — declare → seed → protect
 
@@ -369,14 +390,28 @@ time → line; spend by supplier → horizontal bar; procurement cycle time → 
 **Order:** supplier → material → requisition → rfq → goods_receipt → warehouse → export engine + Phase 1-R.
 
 **Phase 1 is done when:**
-- [ ] All six domain modules live, each with `search/`, `/ask`, permissions seeded, every route protected.
-- [ ] `Item` catalog is the universal stock/line entity; `Item.model_id` nullable FK resolved via the
-      model_management service; no module imports another module's models/routes/schemas.
-- [ ] GRN-posted → stock movement is a **Celery event**; warehouse handler reads via the procurement service.
-- [ ] Phase-0 upgrades applied: `PurchasePhaseItem.item_id` FK → `items`; `PurchaseOrder.supplier_id` real
-      FK → `suppliers`; old `property_management` warehouse data migrated to `Item` + `item_id`.
-- [ ] `shared/export/` live; Phase 1-R KPI/chart endpoints + summary pages with Export.
-- [ ] Every money field uses the 4-column rule; `pytest` + `alembic check` green.
+- [x] All six domain modules are live, each with `search/`, `/ask`, seeded permissions, and protected routes.
+- [x] `Item` is the universal stock/line entity; `Item.model_id` is a nullable real FK resolved through
+      the model-management service; no production module imports another module's models/routes/schemas.
+- [x] GRN-posted → stock movement is a Celery event; the warehouse handler reads through the procurement service.
+- [x] Phase-0 upgrades are applied: `PurchasePhaseItem.item_id` FK → `items`; `PurchaseOrder.supplier_id`
+      real FK → `suppliers`; old `property_management` warehouse data migrated to `Item` + `item_id`.
+- [x] `shared/export/` is live; Phase 1-R KPI/chart endpoints and export-capable summary pages are available.
+- [x] Transactional money fields follow the 4-column rule; `pytest` is green; Alembic baseline is verified.
+
+### Closure verification — 2026-06-23
+
+- Runtime OpenAPI validates all six modules' search/ask contracts, including `POST /warehouse/search`,
+  `POST /warehouse/items/search`, and `POST /warehouse/ask`.
+- New ask permissions are seeded and assigned to the company admin:
+  `requisition_management:ask`, `rfq_management:ask`,
+  `goods_receipt_management:ask`, and `warehouse_management:ask`.
+- Authenticated keyword search and no-match ask smoke tests return HTTP 200; unauthenticated ask
+  requests return HTTP 401.
+- The full backend test suite passed during closure validation.
+- Raw `alembic check` remains intentionally non-zero only for the preserved
+  `warehouse_items_legacy_archive` table and its four legacy indexes. No new schema drift is accepted
+  as part of the Phase 1 baseline.
 
 **Cross-module reference summary (Phase 1):**
 

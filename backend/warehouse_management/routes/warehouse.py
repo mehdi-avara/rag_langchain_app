@@ -483,7 +483,6 @@ def post_stock_count_endpoint(
 
 
 @router.post("/items/search", response_model=list[StockItemSearchRead])
-@router.post("/search", response_model=list[StockItemSearchRead])
 def search_stock_items_endpoint(
     payload: WarehouseSearchRequest,
     db: Session = Depends(get_db),
