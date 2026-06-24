@@ -37,8 +37,11 @@ settings = get_settings()
 # Try to import the shared app first; fall back to creating one.
 # ---------------------------------------------------------------------------
 
+# Bind to the project's shared Celery app (Redis broker) so this task runs on
+# the same worker as mineru.process_pdf and can be chained from it.  Fall back
+# to a local app only if the shared one cannot be imported.
 try:
-    from celery_app import celery_app  # type: ignore[import]
+    from core.celery.celery_app import celery_app  # type: ignore[import]
 except ImportError:
     celery_app = Celery(
         "document_intelligence",

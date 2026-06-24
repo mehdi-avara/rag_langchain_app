@@ -24,6 +24,9 @@ class AssetUploadUrlOut(BaseModel):
 
 class AssetCompleteUploadIn(BaseModel):
     checksum: str | None = None
+    # Opt-in: when True, a Document Intelligence job is chained after MinerU
+    # finishes. Default False keeps the existing upload behavior unchanged.
+    run_document_intelligence: bool = False
 
 
 class AssetDownloadUrlOut(BaseModel):

@@ -4,25 +4,28 @@ PDF artifact extraction service.
 Produces one DocumentPageArtifact row per page for a given Document.
 Results are cached: re-running is a no-op unless force=True.
 
-Dependencies that are already in the project's requirements:
-  pdf2image, Pillow, pdfminer.six, pytesseract (optional / graceful fallback)
+Text is REUSED from the existing MinerU pipeline output (`_middle.json`, or the
+`chunks` table) — this service never re-extracts PDF text.  The only PDF op it
+performs is rendering full-page images, which MinerU does not produce and the
+VLM teacher needs.  OCR is used solely as a last resort for blank pages.
+
+Dependencies already in the project's requirements:
+  pdf2image, Pillow, pytesseract (optional / graceful fallback)
 """
 
 from __future__ import annotations
 
 import hashlib
-import io
-import json
 import logging
-import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PIL import Image
 from sqlalchemy.orm import Session
 
 from Models import Document
 from document_intelligence.models import DocumentPageArtifact
+from document_intelligence.services.mineru_source import load_reused_page_text
 from settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -51,25 +54,6 @@ def _artifacts_dir(document: Document) -> Path:
 # ---------------------------------------------------------------------------
 # Text extraction helpers
 # ---------------------------------------------------------------------------
-
-def _extract_page_texts_pdfminer(pdf_path: Path) -> List[str]:
-    """Extract plain text per page using pdfminer.six."""
-    try:
-        from pdfminer.high_level import extract_pages
-        from pdfminer.layout import LTAnon, LTChar, LTTextBox
-
-        pages: List[str] = []
-        for page_layout in extract_pages(str(pdf_path)):
-            page_text_parts: List[str] = []
-            for element in page_layout:
-                if isinstance(element, LTTextBox):
-                    page_text_parts.append(element.get_text())
-            pages.append("".join(page_text_parts).strip())
-        return pages
-    except Exception as exc:
-        logger.warning("pdfminer extraction failed: %s", exc)
-        return []
-
 
 def _try_ocr_page(img: Image.Image) -> tuple[Optional[str], Optional[float]]:
     """Run pytesseract on a PIL image. Returns (text, quality_score)."""
@@ -174,23 +158,23 @@ def process_page_artifacts(
 
     art_dir = _artifacts_dir(document)
 
-    logger.info("Extracting page texts for doc %d …", document.id)
-    page_texts = _extract_page_texts_pdfminer(pdf_path)
+    # Reuse text already produced by the MinerU pipeline — never re-extract.
+    logger.info("Loading reused MinerU/chunk text for doc %d …", document.id)
+    reused_text: Dict[int, str] = load_reused_page_text(db, document)
 
     logger.info("Rendering page images for doc %d (dpi=%d) …", document.id, dpi)
     page_images = _render_pages(pdf_path, dpi=dpi)
 
-    n_pages = max(len(page_texts), len(page_images), document.n_pages, 1)
+    max_reused_page = max(reused_text.keys(), default=0)
+    n_pages = max(max_reused_page, len(page_images), document.n_pages, 1)
 
     artifacts: List[DocumentPageArtifact] = []
 
     for page_idx in range(n_pages):
         page_num = page_idx + 1   # 1-based
 
-        # -- text --
-        text: Optional[str] = None
-        if page_idx < len(page_texts):
-            text = page_texts[page_idx] or None
+        # -- text (reused from MinerU / chunks; never re-extracted) --
+        text: Optional[str] = reused_text.get(page_num) or None
 
         # -- image --
         img: Optional[Image.Image] = None

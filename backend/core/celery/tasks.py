@@ -72,6 +72,33 @@ def _activate_document_version(doc_id: int, document_version_id: int | None):
         db.commit()
 
 
+def _enqueue_document_intelligence(doc_id: int, owner_id: int | None) -> None:
+    """Create a Document Intelligence job for a freshly-processed document and
+    enqueue it on the shared (Redis) Celery app.  Imported lazily to avoid a
+    circular import at module load.  Best-effort: a DI failure must never fail
+    the MinerU task."""
+    try:
+        from document_intelligence.models import DIJobStatus, DocumentIntelligenceJob
+        from document_intelligence.tasks import process_document_task
+
+        with db_session() as db:
+            job = DocumentIntelligenceJob(
+                document_id=doc_id,
+                triggered_by_user_id=owner_id,
+                status=DIJobStatus.QUEUED,
+                methods_requested=["llm_vlm"],
+            )
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = job.id
+
+        process_document_task.delay(job_id)
+        print(f"[mineru] Chained Document Intelligence job {job_id} for doc {doc_id}", flush=True)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[mineru] Failed to enqueue Document Intelligence for doc {doc_id}: {exc!r}", flush=True)
+
+
 @celery_app.task(name="mineru.process_pdf")
 def mineru_process_pdf(
     doc_id: int,
@@ -79,6 +106,7 @@ def mineru_process_pdf(
     asset_id: int | None = None,
     owner_id: int | None = None,
     document_version_id: int | None = None,
+    run_document_intelligence: bool = False,
 ):
     _set_document_version_status(doc_id, document_version_id, DocumentStatusType.INPROGGRESS)
 
@@ -137,6 +165,11 @@ def mineru_process_pdf(
             storage_path=storage_path,
         )
         _activate_document_version(doc_id, document_version_id)
+
+        # Opt-in hand-off: MinerU output (text + _middle.json) is now persisted,
+        # so Document Intelligence can reuse it instead of re-processing the PDF.
+        if run_document_intelligence:
+            _enqueue_document_intelligence(doc_id, owner_id)
 
     except Exception:
         _set_document_version_status(doc_id, document_version_id, DocumentStatusType.FAIELED)

@@ -297,6 +297,7 @@ def complete_document_upload(
         asset_id=asset.id,
         owner_id=current_user.id,
         document_version_id=version.id,
+        run_document_intelligence=payload.run_document_intelligence,
     )
 
     return {
@@ -980,6 +981,7 @@ def complete_document_version_upload(
         asset_id=asset.id,
         owner_id=current_user.id,
         document_version_id=version.id,
+        run_document_intelligence=payload.run_document_intelligence,
     )
 
     return {
