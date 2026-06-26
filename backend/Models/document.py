@@ -26,6 +26,7 @@ class Document(Base):
     
     abstract = Column(Text)
     file_path = Column(String, nullable=True)
+    mineru_prefix = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="documents")
@@ -58,6 +59,7 @@ class DocumentVersion(Base):
     asset_id = Column(Integer, ForeignKey("file_assets.id", ondelete="SET NULL"), nullable=True, index=True)
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=True)
+    mineru_prefix = Column(String, nullable=True)
     status = Column(String, nullable=False)
     n_pages = Column(Integer, nullable=False, default=0)
     n_chunks = Column(Integer, nullable=False, default=0)

@@ -61,23 +61,8 @@ def _collect_block_text(block: dict) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
-def page_text_from_middle_json(middle_json_path: Path) -> Dict[int, str]:
-    """
-    Return a {page_num(1-based): text} map from a MinerU `_middle.json`.
-
-    MinerU `page_idx` is 0-based; we expose 1-based page numbers to match the
-    DocumentPageArtifact convention used throughout Document Intelligence.
-    """
-    try:
-        with open(middle_json_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except Exception as exc:
-        logger.warning("Could not read MinerU middle json %s: %s", middle_json_path, exc)
-        return {}
-
-    pdf_info = data.get("pdf_info", data)
+def _page_text_from_pdf_info(pdf_info) -> Dict[int, str]:
     if not isinstance(pdf_info, list):
-        logger.warning("Unexpected MinerU middle json shape at %s", middle_json_path)
         return {}
 
     page_text: Dict[int, str] = {}
@@ -97,6 +82,56 @@ def page_text_from_middle_json(middle_json_path: Path) -> Dict[int, str]:
         page_text[page_idx + 1] = "\n".join(block_texts).strip()
 
     return page_text
+
+
+def page_text_from_middle_json(middle_json_path: Path) -> Dict[int, str]:
+    """
+    Return a {page_num(1-based): text} map from a MinerU `_middle.json`.
+
+    MinerU `page_idx` is 0-based; we expose 1-based page numbers to match the
+    DocumentPageArtifact convention used throughout Document Intelligence.
+    """
+    try:
+        with open(middle_json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as exc:
+        logger.warning("Could not read MinerU middle json %s: %s", middle_json_path, exc)
+        return {}
+
+    pdf_info = data.get("pdf_info", data)
+    if not isinstance(pdf_info, list):
+        logger.warning("Unexpected MinerU middle json shape at %s", middle_json_path)
+        return {}
+
+    return _page_text_from_pdf_info(pdf_info)
+
+
+def page_text_from_s3(db: Session, document: Document) -> Dict[int, str]:
+    """Read the MinerU `_middle.json` from the asset's ``mineru/`` prefix in S3.
+
+    Returns {} if the document has no derived prefix recorded or the object is
+    absent — so DI works on a worker with no local copy of the document.
+    """
+    prefix = getattr(document, "mineru_prefix", None)
+    if not prefix:
+        return {}
+
+    try:
+        from storage.manager import StorageManager
+
+        manager = StorageManager(db)
+        key = f"{prefix.rstrip('/')}/middle.json"
+        fetched = manager.get_object_bytes(key)
+        if fetched is None:
+            return {}
+        body, _ = fetched
+        data = json.loads(body.decode("utf-8"))
+    except Exception as exc:
+        logger.warning("Could not read MinerU middle json from S3 for doc %s: %s", document.id, exc)
+        return {}
+
+    pdf_info = data.get("pdf_info", data)
+    return _page_text_from_pdf_info(pdf_info)
 
 
 def page_text_from_chunks(db: Session, document_id: int) -> Dict[int, str]:
@@ -135,6 +170,15 @@ def load_reused_page_text(db: Session, document: Document) -> Dict[int, str]:
                 document.id, middle.name, len(text),
             )
             return text
+
+    # No local copy: read the rewritten _middle.json from S3 (durable, cross-box).
+    text = page_text_from_s3(db, document)
+    if any(t for t in text.values()):
+        logger.info(
+            "Reusing MinerU text for doc %d from S3 (%d pages).",
+            document.id, len(text),
+        )
+        return text
 
     text = page_text_from_chunks(db, document.id)
     if text:

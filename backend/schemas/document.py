@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
 
@@ -18,6 +18,12 @@ class DocumentOut(BaseModel):
     class Config:
         from_attributes = True
 
+class ChunkImageOut(BaseModel):
+    url: str
+    caption: Optional[str] = None
+    page_num: Optional[int] = None
+
+
 class ChunkOut(BaseModel):
     id: int
     doc_id: int
@@ -27,6 +33,7 @@ class ChunkOut(BaseModel):
     start_pos: Optional[int]
     end_pos: Optional[int]
     created_at: datetime
+    images: List[ChunkImageOut] = []
 
     class Config:
         from_attributes = True

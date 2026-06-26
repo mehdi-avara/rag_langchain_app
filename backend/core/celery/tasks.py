@@ -163,6 +163,7 @@ def mineru_process_pdf(
             doc_id=doc_id,
             document_version_id=document_version_id,
             storage_path=storage_path,
+            asset_id=asset_id,
         )
         _activate_document_version(doc_id, document_version_id)
 
@@ -174,6 +175,92 @@ def mineru_process_pdf(
     except Exception:
         _set_document_version_status(doc_id, document_version_id, DocumentStatusType.FAIELED)
         raise
+
+
+def _backfill_one_document(doc_id: int, rerun_missing: bool) -> str:
+    """Backfill S3 artifacts + chunk↔image links for a single document.
+
+    If the document's local MinerU `_middle.json` still exists, re-run the
+    (MinerU-free) middle-json ingestion: this rewrites image refs, uploads the
+    derived bundle to S3 and recreates `image_chunks` rows — idempotent on
+    re-run. If no local artifacts exist and ``rerun_missing`` is set, re-run
+    MinerU from the S3 original. Otherwise the document is skipped.
+    """
+    from components.folders import find_processed_bundle
+    from core.simple_ingestion import ingest_processed_middle_json, run_mineru_on_file
+
+    with db_session() as db:
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if not doc:
+            return "missing"
+        storage_path = doc.file_path or str(doc_id)
+        asset_id = doc.original_asset_id
+        version_id = doc.current_version_id
+        owner_id = doc.owner_id
+
+    doc_dir = Path(settings.files_dir) / storage_path
+    bundle = find_processed_bundle(doc_dir)
+
+    if bundle.middle_json is not None and bundle.middle_json.exists():
+        with db_session() as db:
+            ingest_processed_middle_json(
+                middle_json_path=str(bundle.middle_json),
+                doc_id=doc_id,
+                db=db,
+                document_version_id=version_id,
+                storage_path=storage_path,
+                asset_id=asset_id,
+            )
+            db.commit()
+        return "migrated"
+
+    if rerun_missing and asset_id is not None:
+        with db_session() as db:
+            user = db.query(User).filter(User.id == owner_id).first()
+            if not user:
+                return "skipped-no-owner"
+            original_pdf = doc_dir / "original.pdf"
+            manager = StorageManager(db)
+            manager.download_asset_to_path(
+                asset_id=asset_id,
+                user=user,
+                target_path=original_pdf,
+            )
+        run_mineru_on_file(
+            pdf_path=os.path.join(storage_path, "original.pdf"),
+            doc_id=doc_id,
+            document_version_id=version_id,
+            storage_path=storage_path,
+            asset_id=asset_id,
+        )
+        return "reprocessed"
+
+    return "skipped-no-local"
+
+
+@celery_app.task(name="mineru.backfill_s3")
+def backfill_mineru_to_s3(doc_id="all", rerun_missing: bool = False):
+    """Backfill MinerU S3 artifacts and chunk↔image links for existing docs.
+
+    ``doc_id`` may be a specific document id or the string ``"all"``. Returns a
+    map of ``{doc_id: result}``. Idempotent: safe to re-run.
+    """
+    with db_session() as db:
+        if doc_id == "all" or doc_id is None:
+            ids = [row[0] for row in db.query(Document.id).order_by(Document.id.asc()).all()]
+        else:
+            ids = [int(doc_id)]
+
+    results: dict[int, str] = {}
+    for did in ids:
+        try:
+            results[did] = _backfill_one_document(did, rerun_missing)
+        except Exception as exc:  # never abort the whole batch on one doc
+            results[did] = f"error: {exc!r}"
+            print(f"[mineru-backfill] doc {did} failed: {exc!r}", flush=True)
+
+    print(f"[mineru-backfill] done: {results}", flush=True)
+    return results
 
 
 @celery_app.task(name="stt.transcribe_audio", bind=True, max_retries=2)

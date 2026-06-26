@@ -5,13 +5,41 @@ from typing import List, Tuple, Dict
 import json
 
 from settings import get_settings
-from Models import Document, Chunk, DocumentVersion, DocumentStatusType
+from Models import Document, Chunk, DocumentVersion, DocumentStatusType, ImageChunk
 from db.session import db_session
 from core.chunking import ChunkingMode, chunk_text
+from core.mineru_artifacts import rewrite_middle_json_image_refs, upload_mineru_bundle
 from components.folders import get_full_processed_file_path
 from components import generate_embeddings_for_chunks
 
 settings = get_settings()
+
+
+def _image_storage_key(mineru_prefix: str | None, filename: str) -> str | None:
+    """S3 object key for a figure under the asset's mineru/images/ prefix."""
+    if not mineru_prefix or not filename:
+        return None
+    return f"{mineru_prefix.rstrip('/')}/images/{filename}"
+
+
+def _build_image_chunk_rows(chunk_id: int, images: list, mineru_prefix: str | None) -> list:
+    """Build ImageChunk rows for one chunk's figure references."""
+    rows = []
+    for img in images or []:
+        filename = img.get("filename")
+        if not filename:
+            continue
+        rows.append(
+            ImageChunk(
+                chunk_id=chunk_id,
+                storage_key=_image_storage_key(mineru_prefix, filename),
+                caption=(img.get("caption") or None),
+                page_num=(int(img["page_num"]) if img.get("page_num") is not None else None),
+                bbox=img.get("bbox"),
+                position=filename,
+            )
+        )
+    return rows
 
 
 def detect_type(file_bytes: bytes) -> str:
@@ -164,6 +192,7 @@ def save_text_chunks(
     n_pages: int,
     document_version_id: int | None = None,
     storage_path: str | None = None,
+    mineru_prefix: str | None = None,
 ) -> int:
     embedding_inputs = [f"search_document: {chunk['content']}" for chunk in chunks]
     embeddings = generate_embeddings_for_chunks(embedding_inputs) if chunks else []
@@ -212,22 +241,42 @@ def save_text_chunks(
                 version.n_pages = n_pages
                 version.n_chunks = len(chunk_records)
                 version.file_path = effective_storage_path
+                if mineru_prefix:
+                    version.mineru_prefix = mineru_prefix
 
             doc = db.query(Document).filter(Document.id == doc_id).first()
             if doc and doc.current_version_id == document_version_id:
                 doc.n_pages = n_pages
                 doc.n_chunks = len(chunk_records)
                 doc.file_path = effective_storage_path
+                if mineru_prefix:
+                    doc.mineru_prefix = mineru_prefix
         else:
             db.query(Chunk).filter(Chunk.doc_id == doc_id).delete(synchronize_session=False)
-            db.query(Document).filter(Document.id == doc_id).update({
+            update_values = {
                 Document.n_pages: n_pages,
                 Document.n_chunks: len(chunk_records),
                 Document.file_path: effective_storage_path,
-            })
+            }
+            if mineru_prefix:
+                update_values[Document.mineru_prefix] = mineru_prefix
+            db.query(Document).filter(Document.id == doc_id).update(update_values)
 
         if chunk_records:
-            db.bulk_save_objects(chunk_records)
+            # add_all (not bulk_save_objects) so chunk PKs are populated and the
+            # figure rows can reference them.
+            db.add_all(chunk_records)
+            db.flush()
+
+            image_rows = []
+            for index, chunk in enumerate(chunks):
+                images = chunk.get("images") or []
+                if images:
+                    image_rows.extend(
+                        _build_image_chunk_rows(chunk_records[index].id, images, mineru_prefix)
+                    )
+            if image_rows:
+                db.add_all(image_rows)
 
         db.commit()
 
@@ -235,7 +284,7 @@ def save_text_chunks(
 
 
 
-def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode = ChunkingMode.token_fixed, document_version_id: int | None = None, storage_path: str | None = None) -> int:
+def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode = ChunkingMode.token_fixed, document_version_id: int | None = None, storage_path: str | None = None, asset_id: int | None = None) -> int:
     base_dir = settings.files_dir
     full_pdf_path = Path(base_dir) / pdf_path
     mineru_enabled = os.getenv("MINERU_ENABLED", "false").lower() in ("1", "true", "yes")
@@ -260,6 +309,17 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
         if not isinstance(pdf_info, list):
             raise ValueError("Invalid MinerU middle json: expected list under `pdf_info`")
 
+        # Rewrite bare image filenames to stable canonical app paths BEFORE
+        # chunking, so the same corrected reference flows into the chunks. Write
+        # the rewritten middle json back to disk so local serving / DI stay
+        # consistent with what is uploaded to S3.
+        rewrite_middle_json_image_refs(pdf_info, doc_id)
+        try:
+            with open(middle_json_path, "w", encoding="utf-8") as f:
+                json.dump(middle_data, f, ensure_ascii=False)
+        except Exception as write_exc:  # non-fatal: in-memory copy is still rewritten
+            print(f"[mineru] could not rewrite middle json on disk: {write_exc!r}", flush=True)
+
         chunks = chunk_text(
             pdf_info=pdf_info,
             mode=chunking_mode,
@@ -273,15 +333,31 @@ def run_mineru_on_file(pdf_path: str, doc_id: int, chunking_mode: ChunkingMode =
         page_indices = [int(p.get("page_idx", -1)) for p in pdf_info if isinstance(p, dict)]
         n_pages = (max(page_indices) + 1) if page_indices else 0
 
+        # Persist the derived bundle (rewritten middle json + figures + working
+        # PDF) to the asset's mineru/ prefix. Non-fatal: a failure here must not
+        # lose the text chunks we are about to save.
+        mineru_prefix = None
+        if asset_id is not None:
+            doc_dir = Path(base_dir) / (storage_path or str(doc_id))
+            with db_session() as db:
+                mineru_prefix = upload_mineru_bundle(
+                    db,
+                    asset_id=asset_id,
+                    doc_dir=doc_dir,
+                    middle_json_obj=middle_data,
+                    original_pdf_path=full_pdf_path,
+                )
+
         normalized_chunks = []
         for chunk in chunks:
             normalized_chunks.append({
                 "page_num": int(chunk["start_page"]),
                 "content": chunk["chunk_text"],
                 "token_count": int(chunk["token_count"]),
+                "images": chunk.get("images") or [],
             })
 
-        return save_text_chunks(doc_id, normalized_chunks, n_pages, document_version_id=document_version_id, storage_path=storage_path)
+        return save_text_chunks(doc_id, normalized_chunks, n_pages, document_version_id=document_version_id, storage_path=storage_path, mineru_prefix=mineru_prefix)
 
     except Exception as e:
         print("MinerU ingestion failed, falling back to pypdf", flush=True)
@@ -304,6 +380,7 @@ def ingest_processed_middle_json(
     chunking_mode: ChunkingMode = ChunkingMode.token_fixed,
     document_version_id: int | None = None,
     storage_path: str | None = None,
+    asset_id: int | None = None,
 ) -> tuple[int, int]:
     with open(middle_json_path, "r", encoding="utf-8") as f:
         middle_data = json.load(f)
@@ -311,6 +388,24 @@ def ingest_processed_middle_json(
     pdf_info = middle_data.get("pdf_info", middle_data)
     if not isinstance(pdf_info, list):
         raise ValueError("Invalid MinerU middle json: expected list under `pdf_info`")
+
+    # Rewrite image refs to canonical app paths before chunking (mirrors
+    # run_mineru_on_file) and persist the rewrite back to disk.
+    rewrite_middle_json_image_refs(pdf_info, doc_id)
+    try:
+        with open(middle_json_path, "w", encoding="utf-8") as f:
+            json.dump(middle_data, f, ensure_ascii=False)
+    except Exception as write_exc:  # non-fatal
+        print(f"[mineru] could not rewrite middle json on disk: {write_exc!r}", flush=True)
+
+    mineru_prefix = None
+    if asset_id is not None:
+        mineru_prefix = upload_mineru_bundle(
+            db,
+            asset_id=asset_id,
+            doc_dir=Path(middle_json_path).parent,
+            middle_json_obj=middle_data,
+        )
 
     chunks = chunk_text(
         pdf_info=pdf_info,
@@ -375,21 +470,40 @@ def ingest_processed_middle_json(
             version.n_pages = n_pages
             version.n_chunks = len(chunks)
             version.file_path = effective_storage_path
+            if mineru_prefix:
+                version.mineru_prefix = mineru_prefix
 
         doc = db.query(Document).filter(Document.id == doc_id).first()
         if doc and doc.current_version_id == document_version_id:
             doc.n_pages = n_pages
             doc.n_chunks = len(chunks)
             doc.file_path = effective_storage_path
+            if mineru_prefix:
+                doc.mineru_prefix = mineru_prefix
     else:
         db.query(Chunk).filter(Chunk.doc_id == doc_id).delete(synchronize_session=False)
-        db.query(Document).filter(Document.id == doc_id).update({
+        update_values = {
             Document.n_pages: n_pages,
             Document.n_chunks: len(chunks),
             Document.file_path: effective_storage_path,
-        })
+        }
+        if mineru_prefix:
+            update_values[Document.mineru_prefix] = mineru_prefix
+        db.query(Document).filter(Document.id == doc_id).update(update_values)
 
     if chunk_records:
-        db.bulk_save_objects(chunk_records)
+        # add_all + flush so chunk PKs are populated for the figure rows.
+        db.add_all(chunk_records)
+        db.flush()
+
+        image_rows = []
+        for i, chunk in enumerate(chunks):
+            images = chunk.get("images") or []
+            if images:
+                image_rows.extend(
+                    _build_image_chunk_rows(chunk_records[i].id, images, mineru_prefix)
+                )
+        if image_rows:
+            db.add_all(image_rows)
 
     return n_pages, len(chunks)

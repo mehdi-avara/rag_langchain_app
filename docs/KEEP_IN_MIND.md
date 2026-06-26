@@ -146,6 +146,54 @@ module, point it here first.
 
 ---
 
+## MinerU derived artifacts in S3 (`mineru/` prefix)
+
+After a PDF is processed, the MinerU-derived artifacts are persisted next to the
+source asset under a parallel prefix, **keyed off `asset_id`** (so each
+`DocumentVersion` keeps an isolated bundle and re-uploads never clobber a prior
+version's images):
+
+```
+companies/{company_id}/assets/{asset_id}/original          # source PDF (existing)
+companies/{company_id}/assets/{asset_id}/mineru/middle.json # rewritten _middle.json
+companies/{company_id}/assets/{asset_id}/mineru/images/<name>
+companies/{company_id}/assets/{asset_id}/mineru/original.pdf # working copy
+```
+
+Key facts to keep in mind:
+
+- The local MinerU working dir writes into a **method-named subfolder**
+  (`original/auto/...`, where `auto` becomes `vlm`/`ocr`/`txt` per
+  `MINERU_METHOD`). **Never hardcode `auto`** — discover the bundle with
+  `components.folders.find_processed_bundle` / `find_processed_images_dir`
+  (rglob-based). In S3 the method subfolder is flattened away: figures always
+  land directly under `mineru/images/`.
+- Image references are rewritten **once, in `core.mineru_artifacts.rewrite_middle_json_image_refs`**,
+  *before* chunking, to the stable host-relative path
+  `/documents/{doc_id}/images/{filename}` (matches the real route). The original
+  bare filename is preserved as `span["image_name"]` so the S3 key stays
+  derivable. The chunk builder consumes this rewritten path verbatim — there is
+  no second URL-rewrite in the builder.
+- **Stored vs. returned:** `chunks.content` and `_middle.json` hold the stable
+  `/documents/...` path (never expires). Every endpoint that returns chunk text
+  (`get_chunk`, `GET /{doc_id}/chunks`, `/search`, `/ask`) rewrites those refs at
+  read time via `core.chunk_render.render_chunk_content_for_client` to a **fresh
+  presigned S3 GET URL** (TTL = `S3_DOWNLOAD_EXPIRES_SECONDS`). If you add a new
+  path that surfaces chunk content, apply that helper too.
+- `image_chunks` is the chunk↔figure association (repurposed: `storage_key`,
+  `page_num`, `caption`, `bbox`; the old `image_data` column was dropped). It is
+  populated during ingestion from figure spans.
+- `documents.mineru_prefix` / `document_versions.mineru_prefix` record the
+  `mineru/` prefix so serving, retrieval rewriting, and DI can resolve S3 without
+  guessing.
+- Image serving (`GET /{doc_id}/images/{path}`) streams from S3 first and falls
+  back to the **discovered** local subfolder. S3 upload at ingestion is
+  best-effort (non-fatal): a failure logs a catalogued error but never loses the
+  text chunks. Use the `mineru.backfill_s3` Celery task to migrate existing docs
+  (idempotent).
+
+---
+
 ## Most important problems in the current code (tech debt to address)
 
 Ordered roughly by impact:

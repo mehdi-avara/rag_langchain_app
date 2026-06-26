@@ -12,6 +12,7 @@ import zipfile
 import posixpath
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
+from core.chunk_render import render_chunk_content_for_client, build_chunk_images
 from deps import require_permission
 from Models import User, Document, DocumentVersion, Chunk, DocumentStatusType, UserDocumentAccess
 from db.init_db import get_db
@@ -517,6 +518,29 @@ def _resolve_accessible_document_search_ids(
     return requested_ids
 
 
+def _render_part_text_hits(hits, db: Session):
+    """Rewrite each semantic hit's ``part_text`` (raw chunk content) so any
+    image references become openable presigned URLs in the response."""
+    if not hits:
+        return hits
+
+    doc_ids = {h.get("document_id") for h in hits if isinstance(h, dict) and h.get("document_id") is not None}
+    if not doc_ids:
+        return hits
+
+    docs = {
+        d.id: d
+        for d in db.query(Document).filter(Document.id.in_(doc_ids)).all()
+    }
+    for h in hits:
+        if not isinstance(h, dict):
+            continue
+        doc = docs.get(h.get("document_id"))
+        if doc is not None and h.get("part_text"):
+            h["part_text"] = render_chunk_content_for_client(h["part_text"], doc, db)
+    return hits
+
+
 @router.post("/search", response_model=DocumentSearchResponse, status_code=status.HTTP_200_OK)
 async def search_documents(
     payload: DocumentSearchRequest,
@@ -551,6 +575,7 @@ async def search_documents(
             doc_ids=doc_ids,
             limit=payload.limit,
         )
+        hits = _render_part_text_hits(hits, db)
 
     return {
         "mode": mode,
@@ -624,6 +649,10 @@ async def ask_documents(
 
     used_chunk_ids, used_comment_ids, citations = parse_semantic_citations(answer)
 
+    # Rewrite image refs in the references returned to the client (the LLM has
+    # already consumed the original stable-path content above).
+    references = _render_part_text_hits(references, db)
+
     return {
         "answer": answer,
         "citations": citations,
@@ -684,7 +713,8 @@ async def get_chunk(
         "start_pos": chunk.start_pos,
         "end_pos": chunk.end_pos,
         "chunk_type": chunk.chunk_type,
-        "content": chunk.content,
+        "content": render_chunk_content_for_client(chunk.content, doc, db),
+        "images": build_chunk_images(chunk, doc, db),
     }
 
 
@@ -1095,7 +1125,20 @@ async def browse_chunks(
         .all()
     )
 
-    return chunks
+    return [
+        ChunkOut(
+            id=chunk.id,
+            doc_id=chunk.doc_id,
+            page_num=chunk.page_num,
+            chunk_type=chunk.chunk_type,
+            content=render_chunk_content_for_client(chunk.content, doc, db),
+            start_pos=chunk.start_pos,
+            end_pos=chunk.end_pos,
+            created_at=chunk.created_at,
+            images=build_chunk_images(chunk, doc, db),
+        )
+        for chunk in chunks
+    ]
 
 
 @router.get("/{doc_id}/images/{image_path:path}")
@@ -1107,26 +1150,11 @@ async def get_document_image(
 ):
     doc = _get_accessible_document(db, doc_id, current_user, "read")
 
-    if not doc.file_path:
-        raise HTTPException(status_code=404, detail="No file path found for this document")
-
-    full_image_path = Path(settings.files_dir) / doc.file_path / "original" / "auto" / "images" / image_path
-
-    try:
-        full_image_path = full_image_path.resolve()
-        expected_base = (Path(settings.files_dir) / doc.file_path / "original" / "auto").resolve()
-
-        if not str(full_image_path).startswith(str(expected_base)):
-            raise HTTPException(status_code=403, detail="Invalid image path")
-
-    except HTTPException:
-        raise
-
-    except Exception:
+    # Only the basename is a real figure file; using the basename for both the
+    # S3 key and the local lookup inherently prevents path traversal.
+    filename = Path(image_path).name
+    if not filename or ".." in image_path:
         raise HTTPException(status_code=400, detail="Invalid image path")
-
-    if not full_image_path.exists() or not full_image_path.is_file():
-        raise HTTPException(status_code=404, detail="Image not found")
 
     media_types = {
         ".jpg": "image/jpeg",
@@ -1137,8 +1165,40 @@ async def get_document_image(
         ".svg": "image/svg+xml",
         ".bmp": "image/bmp",
     }
+    media_type = media_types.get(Path(filename).suffix.lower(), "application/octet-stream")
 
-    media_type = media_types.get(full_image_path.suffix.lower(), "application/octet-stream")
+    # 1) Serve from S3 (durable, cross-box) when the derived bundle exists.
+    if doc.mineru_prefix:
+        key = f"{doc.mineru_prefix.rstrip('/')}/images/{filename}"
+        manager = StorageManager(db)
+        stream = manager.stream_object(key)
+        if stream is not None:
+            return StreamingResponse(stream, media_type=media_type)
+
+    # 2) Local fallback: discover the method subfolder dynamically (never the
+    #    hardcoded `auto`) and serve from the working directory if present.
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    from components.folders import find_processed_images_dir
+
+    doc_dir = Path(settings.files_dir) / doc.file_path
+    images_dir = find_processed_images_dir(doc_dir)
+    if images_dir is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    full_image_path = (images_dir / filename).resolve()
+    try:
+        base = images_dir.resolve()
+        if os.path.commonpath([str(base), str(full_image_path)]) != str(base):
+            raise HTTPException(status_code=403, detail="Invalid image path")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image path")
+
+    if not full_image_path.exists() or not full_image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
 
     return FileResponse(
         path=full_image_path,

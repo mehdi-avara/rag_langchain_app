@@ -29,6 +29,26 @@ def _get_token_encoder():
     return _TOKEN_ENCODER
 
 
+def _format_image_md(img_buket_path: str, raw_path: str) -> str:
+    """Build a markdown image URL.
+
+    If ``raw_path`` is already rooted/absolute (an app path like
+    ``/documents/{id}/images/{file}`` produced by the ingestion-time rewrite, or
+    an http/data URL), it is used verbatim. Otherwise it is joined with the
+    legacy bucket path (``images/<file>``) for backward compatibility with any
+    flow that did not rewrite the reference first.
+    """
+    raw_path = (raw_path or "").strip()
+    if not raw_path:
+        return ""
+    if raw_path.startswith(("/", "http://", "https://", "data:")):
+        return f"![]({raw_path})"
+    base = (img_buket_path or "").rstrip("/")
+    if base:
+        return f"![]({base}/{raw_path})"
+    return f"![]({raw_path})"
+
+
 def __is_hyphen_at_line_end(line):
     """Check if a line ends with one or more letters followed by a hyphen.
 
@@ -61,7 +81,7 @@ def make_blocks_to_markdown(paras_of_layout,
             if para_block['lines'][0]['spans'][0].get('content', ''):
                 para_text = merge_para_with_text(para_block)
             else:
-                para_text += f"![]({img_buket_path}/{para_block['lines'][0]['spans'][0]['image_path']})"
+                para_text += _format_image_md(img_buket_path, para_block['lines'][0]['spans'][0]['image_path'])
         elif para_type == BlockType.IMAGE:
             if mode == MakeMode.NLP_MD:
                 continue
@@ -79,7 +99,7 @@ def make_blocks_to_markdown(paras_of_layout,
                                 for span in line['spans']:
                                     if span['type'] == ContentType.IMAGE:
                                         if span.get('image_path', ''):
-                                            para_text += f"![]({img_buket_path}/{span['image_path']})"
+                                            para_text += _format_image_md(img_buket_path, span['image_path'])
                     for block in para_block['blocks']:  # 3rd.拼image_footnote
                         if block['type'] == BlockType.IMAGE_FOOTNOTE:
                             para_text += '  \n' + merge_para_with_text(block)
@@ -90,7 +110,7 @@ def make_blocks_to_markdown(paras_of_layout,
                                 for span in line['spans']:
                                     if span['type'] == ContentType.IMAGE:
                                         if span.get('image_path', ''):
-                                            para_text += f"![]({img_buket_path}/{span['image_path']})"
+                                            para_text += _format_image_md(img_buket_path, span['image_path'])
                     for block in para_block['blocks']:  # 2nd.拼image_caption
                         if block['type'] == BlockType.IMAGE_CAPTION:
                             para_text += '  \n' + merge_para_with_text(block)
@@ -110,7 +130,7 @@ def make_blocks_to_markdown(paras_of_layout,
                                     if span.get('html', ''):
                                         para_text += f"\n{span['html']}\n"
                                     elif span.get('image_path', ''):
-                                        para_text += f"![]({img_buket_path}/{span['image_path']})"
+                                        para_text += _format_image_md(img_buket_path, span['image_path'])
                 for block in para_block['blocks']:  # 3rd.拼table_footnote
                     if block['type'] == BlockType.TABLE_FOOTNOTE:
                         para_text += '\n' + merge_para_with_text(block) + '  '
@@ -186,6 +206,63 @@ def _is_low_signal_embedding_text(text: str, min_tokens: int) -> bool:
     # return alnum_count < 8
 
 
+def _image_filename_from_span(span: dict) -> str:
+    """Best filename for a figure span: the preserved ``image_name`` (set by the
+    ingestion-time rewrite) or the basename of ``image_path``."""
+    name = span.get("image_name")
+    if isinstance(name, str) and name.strip():
+        return name.strip().split("/")[-1]
+    raw = span.get("image_path") or ""
+    return str(raw).strip().split("/")[-1]
+
+
+def extract_figure_refs_from_block(para_block: dict, page_idx: int) -> List[Dict]:
+    """Extract figure references (images/tables) from one MinerU para block.
+
+    Returns a list of ``{"filename", "page_num", "bbox", "caption"}`` dicts —
+    one per IMAGE/TABLE body figure. ``page_num`` is the 0-based ``page_idx``
+    (callers may convert as needed). Tables rendered as HTML (no image) are
+    skipped since they have no figure file.
+    """
+    refs: List[Dict] = []
+    para_type = para_block.get("type")
+    if para_type not in (BlockType.IMAGE, BlockType.TABLE):
+        return refs
+
+    body_types = {BlockType.IMAGE_BODY, BlockType.TABLE_BODY}
+    caption_types = {BlockType.IMAGE_CAPTION, BlockType.TABLE_CAPTION}
+
+    caption_parts: List[str] = []
+    for block in para_block.get("blocks", []) or []:
+        if block.get("type") in caption_types:
+            try:
+                txt = merge_para_with_text(block).strip()
+            except Exception:
+                txt = ""
+            if txt:
+                caption_parts.append(txt)
+    caption = " ".join(caption_parts).strip()
+
+    for block in para_block.get("blocks", []) or []:
+        if block.get("type") not in body_types:
+            continue
+        for line in block.get("lines", []) or []:
+            for span in line.get("spans", []) or []:
+                if span.get("type") not in (ContentType.IMAGE, ContentType.TABLE):
+                    continue
+                filename = _image_filename_from_span(span)
+                if not filename:
+                    continue
+                bbox = span.get("bbox") or block.get("bbox") or para_block.get("bbox")
+                refs.append({
+                    "filename": filename,
+                    "page_num": page_idx,
+                    "bbox": bbox,
+                    "caption": caption,
+                })
+    return refs
+
+
 def build_dual_mode_chunks_from_pdf_info(
     pdf_info_dict: list,
     doc_id: int,
@@ -229,7 +306,8 @@ def build_dual_mode_chunks_from_pdf_info(
 
             mm_text = _normalize_text(mm_text)
             nlp_text = _normalize_text(_remove_image_markdown(nlp_text))
-            if not mm_text and not nlp_text:
+            figure_refs = extract_figure_refs_from_block(para_block, page_idx)
+            if not mm_text and not nlp_text and not figure_refs:
                 continue
 
             units.append(
@@ -238,6 +316,7 @@ def build_dual_mode_chunks_from_pdf_info(
                     "chunk_text": mm_text,
                     "chunk_embedding_text": nlp_text,
                     "tokens": token_len(nlp_text),
+                    "images": figure_refs,
                 }
             )
 
@@ -272,15 +351,23 @@ def build_dual_mode_chunks_from_pdf_info(
         selected = units[i:j]
         mm_chunk = _normalize_text("\n".join(u["chunk_text"] for u in selected if u["chunk_text"]))
         nlp_chunk = _normalize_text("\n".join(u["chunk_embedding_text"] for u in selected if u["chunk_embedding_text"]))
+        chunk_images: List[Dict] = []
+        for u in selected:
+            chunk_images.extend(u.get("images") or [])
 
-        if not _is_low_signal_embedding_text(nlp_chunk, min_chunk_tokens):
-            mm_chunk = _rewrite_image_urls(mm_chunk, base_url=base_url, doc_id=doc_id)
+        # A chunk is worth keeping if it has signal text OR carries a figure.
+        if (not _is_low_signal_embedding_text(nlp_chunk, min_chunk_tokens)) or chunk_images:
+            # Image refs were already rewritten to canonical app paths in the
+            # middle json before chunking (see core.mineru_artifacts), so the
+            # chunk text already carries the correct, stable image URL. No second
+            # URL-rewrite mechanism is applied here.
             chunk = {
                 "chunk_text": mm_chunk,
                 "chunk_embedding_text": nlp_chunk,
                 "start_page": selected[0]["page_idx"],
                 "end_page": selected[-1]["page_idx"],
                 "token_count": token_len(nlp_chunk),
+                "images": chunk_images,
             }
             chunks.append(chunk)
 

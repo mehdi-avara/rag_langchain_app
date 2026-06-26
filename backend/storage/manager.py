@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import mimetypes
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator
 
 import boto3
 from botocore.client import Config
@@ -250,3 +252,130 @@ class StorageManager:
             raise HTTPException(status_code=500, detail="Failed to download asset from storage") from exc
 
         return asset
+
+    # ------------------------------------------------------------------
+    # Derived-artifact helpers (server-side, no presign / no user check).
+    #
+    # These are the single chokepoint for writing and reading MinerU-derived
+    # artifacts (middle.json, figures, working PDF) that live next to the
+    # source asset under a parallel `mineru/` prefix. They are invoked from
+    # trusted server-side code (Celery ingestion, backfill, image route) which
+    # has already performed document-level access checks, so they operate on
+    # raw object keys without the per-user company checks used by the
+    # presigned-URL flows above. See docs/MINERU_S3_AND_CHUNK_IMAGES_PLAN.md.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def derived_prefix(asset: FileAsset) -> str:
+        """S3 key prefix for an asset's derived MinerU artifacts.
+
+        Keyed off the asset (not the document) so each DocumentVersion keeps an
+        isolated bundle and re-uploads never clobber a prior version's images.
+        """
+        return f"companies/{asset.company_id}/assets/{asset.id}/mineru"
+
+    @classmethod
+    def derived_key(cls, asset: FileAsset, suffix: str) -> str:
+        """Full object key for a derived artifact, e.g. ``images/foo.jpg``."""
+        clean = (suffix or "").lstrip("/")
+        return f"{cls.derived_prefix(asset)}/{clean}"
+
+    @staticmethod
+    def _guess_content_type(name: str, fallback: str = "application/octet-stream") -> str:
+        guessed, _ = mimetypes.guess_type(name)
+        return guessed or fallback
+
+    def upload_bytes(self, *, key: str, data: bytes, content_type: str | None = None) -> str:
+        """Server-side upload of in-memory bytes to ``key``. Returns the key."""
+        self._ensure_bucket()
+        try:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=data,
+                ContentType=content_type or self._guess_content_type(key),
+            )
+        except ClientError as exc:
+            raise HTTPException(status_code=500, detail="Failed to upload object to storage") from exc
+        return key
+
+    def upload_path(self, *, key: str, path: str | Path, content_type: str | None = None) -> str:
+        """Server-side upload of a local file to ``key``. Returns the key."""
+        self._ensure_bucket()
+        source = Path(path)
+        extra = {"ContentType": content_type or self._guess_content_type(source.name)}
+        try:
+            self.client.upload_file(str(source), self.bucket, key, ExtraArgs=extra)
+        except ClientError as exc:
+            raise HTTPException(status_code=500, detail="Failed to upload file to storage") from exc
+        return key
+
+    def object_exists(self, key: str) -> bool:
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError:
+            return False
+
+    def download_key_to_path(self, *, key: str, target_path: str | Path) -> bool:
+        """Download a raw object key to a local path. Returns False if absent."""
+        target = Path(target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.client.download_file(self.bucket, key, str(target))
+            return True
+        except ClientError:
+            return False
+
+    def get_object_bytes(self, key: str) -> tuple[bytes, str] | None:
+        """Return ``(body, content_type)`` for a raw key, or None if absent."""
+        try:
+            obj = self.client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError:
+            return None
+        body = obj["Body"].read()
+        content_type = obj.get("ContentType") or self._guess_content_type(key)
+        return body, content_type
+
+    def stream_object(self, key: str, chunk_size: int = 1024 * 256) -> Iterator[bytes] | None:
+        """Stream a raw key from S3, or None if the object is absent."""
+        try:
+            obj = self.client.get_object(Bucket=self.bucket, Key=key)
+        except ClientError:
+            return None
+
+        body = obj["Body"]
+
+        def _iter() -> Iterator[bytes]:
+            try:
+                while True:
+                    data = body.read(chunk_size)
+                    if not data:
+                        break
+                    yield data
+            finally:
+                body.close()
+
+        return _iter()
+
+    def create_presigned_get_for_key(
+        self,
+        *,
+        key: str,
+        expires_seconds: int | None = None,
+        content_type: str | None = None,
+    ) -> str:
+        """Presigned GET URL for an arbitrary object key (no DB/user lookup).
+
+        Used to mint short-lived, frontend-openable URLs for derived figures at
+        read time. TTL defaults to the system-wide download expiry.
+        """
+        expires = expires_seconds or settings.S3_DOWNLOAD_EXPIRES_SECONDS
+        params = {"Bucket": self.bucket, "Key": key}
+        if content_type:
+            params["ResponseContentType"] = content_type
+        return self.presign_client.generate_presigned_url(
+            ClientMethod="get_object",
+            Params=params,
+            ExpiresIn=expires,
+        )
