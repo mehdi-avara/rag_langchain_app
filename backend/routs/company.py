@@ -62,6 +62,9 @@ def update_company_settings(
 
             company.base_currency = new_base_currency
 
+    if "allow_self_approval" in data and data["allow_self_approval"] is not None:
+        company.allow_self_approval = bool(data["allow_self_approval"])
+
     db.commit()
     db.refresh(company)
 

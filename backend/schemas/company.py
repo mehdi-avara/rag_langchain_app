@@ -13,8 +13,10 @@ class CompanySettingsOut(BaseModel):
     slug: str
     base_currency: FinancialCurrency
     is_active: bool
+    allow_self_approval: bool
 
 
 class CompanySettingsUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     base_currency: Optional[FinancialCurrency] = None
+    allow_self_approval: Optional[bool] = None

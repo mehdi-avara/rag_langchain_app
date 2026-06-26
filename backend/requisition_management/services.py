@@ -9,6 +9,7 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from Models.company import Company
 from Models.user import User
 from core.exceptions.error_codes import (
     MATERIAL_REQUISITION_ACCESS_DENIED,
@@ -168,6 +169,26 @@ def _require_approval_permission(current_user: User) -> None:
             MATERIAL_REQUISITION_ACCESS_DENIED,
             "Approval permission is required",
         )
+
+
+def _self_approval_allowed(db: Session, current_user: User) -> bool:
+    """Whether this user's company permits approving one's own requisition.
+
+    Controlled by Company.allow_self_approval (a company-admin setting). Defaults
+    to False, preserving the requester-cannot-approve-own segregation of duties.
+    The workflow steps (Draft → Submitted → Approved) are unchanged either way;
+    this flag only governs whether the same user may perform the approval step.
+    """
+    if current_user.company_id is None:
+        return False
+
+    allowed = (
+        db.query(Company.allow_self_approval)
+        .filter(Company.id == current_user.company_id)
+        .scalar()
+    )
+
+    return bool(allowed)
 
 
 def _validate_estimated_cost_values(
@@ -623,7 +644,10 @@ def transition_requisition(
     else:
         _require_approval_permission(current_user)
 
-        if requisition.requested_by_user_id == current_user.id:
+        if (
+            requisition.requested_by_user_id == current_user.id
+            and not _self_approval_allowed(db, current_user)
+        ):
             _raise(
                 status.HTTP_403_FORBIDDEN,
                 MATERIAL_REQUISITION_ACCESS_DENIED,
