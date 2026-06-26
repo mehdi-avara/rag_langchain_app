@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-primary, #0f1117);
+    color: var(--text-primary, #e2e8f0);
+    min-height: 100vh;
+    padding: 16px;
+  }
+  h1 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: var(--text-secondary, #94a3b8); margin-bottom: 16px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+    border: 1.5px solid transparent; transition: all .15s;
+    background: var(--bg-secondary, #1e2433); color: var(--text-secondary, #94a3b8);
+  }
+  .tab:hover { border-color: #e879f9; color: #f0abfc; }
+  .tab.active { background: #2d1c3b; border-color: #a855f7; color: #f0abfc; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Phase header */
+  .phase-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 14px;
+    border-radius: 8px; border-left: 3px solid #a855f7; background: #1e1528;
+  }
+  .phase-header h2 { font-size: 14px; font-weight: 700; }
+  .phase-header .badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; background: #4a1d8a; color: #e9d5ff; }
+  .phase-header p { font-size: 11px; color: var(--text-secondary, #94a3b8); margin-top: 2px; }
+
+  /* loop banner */
+  .loop-banner {
+    background: #1e1528; border: 1px solid #a855f744; border-radius: 10px;
+    padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .loop-banner .loop-label { font-size: 11px; color: #c084fc; font-weight: 600; }
+  .loop-steps { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+  .ls { font-size: 11px; padding: 4px 10px; border-radius: 5px; font-weight: 600; white-space: nowrap; }
+  .ls-defect { background: #3b1515; color: #fca5a5; border: 1px solid #ef444444; }
+  .ls-wo     { background: #1e2a6e; color: #a0b4ff; border: 1px solid #4f6ef744; }
+  .ls-pm     { background: #14532d; color: #86efac; border: 1px solid #22c55e44; }
+  .ls-inspect{ background: #3b2207; color: #fcd34d; border: 1px solid #f59e0b44; }
+  .ls-arrow  { color: #4b5563; font-size: 13px; margin: 0 3px; }
+  .ls-close  { background: #2d1c3b; color: #f0abfc; border: 1px solid #a855f744; }
+
+  /* modules grid */
+  .modules-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; margin-bottom: 20px;
+  }
+  .module-card {
+    background: var(--bg-secondary, #1e2433); border-radius: 10px; padding: 14px;
+    border: 1px solid #2d3748; cursor: pointer; transition: all .15s;
+  }
+  .module-card:hover { border-color: #a855f7; transform: translateY(-1px); }
+  .module-card.expanded { border-color: #a855f7; background: #1e1528; }
+  .module-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .module-icon { font-size: 18px; }
+  .module-name { font-size: 13px; font-weight: 700; }
+  .module-tag {
+    font-size: 10px; padding: 2px 7px; border-radius: 8px; font-weight: 600; margin-left: auto;
+    background: #4a1d8a; color: #e9d5ff;
+  }
+  .module-desc { font-size: 11px; color: var(--text-secondary, #94a3b8); margin-bottom: 10px; line-height: 1.5; }
+  .expand-hint { font-size: 10px; color: #a855f7; }
+  .use-cases { display: none; }
+  .module-card.expanded .use-cases { display: block; }
+  .uc-list { list-style: none; }
+  .uc-item {
+    display: flex; align-items: flex-start; gap: 8px; padding: 6px 0;
+    border-bottom: 1px solid #2d1c3b; font-size: 11px; line-height: 1.4;
+  }
+  .uc-item:last-child { border-bottom: none; }
+  .uc-actor {
+    font-size: 9px; padding: 1px 5px; border-radius: 4px; font-weight: 600;
+    white-space: nowrap; margin-top: 1px; flex-shrink: 0;
+  }
+  .actor-admin      { background: #4c1d95; color: #c4b5fd; }
+  .actor-technician { background: #1e3a5f; color: #93c5fd; }
+  .actor-planner    { background: #14532d; color: #86efac; }
+  .actor-supervisor { background: #3b2207; color: #fcd34d; }
+  .actor-operator   { background: #3b1515; color: #fca5a5; }
+  .actor-system     { background: #1e2433; color: #94a3b8; border: 1px solid #4b5563; }
+  .uc-text { color: var(--text-primary, #e2e8f0); }
+  .uc-text .perm { font-size: 9px; color: #64748b; font-family: monospace; display: block; margin-top: 2px; }
+  .uc-event { font-size: 9px; background: #3b2207; color: #fcd34d; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+
+  /* ROLES */
+  .roles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .role-card { background: var(--bg-secondary, #1e2433); border-radius: 10px; padding: 14px; border: 1px solid #2d3748; }
+  .role-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .role-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .role-name { font-size: 13px; font-weight: 700; }
+  .role-desc { font-size: 11px; color: #94a3b8; }
+  .perm-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .perm-chip { font-size: 9px; padding: 2px 6px; border-radius: 4px; font-family: monospace; background: #1a2040; border: 1px solid #2d3748; color: #94a3b8; }
+  .perm-chip.has { background: #1e1528; border-color: #a855f744; color: #e9d5ff; }
+  .test-as { margin-top: 12px; padding-top: 10px; border-top: 1px solid #2d3748; }
+  .test-as h4 { font-size: 11px; font-weight: 600; color: #f59e0b; margin-bottom: 6px; }
+  .test-steps { font-size: 11px; color: #94a3b8; line-height: 1.6; }
+  .test-steps li { margin-left: 14px; list-style: decimal; }
+
+  /* FLOWS */
+  .flow-section { margin-bottom: 20px; }
+  .flow-section h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #c084fc; }
+  .flow-diagram { background: var(--bg-secondary, #1e2433); border-radius: 10px; padding: 16px; border: 1px solid #2d1c3b; overflow-x: auto; }
+  .flow-row { display: flex; align-items: center; gap: 0; margin-bottom: 8px; flex-wrap: nowrap; min-width: max-content; }
+  .flow-node { padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .flow-arrow { color: #4b5563; font-size: 14px; margin: 0 4px; flex-shrink: 0; }
+  .fn-draft   { background: #1e2433; border: 1px solid #4b5563; color: #94a3b8; }
+  .fn-action  { background: #1e2a6e; border: 1px solid #4f6ef7; color: #a0b4ff; }
+  .fn-approve { background: #14532d; border: 1px solid #22c55e; color: #86efac; }
+  .fn-event   { background: #3b2207; border: 1px solid #f59e0b; color: #fcd34d; }
+  .fn-done    { background: #1e1528; border: 1px solid #a855f7; color: #f0abfc; }
+  .fn-alert   { background: #3b1515; border: 1px solid #ef4444; color: #fca5a5; }
+  .flow-label { font-size: 10px; color: #64748b; margin-left: 8px; font-style: italic; }
+  .actor-pill { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; margin-right: 8px; flex-shrink: 0; }
+
+  /* WHAT IS PHASE 2 explanation box */
+  .explainer {
+    background: #1e1528; border: 1px solid #a855f744; border-radius: 10px;
+    padding: 16px; margin-bottom: 16px; font-size: 12px; line-height: 1.7; color: #c4b5fd;
+  }
+  .explainer strong { color: #f0abfc; }
+  .explainer .phases-before { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .pb { font-size: 10px; padding: 3px 8px; border-radius: 5px; font-weight: 600; }
+</style>
+</head>
+<body>
+<h2 class="sr-only">PORSA CMMS Phase 2 Use Case Diagram — Maintenance and Asset Management modules, actors, and workflows</h2>
+<h1>🔧 PORSA CMMS — Phase 2: Maintenance &amp; Admin</h1>
+<p class="subtitle">Asset Registry · Work Orders · Preventive Maintenance · Inspections · Defect Reporting · Notifications · KPI Dashboard</p>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('modules')">📦 Modules &amp; Use Cases</div>
+  <div class="tab" onclick="showTab('roles')">👥 Actors &amp; How to Test</div>
+  <div class="tab" onclick="showTab('flows')">🔄 Key Workflows</div>
+  <div class="tab" onclick="showTab('overview')">💡 What Is Phase 2?</div>
+</div>
+
+<!-- OVERVIEW -->
+<div id="panel-overview" class="panel">
+  <div class="explainer">
+    <strong>Phase 2 is the maintenance loop.</strong> Phases 0 and 1 gave you the financial and procurement foundation — money, suppliers, materials, warehouse stock. Phase 2 answers the operational question: <em>what physical equipment do we have, what's wrong with it, and how do we fix and maintain it?</em>
+    <br><br>
+    <strong>The loop:</strong> An operator spots a problem on a tag → raises a <strong>Defect Report</strong> → a supervisor creates a <strong>Work Order</strong> (corrective maintenance) → a technician executes the work, consuming stock from the warehouse (auto stock movement) → the WO closes → the defect auto-resolves. In parallel, a <strong>Preventive Maintenance</strong> engine auto-generates work orders on a time or meter schedule so problems are caught before they happen.
+    <br><br>
+    <strong>What's new in Phase 2 that wasn't there before:</strong>
+    <div class="phases-before" style="margin-top:10px;">
+      <span class="pb" style="background:#1e1528;color:#c084fc;border:1px solid #a855f744;">🏭 Plant → System → Asset hierarchy</span>
+      <span class="pb" style="background:#1e2a6e;color:#a0b4ff;border:1px solid #4f6ef744;">📋 Work Order lifecycle</span>
+      <span class="pb" style="background:#14532d;color:#86efac;border:1px solid #22c55e44;">📅 Auto PM scheduling (Celery Beat)</span>
+      <span class="pb" style="background:#3b2207;color:#fcd34d;border:1px solid #f59e0b44;">✅ Inspection checklists</span>
+      <span class="pb" style="background:#3b1515;color:#fca5a5;border:1px solid #ef444444;">🚨 Defect / Fault reporting</span>
+      <span class="pb" style="background:#2d1c3b;color:#f0abfc;border:1px solid #a855f744;">🔔 Notification engine</span>
+      <span class="pb" style="background:#1e1528;color:#c084fc;border:1px solid #a855f744;">📊 Maintenance KPI Dashboard</span>
+    </div>
+    <br>
+    <strong>The headline KPI:</strong> "Number of critical tags with an open fault" — always visible at the top of the maintenance dashboard. A critical tag (defined in tag metadata) that has an unresolved defect is the system's most important signal.
+  </div>
+
+  <div class="loop-banner">
+    <span class="loop-label">🔁 The maintenance loop:</span>
+    <div class="loop-steps">
+      <span class="ls ls-defect">🚨 Fault on tag</span>
+      <span class="ls-arrow">→</span>
+      <span class="ls ls-wo">📋 Work Order</span>
+      <span class="ls-arrow">→</span>
+      <span class="ls ls-inspect">✅ Inspect &amp; fix</span>
+      <span class="ls-arrow">→</span>
+      <span class="ls ls-close">✔ WO close → defect resolved</span>
+      <span class="ls-arrow">⟳</span>
+      <span class="ls ls-pm">📅 PM prevents next fault</span>
+    </div>
+  </div>
+
+  <p style="font-size:12px;color:#94a3b8;margin-top:10px;">Switch to <em>Modules &amp; Use Cases</em> to see every individual action users can take, or <em>Key Workflows</em> to trace the full flows end-to-end.</p>
+</div>
+
+<!-- MODULES -->
+<div id="panel-modules" class="panel active">
+  <div class="loop-banner">
+    <span class="loop-label">🔁 Maintenance loop:</span>
+    <div class="loop-steps">
+      <span class="ls ls-defect">🚨 Defect</span><span class="ls-arrow">→</span>
+      <span class="ls ls-wo">📋 Work Order</span><span class="ls-arrow">→</span>
+      <span class="ls ls-inspect">✅ Inspection</span><span class="ls-arrow">→</span>
+      <span class="ls ls-close">✔ Close</span><span class="ls-arrow">→</span>
+      <span class="ls ls-pm">📅 PM auto-schedule</span>
+    </div>
+  </div>
+  <div class="modules-grid">
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🏭</span>
+        <span class="module-name">Asset Management</span>
+        <span class="module-tag">Phase 2.1</span>
+      </div>
+      <p class="module-desc">The equipment registry: Plant → AssetSystem → Asset → Component. Everything you maintain lives here with its history.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Create Plants (Refinery / Platform / Pipeline)<span class="perm">asset_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Create Asset Systems within a plant (Process / Utility / Fire&amp;Gas / Instrument)<span class="perm">asset_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Register an Asset (tag number e.g. P-1001, serial, type: Rotating/Static/Electrical…)<span class="perm">asset_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Link asset to an equipment model (manufacturer + specs from model catalog)<span class="perm">asset_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Set asset criticality (A / B / C) and status (Active / Standby / Under Maintenance)<span class="perm">asset_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Add sub-components under an asset (parent_asset_id hierarchy)<span class="perm">asset_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Add technical specifications (JSON key-value: pressure, temp, flow rate…)<span class="perm">asset_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Define required spare parts for an asset (links to Item catalog)<span class="perm">asset_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Attach documents to an asset (P&amp;IDs, manuals, drawings)<span class="perm">asset_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">View full lifecycle history (installed / modified / repaired / replaced — append-only)<span class="perm">asset_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Search assets by tag number, name, or description (keyword / semantic)<span class="perm">asset_management:search</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Ask AI about an asset ("what are the common failures of pump P-1001?")<span class="perm">asset_management:ask</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📋</span>
+        <span class="module-name">Work Order Management</span>
+        <span class="module-tag">Phase 2.2 — Core</span>
+      </div>
+      <p class="module-desc">The heart of the CMMS. Corrective, preventive, inspection, and modification work orders — from draft to closure, including material consumption and failure coding.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-operator">Operator</span><span class="uc-text">Create a Work Order (type: CM/PM/Inspection/Modification, priority: Critical/High/Medium/Low)<span class="perm">work_order_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-operator">Operator</span><span class="uc-text">Link WO to an asset (e.g. pump P-1001)<span class="perm">work_order_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-operator">Operator</span><span class="uc-text">Submit WO for approval (Draft → Submitted)<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Approve or reject the WO (Submitted → Approved / Rejected)<span class="perm">work_order_management:approve</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Plan WO: schedule start/end, assign to technician/team, add task checklist steps<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Plan materials needed (items from catalog, planned qty → reserve stock)<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Start the WO (In Progress), record actual labor hours and craft type<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Record actual material consumed (qty) → auto stock-out movement via Celery <span class="uc-event">📤 event</span><span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Record failure info (ISO 14224 failure code, cause, corrective action, root cause) for CM WOs<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Attach photos and reports to the WO<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Mark WO Completed (work done)<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Close the WO → auto-resolves linked defect <span class="uc-event">📤 event</span><span class="perm">work_order_management:close</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Put WO on hold (waiting for parts / clearance)<span class="perm">work_order_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View open backlog, MTTR/MTBF metrics, overdue WOs<span class="perm">work_order_management:summary</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Search WOs by number, title, asset tag, failure code<span class="perm">work_order_management:search</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Ask AI about work orders ("show me all CM WOs on pump P-1001 in the last year")<span class="perm">work_order_management:ask</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📅</span>
+        <span class="module-name">Preventive Maintenance (PM)</span>
+        <span class="module-tag">Phase 2.3</span>
+      </div>
+      <p class="module-desc">Define maintenance plans with tasks, triggers (calendar or meter-based), and schedules. Celery Beat auto-generates work orders when due.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Create a Maintenance Plan for an asset or system (e.g. "Pump P-1001 Monthly PM")<span class="perm">pm_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Add tasks to the plan (what to do: lubricate, inspect, replace filter…)<span class="perm">pm_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Set a trigger: CALENDAR (every N days) or METER (every N hours/km/cycles)<span class="perm">pm_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Define required materials per task (spare parts from Item catalog)<span class="perm">pm_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View PM calendar (what's due this week/month across all assets)<span class="perm">pm_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Update last-done date / meter reading → system recalculates next due date<span class="perm">pm_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-system">System</span><span class="uc-text">Daily Celery Beat: find due PM schedules → auto-generate Work Orders <span class="uc-event">📤 event</span><span class="perm">automated — no user action</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View PM compliance % (how many scheduled PMs were done on time)<span class="perm">pm_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Search plans and schedules<span class="perm">pm_management:search</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">✅</span>
+        <span class="module-name">Inspection Checklists</span>
+        <span class="module-tag">Phase 2.4</span>
+      </div>
+      <p class="module-desc">Structured inspection templates with pass/fail, numeric measure, and text response items — attached to PM tasks or individual assets.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Create an inspection checklist (name, description, list of steps)<span class="perm">inspection_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Add checklist items with response type: Pass/Fail | Numeric/Measure | Text<span class="perm">inspection_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Attach a checklist to a PM maintenance task or directly to an asset<span class="perm">inspection_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Execute an inspection — fill in results for each checklist item<span class="perm">inspection_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Record date, who performed it, and result per item<span class="perm">inspection_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">View inspection results history for an asset<span class="perm">inspection_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Search inspection records<span class="perm">inspection_management:search</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🚨</span>
+        <span class="module-name">Defect / Fault Reporting</span>
+        <span class="module-tag">Phase 2.5</span>
+      </div>
+      <p class="module-desc">Entry point of the maintenance loop — "a tag has a problem, this asset failed." Raises visibility on the KPI dashboard; feeds into Work Orders. Critical for the headline KPI.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-operator">Operator</span><span class="uc-text">Report a defect on a tag (P&amp;ID process position) with severity: Low/Medium/High/Critical<span class="perm">defect:write</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-operator">Operator</span><span class="uc-text">Specify the failed asset under that tag (optional — which pump/valve physically failed)<span class="perm">defect:write</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-operator">Operator</span><span class="uc-text">Attach photos to the defect report<span class="perm">defect:write</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Acknowledge a defect (Open → Acknowledged)<span class="perm">defect:write</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Raise a Work Order from a defect → links the two together<span class="perm">defect:write + work_order_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Add follow-up comments (all audit-logged)<span class="perm">defect:write</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Manually resolve or reject a defect<span class="perm">defect:resolve</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-system">System</span><span class="uc-text">WO close → auto-resolves linked defect <span class="uc-event">📤 event</span><span class="perm">automated via Celery</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View defect register (filter by tag / asset / status / severity)<span class="perm">defect:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">View dashboard KPI: critical tags with open faults (headline metric)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Search defects; export defect register to Excel/PDF<span class="perm">defect:read + defect:export</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Ask AI about defects ("which tags had critical faults this month?")<span class="perm">defect:ask</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🔔</span>
+        <span class="module-name">Notification Engine</span>
+        <span class="module-tag">Phase 2.6</span>
+      </div>
+      <p class="module-desc">Cross-module event → bell + email routing. Every important domain event (WO assigned, PM due, defect raised, low stock) triggers the right person.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-technician">Technician</span><span class="uc-text">Receive bell notification: "Work Order WO-2026-0042 assigned to you"<span class="perm">automatic on WO assignment</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Receive notification: "PM schedule due tomorrow — Pump P-1001 monthly lubrication"<span class="perm">automatic from PM engine</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Receive notification: "Critical defect DEF-2026-0009 raised on tag FV-201"<span class="perm">automatic on critical defect</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Receive notification: "Item #1042 (bearing kit) below reorder point — 3 units left"<span class="perm">automatic from warehouse reorder check</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-supervisor">Supervisor</span><span class="uc-text">Receive notification: "Work Order WO-2026-0038 is overdue by 2 days"<span class="perm">automatic beat job</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">View notification rules (what event → which role gets notified)<span class="perm">admin config</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📊</span>
+        <span class="module-name">Maintenance KPI Dashboard</span>
+        <span class="module-tag">Phase 2-R</span>
+      </div>
+      <p class="module-desc">The maintenance "view at a glance" — critical faults, WO backlog, MTTR/MTBF, PM compliance, cost trend, top-failing assets.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-admin">Manager</span><span class="uc-text">View headline KPI: # critical tags with an open fault (with trend vs last week)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View open WO backlog by priority (Critical / High / Medium / Low)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View MTTR (Mean Time to Repair) + MTBF trend over time<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View PM compliance % gauge vs target (are we completing scheduled PMs on time?)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View WO backlog trend line (open WOs over time)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View faults by tag criticality (A/B/C stacked bar)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View top failing tags/assets this period (horizontal bar)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">View maintenance cost over time (labor + material, base currency)<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Filter by period, unit/plant, criticality<span class="perm">maintenance:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-planner">Planner</span><span class="uc-text">Export maintenance report to Excel or PDF<span class="perm">maintenance:export</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ROLES -->
+<div id="panel-roles" class="panel">
+  <div class="roles-grid">
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#4c1d95;">👑</div>
+        <div><div class="role-name">System Admin / Maintenance Manager</div><div class="role-desc">Full access — configure and oversee everything</div></div>
+      </div>
+      <div class="perm-list">
+        <span class="perm-chip has">asset_management:create</span>
+        <span class="perm-chip has">work_order_management:approve</span>
+        <span class="perm-chip has">work_order_management:close</span>
+        <span class="perm-chip has">pm_management:create</span>
+        <span class="perm-chip has">defect:resolve</span>
+        <span class="perm-chip has">maintenance:read</span>
+        <span class="perm-chip has">maintenance:export</span>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test:</h4>
+        <ol class="test-steps">
+          <li>Create Plant → AssetSystem → Asset (e.g. Refinery → Rotating Equipment → Pump P-1001)</li>
+          <li>Report a defect on that asset (severity: Critical)</li>
+          <li>From the defect, raise a Corrective WO</li>
+          <li>Approve the WO, assign to a technician</li>
+          <li>Close the WO → verify defect auto-resolves</li>
+          <li>Check the maintenance dashboard — critical-fault KPI should now be 0</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#3b2207;">🔧</div>
+        <div><div class="role-name">Maintenance Technician</div><div class="role-desc">Executes work — fills in results, consumes materials</div></div>
+      </div>
+      <div class="perm-list">
+        <span class="perm-chip has">work_order_management:read</span>
+        <span class="perm-chip has">work_order_management:update</span>
+        <span class="perm-chip has">inspection_management:create</span>
+        <span class="perm-chip has">asset_management:read</span>
+        <span class="perm-chip has">work_order_management:ask</span>
+        <span class="perm-chip">work_order_management:approve</span>
+        <span class="perm-chip">work_order_management:close</span>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test:</h4>
+        <ol class="test-steps">
+          <li>View your assigned WO list</li>
+          <li>Open a WO → start it (status → In Progress)</li>
+          <li>Fill in labor hours and craft type</li>
+          <li>Record actual materials consumed → check stock auto-deducted</li>
+          <li>Fill in the inspection checklist items</li>
+          <li>Record failure code (ISO 14224) for CM WO</li>
+          <li>Mark WO as Completed</li>
+          <li>Try to close the WO → should get 403 (supervisor-only)</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#14532d;">📐</div>
+        <div><div class="role-name">Maintenance Planner</div><div class="role-desc">Plans PMs, schedules WOs, monitors KPIs</div></div>
+      </div>
+      <div class="perm-list">
+        <span class="perm-chip has">pm_management:create</span>
+        <span class="perm-chip has">pm_management:update</span>
+        <span class="perm-chip has">work_order_management:update</span>
+        <span class="perm-chip has">inspection_management:create</span>
+        <span class="perm-chip has">maintenance:read</span>
+        <span class="perm-chip has">defect:read</span>
+        <span class="perm-chip">work_order_management:approve</span>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test:</h4>
+        <ol class="test-steps">
+          <li>Create a Maintenance Plan for Pump P-1001 (monthly, calendar trigger)</li>
+          <li>Add 3 maintenance tasks with required spare items</li>
+          <li>Set trigger: every 30 days, last done = yesterday</li>
+          <li>Wait for (or manually trigger) Celery Beat → WO auto-generated</li>
+          <li>Create an Inspection Checklist template → attach to the PM task</li>
+          <li>View PM calendar and compliance gauge on the dashboard</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#3b1515;">⚠️</div>
+        <div><div class="role-name">Process Operator</div><div class="role-desc">First to spot problems — raises defects from the field</div></div>
+      </div>
+      <div class="perm-list">
+        <span class="perm-chip has">defect:write</span>
+        <span class="perm-chip has">defect:read</span>
+        <span class="perm-chip has">work_order_management:create</span>
+        <span class="perm-chip has">asset_management:read</span>
+        <span class="perm-chip">defect:resolve</span>
+        <span class="perm-chip">work_order_management:approve</span>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test:</h4>
+        <ol class="test-steps">
+          <li>Go to Defect Reporting → select a tag (e.g. FV-201)</li>
+          <li>Fill in description, severity (Critical), attach a photo</li>
+          <li>Optionally specify the failed asset (the valve under FV-201)</li>
+          <li>Submit — check the dashboard headline KPI increments</li>
+          <li>Try to resolve the defect yourself → should get 403</li>
+          <li>View your defect in the defect register with status "Open"</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#1e3a5f;">🎯</div>
+        <div><div class="role-name">Maintenance Supervisor</div><div class="role-desc">Approves WOs, acknowledges defects, closes work</div></div>
+      </div>
+      <div class="perm-list">
+        <span class="perm-chip has">work_order_management:approve</span>
+        <span class="perm-chip has">work_order_management:close</span>
+        <span class="perm-chip has">defect:write</span>
+        <span class="perm-chip has">defect:resolve</span>
+        <span class="perm-chip has">inspection_management:read</span>
+        <span class="perm-chip has">maintenance:read</span>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test:</h4>
+        <ol class="test-steps">
+          <li>View WO approval inbox (Submitted WOs)</li>
+          <li>Approve a WO → it moves to Planned/In Progress</li>
+          <li>Acknowledge a critical defect (status → Acknowledged)</li>
+          <li>After technician completes WO → close it</li>
+          <li>Verify: linked defect auto-changes to Resolved (via Celery event)</li>
+          <li>Check notifications bell for overdue WOs</li>
+        </ol>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- FLOWS -->
+<div id="panel-flows" class="panel">
+
+  <div class="flow-section">
+    <h3>🔄 Corrective Maintenance Flow (Defect → WO → Close → Defect Resolved)</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="actor-pill" style="background:#3b1515;color:#fca5a5;">Operator</span>
+        <span class="flow-node fn-alert">Report Defect on Tag</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">DEF-2026-XXXX (Open)</span>
+        <span class="flow-label">headline KPI ↑</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#3b2207;color:#fcd34d;">Supervisor</span>
+        <span class="flow-node fn-action">Acknowledge defect</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Raise WO from defect</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Approve WO</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Assign to technician</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#1e3a5f;color:#93c5fd;">Technician</span>
+        <span class="flow-node fn-action">Start WO (In Progress)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Record labor + materials</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Stock OUT event →</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Warehouse stock ↓</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#1e3a5f;color:#93c5fd;">Technician</span>
+        <span class="flow-node fn-action">Fill failure code + checklist</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Mark Completed</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#3b2207;color:#fcd34d;">Supervisor</span>
+        <span class="flow-node fn-approve">Close WO</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Celery event →</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">Defect auto-resolved</span>
+        <span class="flow-label">headline KPI ↓</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>📅 Preventive Maintenance Auto-Generation Flow</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="actor-pill" style="background:#14532d;color:#86efac;">Planner</span>
+        <span class="flow-node fn-action">Create MP → Tasks → Triggers</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Set frequency (30 days / 500 hours)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">PMSchedule row (Pending)</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#1e2433;color:#94a3b8;border:1px solid #4b5563;">Beat</span>
+        <span class="flow-node fn-action">Daily: find due schedules</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Celery event →</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">WO auto-generated (PM type)</span>
+        <span class="flow-label">status → Generated</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#3b2207;color:#fcd34d;">Supervisor</span>
+        <span class="flow-node fn-approve">Approve → technician executes</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Close WO</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Update last_done_date</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">Next due date recalculated</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>📦 Material Consumption → Stock (WO material → warehouse)</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="actor-pill" style="background:#1e3a5f;color:#93c5fd;">Technician</span>
+        <span class="flow-node fn-action">Record actual_qty on WO material</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Celery event: ISSUE stock</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">StockMovement ISSUE in warehouse</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">StockItem quantity ↓</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="flow-node fn-action" style="margin-left:20px;">If stock hits reorder point</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Low-stock notification</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">Planner creates MR (Phase 1 flow)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>🔔 Notification Event Routing</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="flow-node fn-action">Domain event fires</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Celery: Notification engine</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Match rules (event → role)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">Bell + email to user</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:10px;">
+        <span style="background:#3b1515;color:#fca5a5;padding:3px 8px;border-radius:5px;">🚨 Critical defect raised → Supervisor</span>
+        <span style="background:#1e2a6e;color:#a0b4ff;padding:3px 8px;border-radius:5px;">📋 WO assigned → Technician</span>
+        <span style="background:#14532d;color:#86efac;padding:3px 8px;border-radius:5px;">📅 PM due tomorrow → Planner</span>
+        <span style="background:#3b2207;color:#fcd34d;padding:3px 8px;border-radius:5px;">⏰ WO overdue → Supervisor</span>
+        <span style="background:#2d1c3b;color:#f0abfc;padding:3px 8px;border-radius:5px;">📦 Low stock → Warehouse</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>📊 How the Headline KPI Works</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="flow-node fn-alert">tag has criticality A/B/C (tag metadata)</span>
+        <span class="flow-arrow">+</span>
+        <span class="flow-node fn-alert">open DefectReport on that tag</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">counted in headline KPI</span>
+      </div>
+      <div class="flow-row" style="margin-top:6px;">
+        <span style="font-size:11px;color:#94a3b8;">Resolved by: closing the WO (event) or manually resolving the defect → KPI count drops</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+function toggle(card) {
+  const wasExpanded = card.classList.contains('expanded');
+  card.closest('.modules-grid').querySelectorAll('.module-card').forEach(c => {
+    c.classList.remove('expanded');
+    const hint = c.querySelector('.expand-hint');
+    if (hint) hint.textContent = '▶ Click to see use cases';
+  });
+  if (!wasExpanded) {
+    card.classList.add('expanded');
+    const hint = card.querySelector('.expand-hint');
+    if (hint) hint.textContent = '▼ Use cases';
+  }
+}
+</script>
+</body>
+</html>
