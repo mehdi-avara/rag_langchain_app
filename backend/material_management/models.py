@@ -28,6 +28,11 @@ class ItemType(str, enum.Enum):
     TOOL = "tool"
     CHEMICAL = "chemical"
     PPE = "ppe"
+    # A full, capital piece of equipment purchased as a unit (e.g. a pump, motor,
+    # compressor). Procured and stocked like any Item; set item.model_id to its
+    # ManagedModel. Once installed it is registered as an asset_management.Asset
+    # (serial-tracked) — see the receive->asset bridge in docs.
+    EQUIPMENT = "equipment"
 
 
 class UnitType(str, enum.Enum):
