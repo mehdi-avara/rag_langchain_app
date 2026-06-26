@@ -103,6 +103,21 @@ Router rules:
 - The router description for each intent is what the LLM uses to choose — write each description in natural
   language and keep them mutually exclusive.
 
+**The router only ever sees the tasks THIS user is allowed to do (RBAC-filtered intent set).** Do **not** put the
+full static taxonomy in the prompt. Build the intent list **per request** from the user's permissions:
+- At request time, take the §3 table and **drop every intent whose required permission the current user lacks**
+  (use the same permission check `require_permission` uses). Only the permitted intents (plus `general` /
+  `clarify`) are rendered into the router prompt.
+- Benefits, all intended: the prompt is **smaller**, the LLM is **never told about tasks the user can't access**
+  (no information leak, and it can't try to route to them), and `PERMISSION_DENIED` becomes a rare edge case
+  rather than the normal path.
+- This is the same RBAC-filtered registry the `//` slash-command menu uses (Master Plan §12.16) — one source of
+  truth: the tool registry filtered by the caller's RBAC. Implement the filter once, reuse it for both.
+- If, after filtering, the user has **no** module intents available, the router falls back to `general` / `clarify`
+  only — it never reveals the restricted tasks.
+- Keep the descriptions in a registry the agent reads, not hardcoded into one giant prompt string, so the
+  per-request filtered subset can be assembled cheaply.
+
 ---
 
 ## 4. Draft-and-Confirm (every write intent uses this)
@@ -501,6 +516,9 @@ Ship all of:
    `GET /{chat_id}/history` returns them with citations/retrieved items (and the `draft_id` when a draft was made).
 8. **Streaming**: `POST /assistant/chat` returns `text/event-stream`, emits `delta` events for answer tokens and
    a single complete `draft`/`done` object; a mid-stream failure leaves the `AgentRun` resumable and the draft intact.
+9. **RBAC-filtered router**: a user lacking `financial_management:receipts:create` never gets `add_receipt` in the
+   router's intent set (assert it is absent from the built prompt/registry for that user), and a message that would
+   map to it falls back to `clarify`/`general` — the restricted task is never named back to the user.
 
 ---
 

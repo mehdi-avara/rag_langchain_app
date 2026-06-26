@@ -22,7 +22,7 @@ Produce a plan that a competent-but-not-expert developer could execute without r
 - `docs/CMMS_MASTER_PLAN.md` **§12 only** — §12.4 Module Tool Contract, §12.4.1 (in-process service calls),
   §12.5 Draft-and-Confirm, §12.6 Multimodal, §12.8 persistence, §12.11 RBAC, §12.13 per-phase template,
   §12.19 guardrails. Do **not** read the whole master plan.
-- `docs/PROMPT_financial_assistant.md` — the **reference implementation prompt** for one module. Your per-module
+- `docs/Phase_0/PROMPT_financial_assistant.md` — the **reference implementation prompt** for one module. Your per-module
   plan sections must conform to the same contract (intent taxonomy → service seam → permission → draft/RBAC/file/VLM).
 - For **each module in the phase**, read its actual code before planning it: `{module}/routes/*.py`,
   `{module}/services.py`, `{module}/search/*.py`, its models, and its permission strings. Grep — never invent a
@@ -40,8 +40,14 @@ These were decided for the whole system. Bake them into every module's plan; do 
 2. **In-process service calls, never loopback HTTP (§12.4.1).** If business logic lives in a route handler you
    need, refactor it down into a `services.py` function and have both the route and the adapter call it. One
    implementation, one test surface.
-3. **Intent routing first.** The agent classifies each message into one of the module's tasks (plus `general` /
-   `clarify`), then routes. Your plan must enumerate that **task taxonomy per module** (see §3).
+3. **Intent routing first, over an RBAC-filtered registry.** The agent classifies each message into one of the
+   module's tasks (plus `general` / `clarify`), then routes. Your plan must enumerate that **task taxonomy per
+   module** (see §3). **The router only ever sees the tasks the current user is permitted to do** — at request
+   time, the intent list is built from the tool registry **filtered by the caller's RBAC**, dropping every intent
+   whose permission the user lacks. This keeps the prompt small, stops the LLM from ever learning about tasks the
+   user can't access (no leak), and is the same filtered registry the `//` slash menu uses (§12.16). Plan a
+   **single agent** whose registry grows as modules register — **not one agent per module** (see the architecture
+   note at the end of §2).
 4. **Draft-and-Confirm for every write (§12.5).** A chat message never writes. It builds a `Draft`; the user
    reviews the rendered draft and commits via an explicit **button** → `POST /assistant/drafts/{id}/confirm`.
    **Chat text never commits** — "yes/accept/do it" in prose does nothing (the LLM can misread the user). The
@@ -73,6 +79,21 @@ These were decided for the whole system. Bake them into every module's plan; do 
 
 > If the phase needs a capability not covered above (e.g. a new shared draft action type, a cross-module
 > synthesis), **flag it as a Core change** and call it out separately — do not silently bolt it onto a module.
+
+**Architecture note — one agent, not one agent per module (plan for this).** The "agent" is a single compiled
+LangGraph (router + nodes) plus a **registry of thin tool adapters** that call existing services. Adding a module
+adds adapter functions, **not** another live agent. Do not plan per-module agents:
+- A single agent scales because the router prompt is kept small by **(a) RBAC-filtering** the intent set per user
+  (item 3) and, when the registry is large, **(b) two-stage hierarchical routing** — first classify *which module*,
+  then *which task within that module* — so the LLM never sees one giant flat list. Both bound the prompt size
+  regardless of how many modules exist.
+- Per-module agents would be **heavier**, not lighter: you'd still need a top-level router to pick the module
+  (same prompt problem), you'd duplicate the draft framework, checkpointer, `AgentState`, streaming, and history
+  per agent, and **cross-module tasks** (e.g. "find open receipts for PO-123 and summarize") would break because
+  no single agent sees both modules.
+- So your plan registers this phase's `ModuleToolSet`s into the **one** Core agent/registry. If the registry has
+  grown large enough that flat routing is unwieldy, the plan should **recommend hierarchical routing** as a Core
+  enhancement (§D), not split the agent.
 
 ---
 
@@ -153,7 +174,7 @@ For each module, produce:
   from both the route and the adapter."
 - **Surface ambiguity early.** If the phase description is vague about a task, list a focused question in §H rather
   than guessing — especially for write payloads and permissions.
-- Match the **depth and conventions** of `docs/PROMPT_financial_assistant.md`; that file is the quality bar.
+- Match the **depth and conventions** of `docs/Phase_0/PROMPT_financial_assistant.md`; that file is the quality bar.
 
 ---
 
