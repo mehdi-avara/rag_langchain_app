@@ -30,6 +30,8 @@ class AgentState(TypedDict, total=False):
     rewritten_query: Optional[str]
     attachments: List[int]          # FileAsset ids attached to this message (§6)
     model_is_vlm: bool              # active chat model supports vision (§7)
+    model_client: Any               # resolved AsyncOpenAI client (from ChatAIModels row)
+    model_name: str                 # resolved model name (from ChatAIModels row)
 
     # --- router output ---
     intent: str
@@ -61,7 +63,7 @@ class AgentState(TypedDict, total=False):
 
 
 # Keys that must never be serialised into AgentRun.state (non-JSON / privileged).
-NON_SERIALISABLE_KEYS = {"db", "user"}
+NON_SERIALISABLE_KEYS = {"db", "user", "model_client"}
 
 # A hard cap to prevent runaway loops in decide_next (PROMPT §8 note).
 MAX_STEPS = 8

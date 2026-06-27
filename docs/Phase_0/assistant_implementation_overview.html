@@ -194,7 +194,7 @@
     <div class="card"><h3>Text model</h3>
       <p>Never sends image blocks; sends <b>extracted text only</b>, wrapped as clearly-delimited quoted <b>data</b> (instructions inside files are ignored — §12.19).</p></div>
   </div>
-  <div class="note warn"><b>Known gap:</b> the VLM detection &amp; block-building are implemented and tested, but the blocks are not yet fed into the router/answer model call (text-only today). Wiring that in is a small follow-up.</div>
+  <div class="note"><b>Wired end-to-end:</b> when the active model is a VLM, the receipt/invoice image is sent to the model in <b>both</b> the router (to read fields like amount, date, counterparty straight off the photo) and the answer step. Non-vision models receive extracted text only.</div>
 
   <h2><span class="n">7</span>Endpoints</h2>
   <div class="card">

@@ -69,7 +69,12 @@ def _collect(db, user, request, monkeypatch, *, intent, slots=None, clarify=None
         return {"intent": intent, "language": "en", "slots": slots or {}, "clarify_question": clarify}
 
     monkeypatch.setattr(router_mod, "classify", fake_classify)
-    monkeypatch.setattr(intake_mod, "model_supports_vision", lambda db: False)
+    # Avoid instantiating a live model client in the resolver.
+    monkeypatch.setattr(
+        intake_mod,
+        "resolve_chat_model",
+        lambda db: intake_mod.ChatModelConfig(client=object(), model="test-model", supports_vision=False),
+    )
     monkeypatch.setattr(intake_mod, "gather_intake", lambda *a, **k: intake_mod.IntakeResult())
 
     async def go():

@@ -25,8 +25,10 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 
+from components.llm import llm_client
 from Models import ChatAIModels, User
 from settings import get_settings
 from storage.manager import StorageManager
@@ -68,6 +70,44 @@ def model_supports_vision(db: Session) -> bool:
     if model is not None and getattr(model, "supports_vision", None) is not None:
         return bool(model.supports_vision)
     return os.getenv("DI_LLM_VISION_ENABLED", "0") not in ("0", "false", "False")
+
+
+@dataclass
+class ChatModelConfig:
+    """Resolved model config: which client/endpoint, model name, and vision flag.
+
+    Everything (api key, base url, model name, supports_vision) comes from the
+    active ``ChatAIModels`` row so the assistant talks to the same model the rest
+    of the chat stack is configured for — falling back to ``settings`` only when
+    no model row exists.
+    """
+
+    client: AsyncOpenAI
+    model: str
+    supports_vision: bool
+
+
+def resolve_chat_model(db: Session) -> ChatModelConfig:
+    row = get_active_chat_model(db)
+    if row is not None:
+        client = AsyncOpenAI(
+            api_key=getattr(row, "api_key", None) or settings.openai_api_key,
+            base_url=getattr(row, "url", None) or settings.openai_base_url,
+        )
+        return ChatModelConfig(
+            client=client,
+            model=getattr(row, "name", None) or settings.openai_model,
+            supports_vision=bool(getattr(row, "supports_vision", False)),
+        )
+
+    # No configured model row — fall back to the shared settings-based client and
+    # the env vision flag.
+    vision = os.getenv("DI_LLM_VISION_ENABLED", "0") not in ("0", "false", "False")
+    return ChatModelConfig(
+        client=llm_client.async_openai_client,
+        model=settings.openai_model,
+        supports_vision=vision,
+    )
 
 
 # ---------------------------------------------------------------------------

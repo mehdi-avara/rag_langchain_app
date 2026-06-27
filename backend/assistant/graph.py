@@ -36,6 +36,9 @@ async def router_node(state: AgentState) -> AgentState:
         question=question,
         intents=intents,
         has_attachments=bool(attachments),
+        image_blocks=state.get("image_blocks") or [],
+        client=state.get("model_client"),
+        model=state.get("model_name"),
     )
 
     # Merge router-extracted slots with any pre-seeded slots (e.g. ids from the request).
