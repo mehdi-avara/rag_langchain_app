@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Porsa CMMS — Phase Implementation Map</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b25; --panel2:#1c2330; --line:#2a3342;
+    --txt:#e6edf3; --muted:#9aa7b8; --accent:#4f8cff;
+    --p0:#8b5cf6; --p1:#22c55e; --p2:#f59e0b; --p3:#ec4899; --p4:#06b6d4; --p5:#64748b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+  .wrap{max-width:1200px;margin:0 auto;padding:32px 20px 80px}
+  header h1{font-size:26px;margin:0 0 6px}
+  header p{color:var(--muted);margin:0 0 4px;font-size:14px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:22px 0 8px;font-size:13px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 26px}
+  .controls button{background:var(--panel2);color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer}
+  .controls button:hover{color:var(--txt);border-color:var(--accent)}
+
+  .phase{border:1px solid var(--line);border-radius:14px;margin-bottom:16px;overflow:hidden;background:var(--panel)}
+  .phead{display:flex;align-items:center;gap:14px;padding:16px 18px;cursor:pointer;user-select:none}
+  .phead:hover{background:var(--panel2)}
+  .badge{flex:none;width:54px;height:54px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:#0e1117}
+  .ptitle{flex:1;min-width:0}
+  .ptitle h2{margin:0;font-size:17px}
+  .ptitle .who{color:var(--muted);font-size:13px;margin-top:2px}
+  .ptag{flex:none;font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .chev{flex:none;color:var(--muted);transition:transform .2s}
+  .phase.open .chev{transform:rotate(90deg)}
+
+  .pbody{display:none;padding:4px 18px 20px;border-top:1px solid var(--line)}
+  .phase.open .pbody{display:block}
+  .scope{color:var(--muted);font-size:13.5px;margin:14px 0 16px;padding:10px 14px;background:var(--panel2);border-radius:10px;border-left:3px solid var(--accent)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .mod{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .mod .mh{display:flex;align-items:baseline;gap:8px;margin-bottom:5px}
+  .mod .mid{font-size:11px;font-weight:700;color:var(--muted);background:var(--bg);border-radius:5px;padding:1px 6px}
+  .mod .mname{font-weight:600;font-size:14px}
+  .mod .pri{margin-left:auto;font-size:10px;font-weight:700;padding:1px 6px;border-radius:5px}
+  .pri.P0{background:#3a1d1d;color:#ff9b9b} .pri.P1{background:#3a331d;color:#ffe08a} .pri.P2{background:#1d2a3a;color:#9ec5ff}
+  .mod .part{font-size:12.5px;color:var(--muted)}
+  .mod .part b{color:var(--txt);font-weight:600}
+
+  .report{margin-top:16px;padding:12px 14px;border-radius:10px;background:linear-gradient(180deg,#161b25,#13283a);border:1px solid #1d3a4a}
+  .report .rt{font-size:12px;font-weight:700;color:#7fd3ff;letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px}
+  .report .rb{font-size:13px;color:var(--muted)}
+
+  .cross{margin-top:30px;border:1px dashed var(--line);border-radius:14px;padding:18px 20px;background:var(--panel)}
+  .cross h3{margin:0 0 10px;font-size:15px}
+  .cross .grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+  .foot{margin-top:26px;color:var(--muted);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Porsa CMMS — Phase Implementation Map</h1>
+    <p>What each delivery phase builds, and which part of the system it covers.</p>
+    <p>CMMS for the petroleum industry · FastAPI + PostgreSQL/pgvector + Celery · modular monolith. Source: <code>docs/CMMS_MASTER_PLAN.md §3</code></p>
+  </header>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--p0)"></i>Phase 0 · Foundation</span>
+    <span><i class="dot" style="background:var(--p1)"></i>Phase 1 · Commerce</span>
+    <span><i class="dot" style="background:var(--p2)"></i>Phase 2 · Maintenance</span>
+    <span><i class="dot" style="background:var(--p3)"></i>Phase 3 · HR</span>
+    <span><i class="dot" style="background:var(--p4)"></i>Phase 4 · Full Platform</span>
+    <span><i class="dot" style="background:var(--p5)"></i>Phase 5 · Collaboration</span>
+  </div>
+
+  <div class="controls">
+    <button onclick="setAll(true)">Expand all</button>
+    <button onclick="setAll(false)">Collapse all</button>
+  </div>
+
+  <div id="phases"></div>
+
+  <div class="cross">
+    <h3>🔁 Cross-cutting — runs alongside every phase</h3>
+    <div class="grid">
+      <div class="mod">
+        <div class="mh"><span class="mname">AI Assistant Backbone</span></div>
+        <div class="part">The chat page is the system's primary interface, built as a stateful agent (master plan §12). Each phase adds a parallel <b>AI sub-phase</b> that wraps that phase's service functions as agent tools (Module Tool Contract §12.4). The agent runs with exactly the caller's RBAC.</div>
+      </div>
+      <div class="mod">
+        <div class="mh"><span class="mname">KPI &amp; Reporting sub-phase</span></div>
+        <div class="part">After each delivery phase, a <b>Phase-R</b> sprint adds <code>/reports</code>, <code>/kpi</code> and <code>/ask</code> endpoints, a summary page (KPI cards + charts), and Excel/CSV/PDF export — so managers get visibility per phase.</div>
+      </div>
+      <div class="mod">
+        <div class="mh"><span class="mname">Foundational rules (always on)</span></div>
+        <div class="part">Alembic owns the schema · every route permission-protected &amp; seeded in RBAC · heavy work (&gt;200ms) → Celery · catalogued errors only · 4-column money fields · schema-per-module, no cross-module Python imports (FKs OK).</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">Generated from the canonical master plan. Phases 0–1 are the active build front; 2–5 are planned. Reporting sub-phases (0-R … 4-R) close out each delivery.</p>
+</div>
+
+<script>
+const COLORS = {0:'--p0',1:'--p1',2:'--p2',3:'--p3',4:'--p4',5:'--p5'};
+const DATA = [
+  {
+    n:0, title:"Foundation Fixes & Purchase Management", tag:"Do first — before any new module",
+    who:"For: the engineering team — stabilize the existing system & unblock the frontend",
+    scope:"Makes the existing RAG/KM system stable, correct and consistent. Builds the shared money layer, replaces the broken buying module, and moves heavy work off the request path. This is the platform floor everything else stands on.",
+    mods:[
+      {id:"0.3", name:"Multi-Currency Foundation", pri:"P0", part:"<b>Shared layer.</b> New <code>shared/currency/</code>: Currency + ExchangeRate tables, <code>Company.base_currency_id</code>, convert/get_rate services. Runs first — purchase uses its FKs."},
+      {id:"0.2", name:"Purchase Management", pri:"P0", part:"<b>Procurement (seed).</b> Clean rewrite replacing <code>buying_management</code>. PurchaseOrder → PurchasePhase → items, costs, receipt-links. New <code>/purchase/</code> API + semantic search."},
+      {id:"0.1", name:"Heavy Processing → Celery", pri:"P0", part:"<b>Cross-cutting infra.</b> STT transcription & embedding generation become async tasks; new shared <code>GET /tasks/{id}</code> poller. No route/body changes."},
+      {id:"0.5", name:"Structured Logging & Observability", pri:"P0", part:"<b>Cross-cutting infra.</b> Central JSON logging with request-id correlation across web + Celery workers."},
+      {id:"0.4", name:"Frontend Spec for Phase 0", pri:"P0", part:"<b>Spec.</b> Screens for purchase list/detail, currency, and the shared task-status poller."},
+    ],
+    report:"Phase 0-R — Financial summary dashboard, purchase-order summary, spend by currency, open POs."
+  },
+  {
+    n:1, title:"Commerce & Warehouse", tag:"First delivery",
+    who:"For: Procurement team · Warehouse keepers · Storekeepers",
+    scope:"The full buy-and-store supply chain: who you buy from, what you buy, the procurement flow, and where stock lives. Build procurement fully first, then warehouse receives its output.",
+    mods:[
+      {id:"1.1", name:"Currency & Exchange Rate", pri:"P0", part:"<b>Shared foundation.</b> Hardens the currency module from Phase 0 as the money base for all commerce."},
+      {id:"1.2", name:"Supplier Management", pri:"P0", part:"<b>Procurement.</b> Vendor registry; replaces the free-text supplier_name with a real Supplier FK."},
+      {id:"1.3", name:"Material Master", pri:"P0", part:"<b>Catalog.</b> Items catalog (materials/spares/consumables), units & categories. PO lines now resolve to <code>item_id</code>."},
+      {id:"1.4", name:"Procurement", pri:"P0", part:"<b>Procurement.</b> Full MR → RFQ → PO → GRN flow, completing the buying lifecycle."},
+      {id:"1.5", name:"Warehouse Management", pri:"P0", part:"<b>Inventory.</b> Locations, stock levels, stock movements. Receives GRN → StockMovement IN via Celery event."},
+      {id:"1.6", name:"Inventory Reports & Full-text Search", pri:"P1", part:"<b>Reporting/search.</b> Inventory reporting + full-text search across commerce data."},
+    ],
+    report:"Phase 1-R — Inventory levels, low-stock alerts, procurement cycle time, spend by supplier."
+  },
+  {
+    n:2, title:"Maintenance & Admin", tag:"Second delivery",
+    who:"For: Maintenance engineers · Planners · Admins",
+    scope:"The CMMS core — the physical-asset world. Register equipment, schedule and execute maintenance, report faults, and route work. This is where 'maintenance management' actually lives.",
+    mods:[
+      {id:"2.1", name:"Asset Management", pri:"P0", part:"<b>Asset registry.</b> Physical installed units (serial, lifecycle, hierarchy) referencing their equipment model via <code>asset.model_id</code>."},
+      {id:"2.2", name:"Work Order Management", pri:"P0", part:"<b>Work execution.</b> Corrective (CM) and preventive (PM) work orders."},
+      {id:"2.3", name:"Maintenance Planning", pri:"P0", part:"<b>Planning.</b> PM schedules and checklists."},
+      {id:"2.4", name:"Notification & Workflow Engine", pri:"P1", part:"<b>Cross-cutting.</b> Workflow + notification routing (matured further in Phase 4)."},
+      {id:"2.5", name:"Defect / Fault Reporting", pri:"P0", part:"<b>Fault intake.</b> Flag that a tag has a problem and link the failed asset/work order. (The permit/dual-approval that gates the work comes in Phase 4 HSE.)"},
+      {id:"2.6", name:"Maintenance KPI Dashboard", pri:"P1", part:"<b>Reporting.</b> KPIs + charts + Excel/PDF export for maintenance."},
+    ],
+    report:"Phase 2-R — Work-order backlog, MTTR, asset failure rates, PM compliance %, critical tags with open faults, maintenance cost."
+  },
+  {
+    n:3, title:"Human Resources", tag:"Third delivery",
+    who:"For: HR managers · Department heads",
+    scope:"The people side of the facility — workforce master data and everything that hangs off an employee record (leave, training, documents, pay).",
+    mods:[
+      {id:"3.1", name:"Employee Management", pri:"P0", part:"<b>People master data.</b> Employee records + org chart."},
+      {id:"3.2", name:"Leave Management", pri:"P0", part:"<b>HR ops.</b> Leave requests & balances."},
+      {id:"3.3", name:"Training & Certification Tracking", pri:"P0", part:"<b>Compliance.</b> Training records and certification expiry tracking."},
+      {id:"3.4", name:"Personnel Documents", pri:"P1", part:"<b>Records.</b> Employee document storage."},
+      {id:"3.5", name:"Payroll basics", pri:"P2", part:"<b>Finance/HR.</b> Foundational payroll."},
+    ],
+    report:"Phase 3-R — Headcount by department, leave utilization, expiring certifications."
+  },
+  {
+    n:4, title:"Full Platform", tag:"Final delivery",
+    who:"For: Everyone in the petroleum facility",
+    scope:"Brings the platform together: facility-wide communication, safety & permits, projects, the mature AI manager agent, executive reporting — plus the code-seam refactor that prepares modules for microservice extraction.",
+    mods:[
+      {id:"4.1", name:"Internal Communication", pri:"P0", part:"<b>Collaboration.</b> Letters, memos, announcements."},
+      {id:"4.2", name:"HSE Module", pri:"P0", part:"<b>Safety & governance.</b> Incidents, risk assessments, and Permit-to-Work — incl. the technician access-grant flow with HSE + Manager dual approval that gates Phase 2 work orders."},
+      {id:"4.3", name:"Project Management", pri:"P1", part:"<b>Projects.</b> Project tracking across the facility."},
+      {id:"4.4", name:"AI Manager Agent", pri:"P0", part:"<b>AI.</b> Mature natural-language → reports agent over all modules (builds on the Assistant Core)."},
+      {id:"4.5", name:"Advanced Reporting & Dashboards", pri:"P1", part:"<b>Reporting.</b> Cross-module executive dashboards."},
+      {id:"4.6", name:"Contractor Management", pri:"P2", part:"<b>External parties.</b> Contractor registry & management."},
+      {id:"4.7", name:"Modular Monolith Refactor", pri:"P1", part:"<b>Architecture cleanup.</b> Remove cross-module Python imports (keep FKs), route versioning, service-boundary lock — extraction prep per §0.5."},
+    ],
+    report:"Phase 4-R — Cross-module executive dashboard, HSE/permit KPIs, full AI manager agent."
+  },
+  {
+    n:5, title:"Collaboration & Group Chat", tag:"Later — not urgent (P2)",
+    who:"For: Teams that want to work with the assistant together",
+    scope:"Multi-user ways of working with the AI assistant. Built only after the Assistant Core and per-phase tool tracks are mature.",
+    mods:[
+      {id:"5.1", name:"Group Chat", pri:"P2", part:"<b>Collaboration.</b> Multi-participant conversations where the agent is a participant (invoked via <code>//</code> or <code>@assistant</code>)."},
+      {id:"5.2", name:"Slash-command Quick Tools", pri:"P1", part:"<b>Assistant UX.</b> The <code>//</code> launcher for inline add-draft / tag-data / search actions (can ship earlier with the Assistant UX)."},
+    ],
+    report:null
+  },
+];
+
+const host = document.getElementById('phases');
+DATA.forEach((p,i)=>{
+  const c = `var(${COLORS[p.n]})`;
+  const mods = p.mods.map(m=>`
+    <div class="mod" style="border-left:3px solid ${c}">
+      <div class="mh"><span class="mid">${m.id}</span><span class="mname">${m.name}</span><span class="pri ${m.pri}">${m.pri}</span></div>
+      <div class="part">${m.part}</div>
+    </div>`).join('');
+  const rep = p.report ? `<div class="report"><div class="rt">📊 Reporting sub-phase</div><div class="rb">${p.report}</div></div>` : '';
+  const el = document.createElement('div');
+  el.className = 'phase' + (i<2?' open':'');
+  el.innerHTML = `
+    <div class="phead" onclick="this.parentNode.classList.toggle('open')">
+      <div class="badge" style="background:${c}">P${p.n}</div>
+      <div class="ptitle"><h2>Phase ${p.n} — ${p.title}</h2><div class="who">${p.who}</div></div>
+      <div class="ptag">${p.tag}</div>
+      <div class="chev">▶</div>
+    </div>
+    <div class="pbody">
+      <div class="scope">${p.scope}</div>
+      <div class="grid">${mods}</div>
+      ${rep}
+    </div>`;
+  host.appendChild(el);
+});
+function setAll(open){document.querySelectorAll('.phase').forEach(e=>e.classList.toggle('open',open));}
+</script>
+</body>
+</html>
