@@ -46,6 +46,7 @@ class AgentState(TypedDict, total=False):
     retrieved_items: List[dict]
     summary: Optional[dict]
     pending_draft: Optional[dict]   # built but NOT committed
+    partial_draft: Optional[dict]   # incomplete write: object-so-far + missing field nouns
     answer: str
     citations: List[Any]
 

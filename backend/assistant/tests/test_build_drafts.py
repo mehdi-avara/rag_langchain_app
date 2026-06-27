@@ -36,12 +36,24 @@ def test_add_receipt_resolves_commit_target():
     assert draft.payload["direction"] == "output"
 
 
-def test_add_receipt_missing_fields_is_invalid_and_clarifies():
+def test_add_receipt_missing_fields_returns_partial_object_and_noun_missing():
     user = make_user(ALL_FINANCIAL_PERMS)
-    draft = toolset.build_draft(intent="add_receipt", db=None, user=user, slots={"description": "x"}, attachments=[])
+    draft = toolset.build_draft(
+        intent="add_receipt", db=None, user=user,
+        slots={"description": "pump", "amount": "100"}, attachments=[],
+    )
     assert draft.valid is False
     assert draft.clarify_question
     assert draft.commit_target == {}
+    # The object completed so far is returned…
+    assert draft.payload["description"] == "pump"
+    assert draft.payload["amount"] == "100"
+    # …and the still-missing fields are named as nouns.
+    missing = draft.validation["missing"]
+    assert "credit card" in missing
+    assert "receipt date" in missing
+    assert "counterparty" in missing
+    assert "description" not in missing  # already provided
 
 
 def test_update_receipt_uses_patch_with_entity_id():

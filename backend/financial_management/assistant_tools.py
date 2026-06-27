@@ -284,11 +284,20 @@ class FinancialAssistantToolSet(ModuleToolSet):
         return builder(db, user, slots, attachments or [])
 
     @staticmethod
-    def _invalid(target_action: str, missing: list, errors: dict, question: str) -> DraftData:
+    def _invalid(
+        target_action: str,
+        missing: list,
+        errors: dict,
+        question: str,
+        partial_payload: dict | None = None,
+    ) -> DraftData:
+        # Returns the object completed SO FAR (``partial_payload``) plus the
+        # still-missing fields named as nouns in ``validation.missing`` — so the
+        # frontend can show the half-filled form and highlight what to add.
         return DraftData(
             target_module=MODULE,
             target_action=target_action,
-            payload={},
+            payload=partial_payload or {},
             commit_target={},
             validation={"valid": False, "missing": missing, "errors": errors},
             valid=False,
@@ -307,38 +316,18 @@ class FinancialAssistantToolSet(ModuleToolSet):
         customer_id = slots.get("customer_id")
         currency = _enum_value(FinancialCurrency, slots.get("currency")) or FinancialCurrency.TOMAN.value
 
-        missing: list = []
-        errors: dict = {}
-        if not description:
-            missing.append("description")
-        if amount is None or amount <= 0:
-            missing.append("amount")
-        if not direction:
-            errors["direction"] = "expected 'input' or 'output'"
-        if not credit_card_id:
-            missing.append("credit_card_id")
-        if not receipt_date:
-            missing.append("receipt_date")
-        if not counterparty_name and not customer_id:
-            errors["counterparty"] = "counterparty_name or customer_id is required"
-
-        if missing or errors:
-            return self._invalid(
-                "create_receipt",
-                missing,
-                errors,
-                "Some required receipt fields are missing. Please provide: "
-                + ", ".join(missing + list(errors.keys())),
-            )
-
-        payload = {
-            "description": description,
-            "amount": str(amount),
-            "currency": currency,
-            "direction": direction,
-            "credit_card_id": credit_card_id,
-            "receipt_date": receipt_date,
-        }
+        # Assemble whatever is known so far (the partial object).
+        payload: dict = {"currency": currency}
+        if description:
+            payload["description"] = description
+        if amount is not None and amount > 0:
+            payload["amount"] = str(amount)
+        if direction:
+            payload["direction"] = direction
+        if credit_card_id:
+            payload["credit_card_id"] = credit_card_id
+        if receipt_date:
+            payload["receipt_date"] = receipt_date
         if counterparty_name:
             payload["counterparty_name"] = counterparty_name
         if customer_id:
@@ -348,6 +337,30 @@ class FinancialAssistantToolSet(ModuleToolSet):
         rate = _decimal(slots.get("exchange_rate_to_base"))
         if rate is not None:
             payload["exchange_rate_to_base"] = str(rate)
+
+        # Missing required fields, named as nouns (PROMPT: localize labels later).
+        missing: list = []
+        if not description:
+            missing.append("description")
+        if amount is None or amount <= 0:
+            missing.append("amount")
+        if not direction:
+            missing.append("direction")
+        if not credit_card_id:
+            missing.append("credit card")
+        if not receipt_date:
+            missing.append("receipt date")
+        if not counterparty_name and not customer_id:
+            missing.append("counterparty")
+
+        if missing:
+            return self._invalid(
+                "create_receipt",
+                missing,
+                {},
+                "I still need: " + ", ".join(missing) + ".",
+                partial_payload=payload,
+            )
 
         return DraftData(
             target_module=MODULE,
@@ -418,16 +431,25 @@ class FinancialAssistantToolSet(ModuleToolSet):
         ensure_permission(user, P_CARD_CREATE)
         title = _str(slots, "title")
         card_number = _str(slots, "card_number")
-        missing = [k for k, v in (("title", title), ("card_number", card_number)) if not v]
-        if missing:
-            return self._invalid(
-                "create_card", missing, {}, "Please provide the card " + " and ".join(missing) + "."
-            )
-        payload = {"title": title, "card_number": card_number}
+        payload: dict = {}
+        if title:
+            payload["title"] = title
+        if card_number:
+            payload["card_number"] = card_number
         for key in ("bank_name", "account_owner_name", "description"):
             value = _str(slots, key)
             if value:
                 payload[key] = value
+        missing = []
+        if not title:
+            missing.append("title")
+        if not card_number:
+            missing.append("card number")
+        if missing:
+            return self._invalid(
+                "create_card", missing, {}, "I still need: " + ", ".join(missing) + ".",
+                partial_payload=payload,
+            )
         return DraftData(
             target_module=MODULE,
             target_action="create_card",
@@ -468,23 +490,30 @@ class FinancialAssistantToolSet(ModuleToolSet):
         name = _str(slots, "name")
         phone = _str(slots, "phone_number1", "phone")
         access_method = _enum_value(FinancialAccessMethod, slots.get("access_method"))
-        missing = []
-        if not name:
-            missing.append("name")
-        if not phone:
-            missing.append("phone_number1")
-        if not access_method:
-            missing.append("access_method")
-        if missing:
-            return self._invalid(
-                "create_customer", missing, {},
-                "To add a customer I need: " + ", ".join(missing) + ".",
-            )
-        payload = {"name": name, "phone_number1": phone, "access_method": access_method}
+        payload: dict = {}
+        if name:
+            payload["name"] = name
+        if phone:
+            payload["phone_number1"] = phone
+        if access_method:
+            payload["access_method"] = access_method
         for key in ("phone_number2", "email", "description"):
             value = _str(slots, key)
             if value:
                 payload[key] = value
+        missing = []
+        if not name:
+            missing.append("name")
+        if not phone:
+            missing.append("phone number")
+        if not access_method:
+            missing.append("access method")
+        if missing:
+            return self._invalid(
+                "create_customer", missing, {},
+                "I still need: " + ", ".join(missing) + ".",
+                partial_payload=payload,
+            )
         return DraftData(
             target_module=MODULE,
             target_action="create_customer",

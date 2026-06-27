@@ -103,13 +103,22 @@ async def write_node(state: AgentState) -> AgentState:
     )
 
     if not draft_data.valid:
-        # Prefer clarify over an un-committable draft (PROMPT §3).
+        # Prefer clarify over an un-committable draft (PROMPT §3), but still hand
+        # back the object completed so far + the missing field nouns so the user
+        # can finish it.
         return {
             **state,
             "current_step": intent,
             "intent": "clarify",
             "clarify_question": draft_data.clarify_question or "Could you provide the missing details?",
             "pending_draft": None,
+            "partial_draft": {
+                "target_module": draft_data.target_module,
+                "target_action": draft_data.target_action,
+                "payload": draft_data.payload,
+                "missing": draft_data.validation.get("missing", []),
+                "validation": draft_data.validation,
+            },
             "answer": "",
         }
 

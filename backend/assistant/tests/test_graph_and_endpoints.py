@@ -49,11 +49,15 @@ def test_write_intent_builds_pending_draft(monkeypatch):
     assert "committed_entity_ref" not in draft
 
 
-def test_missing_fields_routes_to_clarify(monkeypatch):
+def test_missing_fields_routes_to_clarify_with_partial_object(monkeypatch):
     result = _run_graph(monkeypatch, intent="add_receipt", slots={"description": "only this"})
     assert result["intent"] == "clarify"
     assert result.get("pending_draft") in (None, {})
     assert result.get("clarify_question")
+    # The object-so-far + missing nouns are returned for the user to complete.
+    partial = result.get("partial_draft")
+    assert partial and partial["payload"]["description"] == "only this"
+    assert "amount" in partial["missing"]
 
 
 def test_general_intent(monkeypatch):

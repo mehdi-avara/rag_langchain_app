@@ -165,6 +165,7 @@ async def run_turn_stream(
         summary = None
         citations: list = []
         intent = None
+        partial_draft = None
 
         with tracing.trace_run("assistant_chat", chat_id=chat_obj.id, user_id=user.id):
             try:
@@ -206,6 +207,7 @@ async def run_turn_stream(
                 retrieved_items = result.get("retrieved_items") or []
                 summary = result.get("summary")
                 pending_draft = result.get("pending_draft")
+                partial_draft = result.get("partial_draft")
                 citations = result.get("citations") or []
                 draft_service.update_run(db, run, intent=intent, language=language)
 
@@ -215,6 +217,11 @@ async def run_turn_stream(
                         "references",
                         {"retrieved": retrieved_items, "summary": summary},
                     )
+
+                # Incomplete write: return the object-so-far + missing field nouns
+                # (no draft is persisted — it isn't committable yet).
+                if partial_draft:
+                    yield sse_event("partial_draft", {"partial_draft": partial_draft})
 
                 if pending_draft:
                     yield sse_event("status", {"step": "draft", "message": "Preparing a draft for your review…"})
@@ -284,6 +291,7 @@ async def run_turn_stream(
                     "chat_id": chat_obj.id,
                     "draft_id": draft_id,
                     "draft": draft_out,
+                    "partial_draft": partial_draft,
                 },
             )
 
