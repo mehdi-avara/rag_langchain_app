@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional, Sequence
 
 from fastapi import HTTPException
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from components import generate_embeddings_for_chunks
@@ -19,8 +20,11 @@ from .schemas import (
     FinancialCardSummaryOut,
     FinancialCustomerOut,
     FinancialCustomerSummaryOut,
+    FinancialReceiptAskResponse,
+    FinancialReceiptCurrencySummaryOut,
     FinancialReceiptFileOut,
     FinancialReceiptOut,
+    FinancialReceiptSummaryOut,
 )
 
 
@@ -408,4 +412,129 @@ def parse_receipt_citations(answer: str) -> List[int]:
         citations.append(receipt_id)
 
     return citations
+
+
+def company_base_currency(current_user: User) -> str:
+    return getattr(getattr(current_user, "company", None), "base_currency", None) or "IRT"
+
+
+def summarize_receipts(
+    db: Session,
+    current_user: User,
+    *,
+    direction: Optional[str] = None,
+    credit_card_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> FinancialReceiptSummaryOut:
+    """Aggregate receipt totals/KPIs by currency.
+
+    Shared seam called by both ``routes/receipts.py::get_receipts_summary`` and the
+    AI assistant (``summarize_finance`` intent). Scoped to the caller's company.
+    """
+    query = db.query(FinancialReceipt).filter(FinancialReceipt.company_id == current_user.company_id)
+
+    if direction:
+        query = query.filter(FinancialReceipt.direction == direction)
+
+    if credit_card_id is not None:
+        query = query.filter(FinancialReceipt.credit_card_id == credit_card_id)
+
+    if date_from:
+        query = query.filter(FinancialReceipt.receipt_date >= datetime.combine(date_from, time.min))
+
+    if date_to:
+        query = query.filter(FinancialReceipt.receipt_date <= datetime.combine(date_to, time.max))
+
+    total_row = query.with_entities(
+        func.coalesce(
+            func.sum(case((FinancialReceipt.direction == "input", FinancialReceipt.base_amount), else_=0)),
+            0,
+        ).label("total_input_base"),
+        func.coalesce(
+            func.sum(case((FinancialReceipt.direction == "output", FinancialReceipt.base_amount), else_=0)),
+            0,
+        ).label("total_output_base"),
+        func.count(FinancialReceipt.id).label("receipt_count"),
+    ).one()
+
+    currency_rows = (
+        query.with_entities(
+            FinancialReceipt.currency.label("currency"),
+            func.coalesce(
+                func.sum(case((FinancialReceipt.direction == "input", FinancialReceipt.amount), else_=0)),
+                0,
+            ).label("input_amount"),
+            func.coalesce(
+                func.sum(case((FinancialReceipt.direction == "output", FinancialReceipt.amount), else_=0)),
+                0,
+            ).label("output_amount"),
+            func.count(FinancialReceipt.id).label("receipt_count"),
+        )
+        .group_by(FinancialReceipt.currency)
+        .order_by(FinancialReceipt.currency.asc())
+        .all()
+    )
+
+    by_currency = [
+        FinancialReceiptCurrencySummaryOut(
+            currency=row.currency,
+            input_amount=row.input_amount,
+            output_amount=row.output_amount,
+            net_amount=row.input_amount - row.output_amount,
+            receipt_count=row.receipt_count,
+        )
+        for row in currency_rows
+    ]
+
+    return FinancialReceiptSummaryOut(
+        base_currency=company_base_currency(current_user),
+        total_input_base=total_row.total_input_base,
+        total_output_base=total_row.total_output_base,
+        net_base=total_row.total_input_base - total_row.total_output_base,
+        receipt_count=total_row.receipt_count,
+        by_currency=by_currency,
+    )
+
+
+async def answer_receipts_question(
+    db: Session,
+    current_user: User,
+    *,
+    question: str,
+    mode: str = "hybrid",
+    receipt_ids: Optional[Sequence[int]] = None,
+) -> FinancialReceiptAskResponse:
+    """Grounded NL answer over receipts.
+
+    Shared seam called by both ``routes/ask.py::ask_receipts`` and the AI assistant
+    (``ask_finance`` intent). Reaches the search layer through its service seam
+    (``search/service.py::search_receipt_hits``) — never a loopback HTTP call.
+    """
+    # Lazy import to avoid a circular import (search.service imports this module).
+    from .search.service import search_receipt_hits
+
+    scoped_ids = list(dict.fromkeys(receipt_ids or []))
+
+    for receipt_id in scoped_ids:
+        get_receipt_or_404(db, receipt_id, current_user)
+
+    references = search_receipt_hits(
+        db=db,
+        current_user=current_user,
+        query_text=question,
+        mode=mode,
+        receipt_ids=scoped_ids or None,
+        limit=10,
+    )
+
+    answer = await generate_receipt_answer(question, references)
+    citations = parse_receipt_citations(answer)
+
+    return FinancialReceiptAskResponse(
+        answer=answer,
+        citations=citations,
+        used_receipt_ids=citations,
+        references=references,
+    )
 

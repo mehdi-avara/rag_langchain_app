@@ -7,13 +7,8 @@ from db.init_db import get_db
 from deps import require_permission
 from Models import User
 
-from ..schemas import FinancialReceiptAskRequest, FinancialReceiptAskResponse, FinancialReceiptSearchRequest
-from ..services import (
-    generate_receipt_answer,
-    get_receipt_or_404,
-    parse_receipt_citations,
-)
-from ..search.routes import search_receipts
+from ..schemas import FinancialReceiptAskRequest, FinancialReceiptAskResponse
+from ..services import answer_receipts_question, get_receipt_or_404
 
 
 router = APIRouter(prefix="/receipts")
@@ -25,28 +20,12 @@ async def ask_receipts(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:receipts:ask")),
 ):
-    for receipt_id in payload.receipt_ids:
-        get_receipt_or_404(db, receipt_id, current_user)
-
-    references = search_receipts(
-        payload=FinancialReceiptSearchRequest(
-            query=payload.question,
-            ids=payload.receipt_ids,
-            mode=payload.mode,
-            limit=10,
-        ),
-        db=db,
-        current_user=current_user,
-    )
-
-    answer = await generate_receipt_answer(payload.question, references)
-    citations = parse_receipt_citations(answer)
-
-    return FinancialReceiptAskResponse(
-        answer=answer,
-        citations=citations,
-        used_receipt_ids=citations,
-        references=references,
+    return await answer_receipts_question(
+        db,
+        current_user,
+        question=payload.question,
+        mode=payload.mode,
+        receipt_ids=payload.receipt_ids,
     )
 
 

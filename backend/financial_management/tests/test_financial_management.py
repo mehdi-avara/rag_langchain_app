@@ -270,9 +270,14 @@ def test_ask_receipts_returns_receipt_citations(monkeypatch):
         match_source="text_fallback",
     )
 
-    monkeypatch.setattr(ask_routes, "search_receipts", lambda **_kwargs: [hit])
-    monkeypatch.setattr(ask_routes, "get_receipt_or_404", lambda *_args, **_kwargs: build_receipt())
-    monkeypatch.setattr(ask_routes, "generate_receipt_answer", lambda *_args, **_kwargs: asyncio.sleep(0, result="done [receipt:11]"))
+    # ask_receipts now delegates to the shared service seam
+    # (services.answer_receipts_question -> search.service.search_receipt_hits).
+    from financial_management import services as services_mod
+    from financial_management.search import service as search_service_mod
+
+    monkeypatch.setattr(search_service_mod, "search_receipt_hits", lambda **_kwargs: [hit])
+    monkeypatch.setattr(services_mod, "get_receipt_or_404", lambda *_args, **_kwargs: build_receipt())
+    monkeypatch.setattr(services_mod, "generate_receipt_answer", lambda *_args, **_kwargs: asyncio.sleep(0, result="done [receipt:11]"))
 
     result = asyncio.run(
         ask_routes.ask_receipts(

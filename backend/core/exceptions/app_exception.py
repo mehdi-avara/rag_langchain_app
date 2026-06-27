@@ -43,6 +43,13 @@ DEFAULT_USER_MESSAGES = {
     "FINANCIAL_CARD_NOT_FOUND": "کارت مالی پیدا نشد.",
     "FINANCIAL_RECEIPT_NOT_FOUND": "رسید مالی پیدا نشد.",
     "FINANCIAL_CUSTOMER_NOT_FOUND": "طرف حساب مالی پیدا نشد.",
+    "ASSISTANT_INTENT_UNCLEAR": "منظور شما را دقیق متوجه نشدم. لطفاً درخواست‌تان را روشن‌تر بیان کنید.",
+    "ASSISTANT_DRAFT_NOT_FOUND": "پیش‌نویس موردنظر پیدا نشد.",
+    "ASSISTANT_DRAFT_NOT_PENDING": "این پیش‌نویس دیگر در وضعیت قابل‌تغییر نیست.",
+    "ASSISTANT_DRAFT_INVALID": "اطلاعات پیش‌نویس کامل یا معتبر نیست.",
+    "ASSISTANT_RUN_NOT_FOUND": "جلسه دستیار پیدا نشد.",
+    "ASSISTANT_RATE_LIMITED": "تعداد درخواست‌های شما از حد مجاز گذشته است. لطفاً کمی بعد دوباره تلاش کنید.",
+    "ASSISTANT_FILE_UNREADABLE": "خواندن محتوای فایل ضمیمه‌شده ممکن نشد.",
 }
 
 

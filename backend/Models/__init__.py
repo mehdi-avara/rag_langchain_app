@@ -112,6 +112,13 @@ from document_intelligence.models import (
     DocumentIntelligenceLabel,
 )
 
+from assistant.models import (
+    AgentRun,
+    AgentRunStatus,
+    Draft,
+    DraftStatus,
+)
+
 __all__ = [
     "Company",
     "User",
@@ -193,4 +200,8 @@ __all__ = [
     "DocumentSegmentSuggestion",
     "DIModelCreationSuggestion",
     "DocumentIntelligenceLabel",
+    "AgentRun",
+    "AgentRunStatus",
+    "Draft",
+    "DraftStatus",
 ]

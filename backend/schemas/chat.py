@@ -59,6 +59,7 @@ class ChatMessageItem(BaseModel):
     citations: List[Any] = Field(default_factory=list)
     retrieved_chunks: List[RetrievedItem] = Field(default_factory=list)
     retrieve_information: RetrieveInformation = Field(default_factory=RetrieveInformation)
+    draft_id: Optional[int] = None
     created_at: datetime
 
 

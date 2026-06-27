@@ -45,6 +45,10 @@ class ChatMessage(Base):
     citations = Column(JSON, nullable=True)
     retrieved_chunks = Column(JSON, nullable=True)
 
+    # When an assistant turn produced a Draft, the frontend re-renders the draft
+    # card from history via this reference (PROMPT §8.1).
+    draft_id = Column(Integer, ForeignKey("assistant_drafts.id", ondelete="SET NULL"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     chat = relationship("Chat", back_populates="messages")

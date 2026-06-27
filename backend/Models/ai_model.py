@@ -15,3 +15,7 @@ class ChatAIModels(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     url = Column(String, nullable=False)
     api_key = Column(String, nullable=False)
+    # Whether this chat model is vision-capable (a VLM). The assistant sends image
+    # blocks to the model only when this is true; otherwise it sends extracted text
+    # (PROMPT §7).
+    supports_vision = Column(Boolean, nullable=False, default=False)
