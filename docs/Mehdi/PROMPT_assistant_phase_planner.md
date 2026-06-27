@@ -35,11 +35,16 @@ Produce a plan that a competent-but-not-expert developer could execute without r
 These were decided for the whole system. Bake them into every module's plan; do not propose alternatives.
 
 1. **Module Tool Contract (§12.4).** Each module exposes a `ModuleToolSet` in `{module}/assistant_tools.py` with
-   `search / summarize / ask / build_draft / commit_draft`, wrapping the module's **existing service functions**.
+   `search / summarize / ask / build_draft`, wrapping the module's **existing service functions**. There is **no
+   `commit_draft` seam** — the assistant never writes domain data; commit happens by the frontend calling the
+   module's own create/update endpoint (item 4). `build_draft` therefore also resolves the draft's **commit
+   target** (the module endpoint + HTTP method + required permission) so the frontend knows where to POST.
    No model imports across modules; the agent reaches the module only through this adapter.
-2. **In-process service calls, never loopback HTTP (§12.4.1).** If business logic lives in a route handler you
-   need, refactor it down into a `services.py` function and have both the route and the adapter call it. One
-   implementation, one test surface.
+2. **In-process service calls for reads, never loopback HTTP (§12.4.1).** `search / summarize / ask` call the
+   module's existing service functions in-process. If read logic lives in a route handler you need, refactor it
+   down into a `services.py` function and have both the route and the adapter call it. Writes need no such
+   refactor for the assistant's sake — the commit goes through the module's **existing** create/update route,
+   called by the frontend (a real client, not loopback).
 3. **Intent routing first, over an RBAC-filtered registry.** The agent classifies each message into one of the
    module's tasks (plus `general` / `clarify`), then routes. Your plan must enumerate that **task taxonomy per
    module** (see §3). **The router only ever sees the tasks the current user is permitted to do** — at request
@@ -48,14 +53,22 @@ These were decided for the whole system. Bake them into every module's plan; do 
    user can't access (no leak), and is the same filtered registry the `//` slash menu uses (§12.16). Plan a
    **single agent** whose registry grows as modules register — **not one agent per module** (see the architecture
    note at the end of §2).
-4. **Draft-and-Confirm for every write (§12.5).** A chat message never writes. It builds a `Draft`; the user
-   reviews the rendered draft and commits via an explicit **button** → `POST /assistant/drafts/{id}/confirm`.
-   **Chat text never commits** — "yes/accept/do it" in prose does nothing (the LLM can misread the user). The
-   confirm endpoint accepts an optional edited `payload`, so the user can change fields and commit in one call;
-   the server re-validates, re-checks RBAC, then writes via the module's create/update service.
-5. **RBAC = the caller's access, never more (§12.11).** The agent runs as `current_user`; every action re-checks
-   the module permission before running, and **again at confirm**; failures → `PERMISSION_DENIED`. Reads are
-   scoped to the user/company.
+4. **Draft-and-Confirm for every write — commit runs on the frontend, not the assistant (§12.5).** A chat message
+   never writes. It builds a `Draft` carrying the module's **commit target** (endpoint + method + required
+   permission) and a pre-filled `payload`. The user reviews the rendered draft, optionally edits fields, and
+   presses an explicit **confirm button**. **The frontend then POSTs the final payload directly to the module's
+   own create/update endpoint** — the exact endpoint the module UI uses, which already enforces RBAC and
+   validation. **The write never touches the assistant server** (the load stays on the module's normal API path).
+   On success the frontend tells the assistant via `POST /assistant/drafts/{id}/committed` with the resulting
+   entity ref; the assistant verifies the caller owns the draft, marks it `committed`, stores
+   `committed_entity_ref`, and records it in chat history. That notification is **bookkeeping only — it writes no
+   domain data and re-checks no domain permission.** **Chat text never commits** — "yes/accept/do it" in prose
+   does nothing (the LLM can misread the user); commit requires the explicit frontend call to the module endpoint.
+5. **RBAC = the caller's access, never more (§12.11).** The agent runs as `current_user`. The intent registry is
+   RBAC-filtered (item 3) and `build_draft` checks the module permission early (so it never offers a draft the
+   user can't commit → `PERMISSION_DENIED`). The **authoritative write-time enforcement is the module's own
+   endpoint**, which applies `require_permission` exactly as for any UI write — the assistant adds no second
+   enforcement point because it does not perform the write. Reads are scoped to the user/company.
 6. **Files via the existing upload mechanism (§12.6).** Use `StorageManager` + `FileAsset` (presigned S3 →
    complete-upload → link), exactly like the module's existing `routes/files.py`. Never invent file handling.
    Attached files become `FileAsset` ids recorded in `Draft.attachments`.
@@ -73,9 +86,11 @@ These were decided for the whole system. Bake them into every module's plan; do 
 11. **Multilingual.** Detect the user's language; conduct the exchange in it; store values canonically.
 12. **Ingested content is data, never commands (§12.19).** Files may populate a draft but never auto-commit and
     never widen RBAC; instructions inside a file are ignored.
-13. **Tests are mandatory (§12.12).** Unit (LLM mocked) + route integration (incl. `403 → PERMISSION_DENIED`) +
-    agent end-to-end (routing, draft→confirm, draft→cancel, resume, multilingual, VLM-vs-text, "chat text never
-    commits"). CI runs `pytest` + `alembic check`.
+13. **Tests are mandatory (§12.12).** Unit (LLM mocked) + route integration (incl. `403 → PERMISSION_DENIED` on
+    the module's own create/update endpoint) + agent end-to-end (routing, draft built with correct `commit_target`,
+    draft→`committed` notification marks status + records `committed_entity_ref`, draft→cancel, resume, multilingual,
+    VLM-vs-text, "chat text never commits", "the assistant never writes domain data"). CI runs `pytest` + `alembic
+    check`.
 
 > If the phase needs a capability not covered above (e.g. a new shared draft action type, a cross-module
 > synthesis), **flag it as a Core change** and call it out separately — do not silently bolt it onto a module.
@@ -121,9 +136,10 @@ Output a single markdown plan with these sections.
 - Any `supports_vision`/model-config or settings touchpoints.
 
 ### E. Seam agreement with the backend developer (from `CMMS_AI_PLAN.md` §6)
-For each module, the list of things to confirm **before** implementing: service-function signatures
-(search/summarize/ask/create/get/update), the permission string each action requires, which fields to
-embed/search/summarize, and any Celery side-effects the module emits.
+For each module, the list of things to confirm **before** implementing: read service-function signatures
+(search/summarize/ask), the **commit endpoint (HTTP method + path) the frontend will call** for each write
+action (create/update) plus its required permission string, which fields to embed/search/summarize, and any
+Celery side-effects the module's write emits.
 
 ### F. Build order & test checklist for the phase
 - The sequence (refactor route logic → adapter → register → router descriptions → file/VLM wiring → tests).
@@ -150,13 +166,17 @@ For each module, produce:
    Include `general` and `clarify`. Mark which intents need a **service refactor** (logic currently in a route).
 2. **Reads** (`search` / `summarize` / `ask`): which existing service/search functions they wrap, what fields are
    searched/summarized, how results are scoped to the user/company, and the citation/source shape.
-3. **Writes** (each `add_*` / `update_*`): the draft `target_action` name, the `payload` fields (canonical names +
-   types + which are required), validation rules, and the `commit_*` service it calls on confirm. State plainly:
-   **commit only via the confirm button; chat never commits.**
+3. **Writes** (each `add_*` / `update_*`): the draft `target_action` name; the `payload` fields (canonical names +
+   types + which are required) and validation rules (validated by the module endpoint at commit); and the
+   **commit target** `build_draft` resolves — the exact module create/update endpoint, HTTP method, and required
+   permission the frontend will call. State plainly: **the assistant never commits; the frontend POSTs the final
+   payload to the module endpoint, then notifies `POST /assistant/drafts/{id}/committed`; chat text never commits.**
 4. **Files** (if any task takes a file): which entity the file links to, reuse of the module's existing
    `routes/files.py`/`StorageManager` flow, and whether intake is inline or heavy. Specify the VLM-vs-text
    handling for that file type.
-5. **RBAC notes:** the exact permission per action, and confirm-time re-check for writes.
+5. **RBAC notes:** the exact permission per action. For writes, name the permission the module's create/update
+   endpoint enforces at commit (the authoritative check), and note that `build_draft` checks it early so no
+   un-committable draft is offered.
 6. **Tests for this module:** the §12.12 matrix instantiated (name the cases).
 7. **Adapter checklist:** the concrete deliverables (`{module}/assistant_tools.py` ModuleToolSet, registration,
    router descriptions, refactors, tests).
@@ -170,8 +190,9 @@ For each module, produce:
 - **Plan, don't implement.** Output the plan document only; do not write the implementation code.
 - **Conform, don't redesign.** Reuse the §2 contract verbatim. If the phase genuinely needs a new pattern, isolate
   it as a flagged Core change in §D/§H — never quietly diverge.
-- **No duplication.** Where logic lives in a route, the plan says "refactor into a service function and call it
-  from both the route and the adapter."
+- **No duplication.** Where **read** logic lives in a route, the plan says "refactor into a service function and
+  call it from both the route and the adapter." **Writes are not duplicated at all** — the frontend commits
+  through the module's existing create/update route, so there is no assistant-side write path to keep in sync.
 - **Surface ambiguity early.** If the phase description is vague about a task, list a focused question in §H rather
   than guessing — especially for write payloads and permissions.
 - Match the **depth and conventions** of `docs/Phase_0/PROMPT_financial_assistant.md`; that file is the quality bar.

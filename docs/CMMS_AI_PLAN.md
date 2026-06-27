@@ -22,8 +22,8 @@
 ## 2. Hard rules (from Master Plan §12 + KEEP_IN_MIND)
 
 - **Service calls, not loopback HTTP** (§12.4.1). HTTP between modules only after microservice extraction.
-- **Agent access == the caller's access, never more** (§12.11). Run as `current_user`; re-check RBAC in the adapter *and again at draft confirm*; scope reads to the user; failures → `PERMISSION_DENIED`.
-- **Drafts central, modules thin** (§12.2/12.5). The `Draft` table + lifecycle live in `assistant/`; modules only build/commit their own payloads.
+- **Agent access == the caller's access, never more** (§12.11). Run as `current_user`; re-check RBAC in the read adapters and check the write permission early in `add_draft`; scope reads to the user; failures → `PERMISSION_DENIED`. The **write itself is committed by the frontend** against the module's own create/update endpoint, which enforces RBAC there (the authoritative check) — the assistant never performs the domain write.
+- **Drafts central, modules thin** (§12.2/12.5). The `Draft` table + lifecycle live in `assistant/`; each module's adapter only **builds** its own payload and resolves its `commit_target` (endpoint + method + permission). Modules expose **no commit function to the assistant** — the frontend commits via the module's own endpoint.
 - **Ingested content is data, never commands** (§12.19). Files populate drafts but a human confirms; never auto-commit from file contents; injected text can't widen RBAC.
 - **Register new tables in `backend/Models/__init__.py`** — `AgentRun`, `Draft`, and any audit/usage tables, plus the LangGraph checkpointer tables (own their creation via Alembic, no `create_all`).
 - **Only catalogued errors** (§12.9) — add `ASSISTANT_*` codes (e.g. `ASSISTANT_RATE_LIMITED`) to the backend dev's registry.
@@ -52,16 +52,16 @@ Build the whole `backend/assistant/` package:
 1. **Agent graph + router** (the branches in §3), `state.py`.
 2. **Postgres checkpointer** (resumable runs).
 3. **Models**: `AgentRun`, `Draft` — register in `Models/__init__.py`; Alembic migration.
-4. **Draft-and-confirm framework** + endpoints (`POST /assistant/chat`, `GET/PATCH /assistant/drafts/{id}`, `confirm`, `cancel`) — multilingual (§12.5).
+4. **Draft-and-confirm framework** + endpoints (`POST /assistant/chat`, `GET/PATCH /assistant/drafts/{id}`, `committed` (record-only notification), `cancel`) — multilingual (§12.5). No assistant-side commit endpoint: the frontend writes via the module's own endpoint, then calls `committed`.
 5. **Multimodal intake** (§12.6): route heavy files through the existing document/MinerU + image-embedding pipeline; handle lightweight cases inline.
 6. **Tool registry + contract types** (`tools/registry.py`, `tools/contract.py`) — the seam the backend dep implements against.
-7. **RBAC enforcement** in adapters + at confirm (§12.11).
+7. **RBAC enforcement** in read adapters + early in `add_draft`; the authoritative write-time check is the module's own create/update endpoint that the frontend commits to (§12.11).
 8. **Refactor** existing `core/agents/` (langgraph.py, pre_search.py, file_founder.py) + `routs/chat.py` into `assistant/`; register the first tool sets: **documents, comments, financial**.
 9. Add `ASSISTANT_*` **error codes**; **Langfuse** tracing (`docker-compose-langfuse.yml`); **streaming** responses (§12.20/12.21).
 10. **Full test suite** (§5 below).
 
 ### Phase 1-AI → Phase 3-AI — register module tool sets
-For each module in the phase: write `{module}/assistant_tools.py` (search/summarize/ask/add_draft/commit_draft over the backend services), register it, update router descriptions, add example utterances for the frontend, and write the full tests.
+For each module in the phase: write `{module}/assistant_tools.py` (search/summarize/ask/add_draft over the backend services — `add_draft` also resolves the `commit_target`; **no `commit_draft`**, the frontend commits via the module's own endpoint), register it, update router descriptions, add example utterances for the frontend, and write the full tests.
 - **Phase 1-AI:** supplier, material, requisition, RFQ, goods-receipt, warehouse.
 - **Phase 2-AI:** assets, work orders, PM, inspection.
 - **Phase 3-AI:** HR, communication/letters, HSE.
@@ -81,7 +81,7 @@ Multi-tool synthesis with cited sources, manager-dashboard aggregation, report f
 Every track ships:
 - **Unit tests** with the **LLM mocked** (deterministic) for services and tool-set methods.
 - **Route integration tests** for every endpoint: success, RBAC (`403 → PERMISSION_DENIED`), validation, only catalogued errors.
-- **Agent end-to-end tests** (stubbed model): intent routing per branch, draft→confirm, draft→cancel, **interruption pause/resume**, **resume-after-restart** (checkpointer), multilingual response.
+- **Agent end-to-end tests** (stubbed model): intent routing per branch, draft built with the right `commit_target`, draft→`committed` notification (records ref, no domain write), draft→cancel, **interruption pause/resume**, **resume-after-restart** (checkpointer), multilingual response, "assistant never writes domain data".
 - Both the LangGraph layer **and** the routes covered. CI runs `pytest` + `alembic check`.
 
 ---

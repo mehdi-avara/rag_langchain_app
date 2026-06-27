@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMMS Assistant — Structure Map</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2b3440;
+    --ink:#e6edf3; --muted:#9aa7b4; --dim:#6b7785;
+    --core:#7c9cff; --core-bg:#1a2336;
+    --module:#5ad1a8; --module-bg:#13251f;
+    --write:#ffb454; --write-bg:#2a2113;
+    --read:#6ec1e4; --read-bg:#12222b;
+    --danger:#ff7b72; --danger-bg:#2a1614;
+    --accent:#c08cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 24px 80px}
+  header.top{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:36px}
+  .kicker{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600}
+  h1{font-size:30px;margin:8px 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:15px;max-width:760px}
+  .stack{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+  .chip{font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);
+    padding:3px 9px;border-radius:20px}
+  h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+    margin:48px 0 16px;font-weight:700}
+  .rule{height:1px;background:var(--line);margin:0 0 16px}
+
+  /* hero principle */
+  .principle{background:linear-gradient(135deg,#1a2336,#161b22);border:1px solid #2b3a5e;
+    border-radius:14px;padding:22px 24px;display:flex;gap:16px;align-items:flex-start}
+  .principle .big{font-size:26px;line-height:1}
+  .principle p{margin:0;font-size:15.5px;color:var(--ink)}
+  .principle b{color:var(--core)}
+
+  /* two-layer architecture */
+  .layers{display:grid;grid-template-columns:1fr;gap:18px}
+  .layer{border-radius:14px;padding:20px 22px;border:1px solid var(--line);background:var(--panel)}
+  .layer.core{border-color:#33457a;background:var(--core-bg)}
+  .layer.track{border-color:#2c5a48;background:var(--module-bg)}
+  .layer h3{margin:0 0 4px;font-size:17px;display:flex;align-items:center;gap:10px}
+  .layer .meta{font-size:12.5px;color:var(--muted);margin-bottom:16px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .dot.c{background:var(--core)} .dot.m{background:var(--module)}
+  .tag{font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:6px;text-transform:uppercase}
+  .tag.once{background:#26345c;color:#aebfff}
+  .tag.each{background:#1d3a30;color:#8fe6c6}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .cell{background:#0e131b;border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+  .cell .n{font-size:13px;font-weight:600;color:var(--ink)}
+  .cell .d{font-size:11.5px;color:var(--dim);margin-top:2px}
+  .core .cell{border-color:#2c3a63}
+  .track .cell{border-color:#27463a}
+
+  .arrowrow{display:flex;justify-content:center;margin:2px 0}
+  .arrowrow span{color:var(--dim);font-size:20px}
+
+  /* request lifecycle flow */
+  .flow{display:flex;flex-direction:column;gap:0}
+  .step{display:grid;grid-template-columns:46px 1fr;gap:16px;position:relative}
+  .step .rail{display:flex;flex-direction:column;align-items:center}
+  .step .num{width:34px;height:34px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--ink);z-index:1}
+  .step .line{flex:1;width:2px;background:var(--line);margin:4px 0}
+  .step:last-child .line{display:none}
+  .step .body{padding-bottom:22px}
+  .step .t{font-size:15px;font-weight:600;margin-bottom:3px}
+  .step .x{font-size:13px;color:var(--muted)}
+  .step.gate .num{background:var(--danger-bg);border-color:#5e2b27;color:var(--danger)}
+  .step.write .num{background:var(--write-bg);border-color:#5e4a27;color:var(--write)}
+  .step.commit .num{background:var(--module-bg);border-color:#2c5a48;color:var(--module)}
+  .pill{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:5px;margin-left:8px;vertical-align:middle}
+  .pill.read{background:var(--read-bg);color:var(--read)}
+  .pill.rbac{background:var(--danger-bg);color:var(--danger)}
+  .pill.draft{background:var(--write-bg);color:var(--write)}
+  code{background:#0c1119;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12.5px;
+    font-family:"SF Mono",ui-monospace,Menlo,monospace;color:#c9d6e3}
+
+  /* contract */
+  .contract{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+  .seams{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:6px}
+  .seam{border-radius:10px;padding:12px 14px;border:1px solid var(--line);background:#0e131b}
+  .seam.r{border-left:3px solid var(--read)}
+  .seam.w{border-left:3px solid var(--write)}
+  .seam .fn{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:13px;color:var(--ink);font-weight:600}
+  .seam .desc{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .seam .rw{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;float:right}
+  .seam.r .rw{color:var(--read)} .seam.w .rw{color:var(--write)}
+
+  /* invariants grid */
+  .inv{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:12px}
+  .ic{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
+  .ic .h{display:flex;gap:9px;align-items:baseline;margin-bottom:4px}
+  .ic .h .i{font-size:11px;font-weight:700;color:var(--accent);min-width:18px}
+  .ic .h .nm{font-size:13.5px;font-weight:600}
+  .ic .p{font-size:12px;color:var(--muted)}
+  .ic .ref{font-size:10.5px;color:var(--dim);font-family:"SF Mono",ui-monospace,monospace}
+
+  /* plan skeleton */
+  .plan{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .pc{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
+  .pc .l{font-size:22px;font-weight:800;color:var(--accent);opacity:.5;float:right;line-height:.8}
+  .pc .ti{font-size:14px;font-weight:600;margin-bottom:3px}
+  .pc .de{font-size:12px;color:var(--muted)}
+
+  /* template steps */
+  .tmpl{counter-reset:t;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .tstep{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px 13px 44px;position:relative}
+  .tstep::before{counter-increment:t;content:counter(t);position:absolute;left:13px;top:13px;
+    width:22px;height:22px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--module)}
+  .tstep .tt{font-size:13.5px;font-weight:600}
+  .tstep .td{font-size:11.5px;color:var(--dim);margin-top:2px}
+
+  .note{font-size:12px;color:var(--dim);margin-top:10px}
+  footer{margin-top:54px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:12px}
+  @media(max-width:680px){.tmpl{grid-template-columns:1fr}.principle{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="kicker">CMMS Platform · AI Assistant Track</div>
+    <h1>Assistant Structure Map</h1>
+    <div class="sub">How the assistant is organized: one Core built once, thin per-module tracks added each phase,
+      and a fixed contract every module obeys. A visual companion to <code>PROMPT_assistant_phase_planner.md</code>.</div>
+    <div class="stack">
+      <span class="chip">FastAPI</span><span class="chip">PostgreSQL + pgvector</span>
+      <span class="chip">SQLAlchemy · Alembic</span><span class="chip">Celery</span>
+      <span class="chip">LangGraph agent</span><span class="chip">Modular monolith</span>
+    </div>
+  </header>
+
+  <div class="principle">
+    <div class="big">💬</div>
+    <p>The product rule: <b>the chat page is the primary interface.</b> Anything a user can do in a module's UI
+      must also be doable by talking to the assistant — search, summarize, ask, and every write.</p>
+  </div>
+
+  <!-- LAYERS -->
+  <h2>Two layers · built once vs. added each phase</h2>
+  <div class="rule"></div>
+  <div class="layers">
+
+    <div class="layer core">
+      <h3><span class="dot c"></span> Assistant Core <span class="tag once">built once · Phase 0-AI</span></h3>
+      <div class="meta">The compiled LangGraph agent and all shared machinery. <b>Never rebuilt per phase.</b>
+        A new module adds tool adapters into this — not a new agent.</div>
+      <div class="cards">
+        <div class="cell"><div class="n">LangGraph agent</div><div class="d">router + nodes, single compiled graph</div></div>
+        <div class="cell"><div class="n">Intent router</div><div class="d">classifies msg → task, RBAC-filtered registry</div></div>
+        <div class="cell"><div class="n">Tool registry</div><div class="d">all ModuleToolSets, grows per module</div></div>
+        <div class="cell"><div class="n">Draft framework</div><div class="d">build draft + commit target; record committed</div></div>
+        <div class="cell"><div class="n">Checkpointer</div><div class="d">Postgres + AgentRun, resumable state</div></div>
+        <div class="cell"><div class="n">Streaming (SSE)</div><div class="d">delta events; structured payloads whole</div></div>
+        <div class="cell"><div class="n">File intake</div><div class="d">StorageManager + FileAsset, VLM/text branch</div></div>
+        <div class="cell"><div class="n">Error catalog</div><div class="d">catalogued AppExceptions, ASSISTANT_*</div></div>
+      </div>
+    </div>
+
+    <div class="arrowrow"><span>↑ registers into ↑</span></div>
+
+    <div class="layer track">
+      <h3><span class="dot m"></span> Per-module AI track <span class="tag each">added each phase · thin</span></h3>
+      <div class="meta">For every module in a phase you ship a thin adapter that wraps the module's
+        <b>existing service functions</b> — no model imports across modules, no new agent.</div>
+      <div class="cards">
+        <div class="cell"><div class="n"><code>{module}/assistant_tools.py</code></div><div class="d">a ModuleToolSet adapter</div></div>
+        <div class="cell"><div class="n">Register it</div><div class="d">into the Core tool registry</div></div>
+        <div class="cell"><div class="n">Router descriptions</div><div class="d">intent text so the agent picks its tasks</div></div>
+        <div class="cell"><div class="n">Service refactors</div><div class="d">route logic → services.py (call both)</div></div>
+        <div class="cell"><div class="n">Tests</div><div class="d">unit · route integration · agent e2e</div></div>
+      </div>
+      <div class="note">Dependency: each module's track depends only on (a) the Assistant Core and (b) that module's service functions existing.</div>
+    </div>
+  </div>
+
+  <!-- LIFECYCLE -->
+  <h2>Request lifecycle · one chat message</h2>
+  <div class="rule"></div>
+  <div class="flow">
+    <div class="step">
+      <div class="rail"><div class="num">1</div><div class="line"></div></div>
+      <div class="body"><div class="t">User message arrives (any language)</div>
+        <div class="x">Detect language; conduct the exchange in it, store values canonically. Attached files become <code>FileAsset</code> ids.</div></div>
+    </div>
+    <div class="step gate">
+      <div class="rail"><div class="num">2</div><div class="line"></div></div>
+      <div class="body"><div class="t">Build the intent set — RBAC-filtered <span class="pill rbac">RBAC</span></div>
+        <div class="x">The registry is filtered by the caller's permissions first. The LLM never sees tasks the user can't access (no leak). Same filtered set the <code>//</code> slash menu uses.</div></div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="num">3</div><div class="line"></div></div>
+      <div class="body"><div class="t">Route the intent</div>
+        <div class="x">Classify into one module task (plus <code>general</code> / <code>clarify</code>). Large registry → two-stage hierarchical routing: which module, then which task.</div></div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="num">4</div><div class="line"></div></div>
+      <div class="body"><div class="t">Read path <span class="pill read">read</span> &nbsp;or&nbsp; Write path <span class="pill draft">draft</span></div>
+        <div class="x"><b>Reads</b> (search / summarize / ask) run the service and stream the answer with citations.
+          <b>Writes</b> never touch the DB — the assistant builds a <code>Draft</code> with <code>target_action</code>, a pre-filled payload, and a <b>commit target</b> (the module's own endpoint + method + permission).</div></div>
+    </div>
+    <div class="step write">
+      <div class="rail"><div class="num">5</div><div class="line"></div></div>
+      <div class="body"><div class="t">User reviews the rendered draft, edits, presses confirm</div>
+        <div class="x">Chat text never commits — "yes / do it" in prose does nothing. The confirm <b>button lives in the frontend</b>.</div></div>
+    </div>
+    <div class="step commit">
+      <div class="rail"><div class="num">6</div><div class="line"></div></div>
+      <div class="body"><div class="t">Frontend POSTs directly to the module endpoint <span class="pill rbac">RBAC</span></div>
+        <div class="x">The frontend sends the final payload to the module's <b>own</b> create/update endpoint (e.g. <code>POST /financial/receipts</code>) — same path the UI uses, enforcing RBAC + validation. <b>The write never touches the assistant server.</b></div></div>
+    </div>
+    <div class="step commit">
+      <div class="rail"><div class="num">7</div><div class="line"></div></div>
+      <div class="body"><div class="t">Frontend notifies the assistant → <code>POST /assistant/drafts/{id}/committed</code></div>
+        <div class="x">Bookkeeping only: the assistant verifies draft ownership, marks it <code>committed</code>, stores <code>committed_entity_ref</code>, logs it to history. No domain write, no domain-RBAC re-check.</div></div>
+    </div>
+  </div>
+
+  <!-- CONTRACT -->
+  <h2>The module tool contract · ModuleToolSet (§12.4) · four seams</h2>
+  <div class="rule"></div>
+  <div class="contract">
+    <div class="sub" style="margin-bottom:12px">Each module exposes these four seams, each wrapping an existing service function.
+      There is <b>no <code>commit_draft</code></b> — the assistant never writes domain data; the frontend commits through the module's own endpoint. The agent reaches the module <b>only</b> through this adapter.</div>
+    <div class="seams">
+      <div class="seam r"><span class="rw">read</span><div class="fn">search</div><div class="desc">find records; scoped to user/company; returns citations</div></div>
+      <div class="seam r"><span class="rw">read</span><div class="fn">summarize</div><div class="desc">condense a set of records with source shape</div></div>
+      <div class="seam r"><span class="rw">read</span><div class="fn">ask</div><div class="desc">answer a question over module data</div></div>
+      <div class="seam w"><span class="rw">build only</span><div class="fn">build_draft</div><div class="desc">pre-fill payload + resolve commit target (endpoint·method·permission). Never writes.</div></div>
+    </div>
+    <div class="note">Reads use in-process service calls, never loopback HTTP (§12.4.1) — refactor read route logic into <code>services.py</code> and call it from both the route and the adapter. <b>Writes need no assistant-side path:</b> the frontend commits through the module's existing create/update route.</div>
+  </div>
+
+  <!-- INVARIANTS -->
+  <h2>The fixed contract · 13 invariants baked into every module</h2>
+  <div class="rule"></div>
+  <div class="inv">
+    <div class="ic"><div class="h"><span class="i">01</span><span class="nm">Module Tool Contract</span></div><div class="p">Four seams wrapping existing services; no commit_draft, no cross-module model imports.</div><div class="ref">§12.4</div></div>
+    <div class="ic"><div class="h"><span class="i">02</span><span class="nm">In-process reads</span></div><div class="p">Reads call services in-process (no loopback HTTP); writes go via the module's own endpoint.</div><div class="ref">§12.4.1</div></div>
+    <div class="ic"><div class="h"><span class="i">03</span><span class="nm">Intent routing first</span></div><div class="p">Classify over an RBAC-filtered registry; one agent, registry grows.</div><div class="ref">§12.16</div></div>
+    <div class="ic"><div class="h"><span class="i">04</span><span class="nm">Draft, commit on frontend</span></div><div class="p">A message never writes; the frontend commits to the module endpoint, then notifies the assistant.</div><div class="ref">§12.5</div></div>
+    <div class="ic"><div class="h"><span class="i">05</span><span class="nm">RBAC = caller's access</span></div><div class="p">Module endpoint enforces RBAC at write; build_draft checks early → PERMISSION_DENIED.</div><div class="ref">§12.11</div></div>
+    <div class="ic"><div class="h"><span class="i">06</span><span class="nm">Files via existing upload</span></div><div class="p">StorageManager + FileAsset, presigned S3; never invent file handling.</div><div class="ref">§12.6</div></div>
+    <div class="ic"><div class="h"><span class="i">07</span><span class="nm">VLM vs text branch</span></div><div class="p">Vision model → image blocks; else extract text. Heavy PDFs → Celery.</div><div class="ref">§7 ref</div></div>
+    <div class="ic"><div class="h"><span class="i">08</span><span class="nm">History AND state</span></div><div class="p">Transcript rows vs. LangGraph checkpointer + AgentRun, kept distinct.</div><div class="ref">—</div></div>
+    <div class="ic"><div class="h"><span class="i">09</span><span class="nm">Streaming (SSE)</span></div><div class="p">Reply streams as deltas; drafts/search sent as complete objects.</div><div class="ref">ask.py</div></div>
+    <div class="ic"><div class="h"><span class="i">10</span><span class="nm">Only catalogued errors</span></div><div class="p">Raise registered AppExceptions; add ASSISTANT_* codes as needed.</div><div class="ref">§12.9</div></div>
+    <div class="ic"><div class="h"><span class="i">11</span><span class="nm">Multilingual</span></div><div class="p">Detect language, converse in it, store values canonically.</div><div class="ref">—</div></div>
+    <div class="ic"><div class="h"><span class="i">12</span><span class="nm">Ingested content is data</span></div><div class="p">Files populate drafts but never auto-commit or widen RBAC.</div><div class="ref">§12.19</div></div>
+    <div class="ic"><div class="h"><span class="i">13</span><span class="nm">Tests mandatory</span></div><div class="p">Unit (LLM mocked) + route integration + agent end-to-end.</div><div class="ref">§12.12</div></div>
+  </div>
+
+  <!-- PLAN SKELETON -->
+  <h2>Plan output skeleton · the deliverable per phase</h2>
+  <div class="rule"></div>
+  <div class="plan">
+    <div class="pc"><span class="l">A</span><div class="ti">Phase overview</div><div class="de">Modules in the phase, Core capabilities depended on, blockers.</div></div>
+    <div class="pc"><span class="l">B</span><div class="ti">Per-module plan</div><div class="de">The §4 template, repeated for every module. The heart of the plan.</div></div>
+    <div class="pc"><span class="l">C</span><div class="ti">Router / registry updates</div><div class="de">New intent descriptions (mutually exclusive) + ModuleToolSet registration.</div></div>
+    <div class="pc"><span class="l">D</span><div class="ti">Cross-cutting work</div><div class="de">New error codes, Celery events, vision/model-config touchpoints.</div></div>
+    <div class="pc"><span class="l">E</span><div class="ti">Seam agreement w/ backend</div><div class="de">Confirm signatures, permission strings, embed fields, side-effects.</div></div>
+    <div class="pc"><span class="l">F</span><div class="ti">Build order &amp; test checklist</div><div class="de">Refactor → adapter → register → router → file/VLM → tests.</div></div>
+    <div class="pc"><span class="l">G</span><div class="ti">"What the assistant can now do"</div><div class="de">3–6 example utterances per module for the frontend.</div></div>
+    <div class="pc"><span class="l">H</span><div class="ti">Open questions / risks / gaps</div><div class="de">Ambiguities, missing service functions, required Core changes.</div></div>
+  </div>
+
+  <!-- PER MODULE TEMPLATE -->
+  <h2>Per-module template · filled once per module (§4)</h2>
+  <div class="rule"></div>
+  <div class="tmpl">
+    <div class="tstep"><div class="tt">Task taxonomy (intents)</div><div class="td">Table: intent · ask · service seam · permission · read/write · takes file? Include general + clarify; mark refactors.</div></div>
+    <div class="tstep"><div class="tt">Reads</div><div class="td">Which search/summarize/ask functions wrap; fields searched; user/company scoping; citation shape.</div></div>
+    <div class="tstep"><div class="tt">Writes</div><div class="td">target_action; payload fields (canonical + types + required); the commit target the frontend POSTs to (endpoint·method·permission). Assistant never commits.</div></div>
+    <div class="tstep"><div class="tt">Files</div><div class="td">Entity the file links to; reuse routes/files.py + StorageManager; inline vs heavy; VLM-vs-text handling.</div></div>
+    <div class="tstep"><div class="tt">RBAC notes</div><div class="td">Permission per action; the module endpoint enforces it at write; build_draft checks it early.</div></div>
+    <div class="tstep"><div class="tt">Tests</div><div class="td">§12.12 matrix: routing, draft built with right commit target, draft→committed records ref, draft→cancel, resume, multilingual, VLM-vs-text, "text never commits", "assistant never writes domain data".</div></div>
+    <div class="tstep"><div class="tt">Adapter checklist</div><div class="td">Concrete deliverables: ModuleToolSet, registration, router descriptions, refactors, tests.</div></div>
+  </div>
+
+  <!-- ONE AGENT -->
+  <h2>Architecture invariant · one agent, not one per module</h2>
+  <div class="rule"></div>
+  <div class="contract">
+    <div class="seams" style="grid-template-columns:1fr 1fr">
+      <div class="seam r" style="border-left-color:var(--module)"><div class="fn">✓ One compiled agent + registry</div><div class="desc">Adding a module adds adapter functions, not another live agent. Prompt stays small via (a) RBAC-filtering and (b) hierarchical routing.</div></div>
+      <div class="seam w" style="border-left-color:var(--danger)"><div class="fn">✗ Per-module agents</div><div class="desc">Would still need a top-level router, duplicate the draft framework / checkpointer / streaming, and break cross-module tasks (no agent sees both modules).</div></div>
+    </div>
+    <div class="note">If the registry grows too large for flat routing, recommend hierarchical routing as a <b>Core change (§D)</b> — never split the agent. Capabilities not covered by the contract are flagged as Core changes, never bolted onto a module.</div>
+  </div>
+
+  <footer>
+    Generated from <code>docs/Mehdi/PROMPT_assistant_phase_planner.md</code> · porsa_server CMMS.
+    Section references (§12.x) point to <code>CMMS_MASTER_PLAN.md</code>; the reference implementation is <code>docs/Phase_0/PROMPT_financial_assistant.md</code>.
+  </footer>
+</div>
+</body>
+</html>

@@ -16,7 +16,8 @@ in the financial UI must also be doable by talking to the assistant.** So your a
 1. Take a user message (text, optionally with an uploaded file).
 2. **Decide which financial task the user wants** (intent routing over the module's task list — §3).
 3. **Execute that task** by calling the module's existing service functions (never re-implement them).
-4. If the task is a write, build a **draft**, show it, and commit **only after the user confirms**.
+4. If the task is a write, build a **draft** (with its `commit_target`) and show it; **the frontend commits it to
+   the module's own endpoint after the user confirms — the assistant never performs the write** (§4).
 5. Handle **file uploads** through the project's existing upload mechanism (§6).
 6. Send file content to the model correctly depending on **whether the model is a VLM** (§7):
    if it is vision-capable, send the image(s) to the model; if not, send **only extracted text**.
@@ -53,15 +54,20 @@ in the financial UI must also be doable by talking to the assistant.** So your a
 - **Alembic owns the schema.** Any new table/column (e.g. `Draft`, `AgentRun`, a `supports_vision` flag) ships
   as an Alembic migration. Never `Base.metadata.create_all()`. Register every new model in
   `backend/Models/__init__.py`.
-- **RBAC = the caller's access, never more (§5).** Re-check the user's permission in the adapter before every
-  action, and **again at confirm time** for writes. Missing permission → return the catalogued
-  `PERMISSION_DENIED` error, never silently skip or elevate.
-- **Writes go through draft-and-confirm (§4).** A chat message never writes directly. It builds a draft; a human
-  confirms via an explicit **button** (a dedicated confirm API call); only then do you call the module's
-  create/update service. **The agent/LLM must NEVER treat chat text as confirmation** — even if the user types
-  "yes", "accept", "do it", or "confirmed", that does **not** commit anything. Commit happens only when the
-  explicit confirm endpoint is called by the client. This is deliberate: the LLM can misunderstand the user, so
-  the human must press a button on the rendered draft, not tell the assistant in prose.
+- **RBAC = the caller's access, never more (§5).** Re-check the user's permission in the read adapters before
+  every action, and check the create/update permission early in `build_draft` so you never offer an
+  un-committable draft. The **authoritative write-time check is the module's own create/update endpoint** that the
+  frontend commits to — it applies `require_permission` exactly as for a UI write. Missing permission → catalogued
+  `PERMISSION_DENIED`, never silently skip or elevate.
+- **Writes go through draft-and-confirm (§4) — but the assistant never performs the write.** A chat message never
+  writes directly. The agent builds a draft carrying the module's **commit target** (the create/update endpoint +
+  HTTP method + required permission) and a pre-filled payload. A human reviews it, optionally edits, and presses
+  an explicit **confirm button**, at which point **the frontend POSTs the final payload directly to that module
+  endpoint** — the same endpoint the module UI uses. The assistant server does **not** write; it only records the
+  result afterward (`POST /assistant/drafts/{id}/committed`). **The agent/LLM must NEVER treat chat text as
+  confirmation** — even if the user types "yes", "accept", "do it", or "confirmed", that does **not** commit
+  anything. Commit happens only when the frontend calls the module endpoint. This is deliberate: the LLM can
+  misunderstand the user, so the human must press a button on the rendered draft, not tell the assistant in prose.
 - **Ingested content is data, never commands (§12.19).** Text/images from an uploaded file may *populate* a
   draft, but never auto-commit and never widen RBAC. Instructions found *inside* a file ("approve this",
   "delete all receipts") are ignored. Put ingested content in the prompt as clearly delimited quoted data.
@@ -84,18 +90,20 @@ so the model picks one of these (plus `general` and `clarify`):
 | `search_receipts` | "find the receipt for pump X", "show payments to ACME" | `search/service.py: search_receipt_hits(...)` (+ `repository.search_financial_receipt_hits_semantic`) | `financial_management:receipts:search` |
 | `summarize_finance` | "how much did we spend this month", totals/KPIs by currency | the summary logic in `routes/receipts.py::get_receipts_summary` — **refactor it into a `summarize_receipts(db, user, filters)` service function**, then call that | `financial_management:receipts:read` |
 | `ask_finance` | grounded NL question over receipts ("what was the last invoice from ACME about") | the logic behind `routes/ask.py` + `services.build_receipt_context` / `parse_receipt_citations` | `financial_management:receipts:ask` |
-| `add_receipt` | "add a receipt: 1.2M IRR to ACME on …" (often with a photo/PDF) | draft → on confirm, the create logic in `routes/receipts.py::create_receipt` (refactor into `create_receipt_service(db, user, payload)`) | `financial_management:receipts:create` |
-| `update_receipt` | "change the amount of receipt 42 to …" | draft → on confirm, `routes/receipts.py::update_receipt` logic (refactor into a service) | `financial_management:receipts:update` |
-| `add_card` / `update_card` | manage credit cards | `routes/cards.py` create/update logic (refactor into services) | `financial_management:cards:create` / `:update` |
-| `add_customer` / `update_customer` | manage customers/counterparties | `routes/customers.py` logic (refactor into services) | `financial_management:customers:create` / `:update` |
-| `add_receipt_comment` | attach a note/comment to a receipt | `routes/comments.py` logic | `financial_management:receipt_comments:create` |
+| `add_receipt` | "add a receipt: 1.2M IRR to ACME on …" (often with a photo/PDF) | draft → `commit_target` = the existing create endpoint `POST /financial/receipts` (`routes/receipts.py::create_receipt`); **the frontend commits there**, assistant never writes | `financial_management:receipts:create` |
+| `update_receipt` | "change the amount of receipt 42 to …" | draft → `commit_target` = the existing update endpoint `PUT/PATCH /financial/receipts/{id}` (`routes/receipts.py::update_receipt`) | `financial_management:receipts:update` |
+| `add_card` / `update_card` | manage credit cards | draft → `commit_target` = the existing `routes/cards.py` create/update endpoint | `financial_management:cards:create` / `:update` |
+| `add_customer` / `update_customer` | manage customers/counterparties | draft → `commit_target` = the existing `routes/customers.py` create/update endpoint | `financial_management:customers:create` / `:update` |
+| `add_receipt_comment` | attach a note/comment to a receipt | draft → `commit_target` = the existing `routes/comments.py` create endpoint | `financial_management:receipt_comments:create` |
 | `attach_receipt_file` | upload/attach a file to a receipt | the upload flow in `routes/files.py` (§6) | `financial_management:receipt_files:create` |
 | `general` | general-knowledge question, not about system data | the LLM's own knowledge — **mark clearly as model knowledge**, cite nothing | `assistant:chat` |
 | `clarify` | message is ambiguous/under-specified | ask the user one focused question (in their language) before proceeding | — |
 
-> Where the table says "refactor into a service": move the business logic out of the route handler into a
-> function in `financial_management/services.py`, then have **both** the route and your adapter call it. Do not
-> copy logic. This keeps one test surface (Master Plan §12.4.1).
+> Where a **read** intent (`summarize_finance`, `ask_finance`) says "refactor into a service": move the business
+> logic out of the route handler into a function in `financial_management/services.py`, then have **both** the
+> route and your adapter call it. Do not copy logic. This keeps one test surface (Master Plan §12.4.1). **Write
+> intents need no such refactor for the assistant** — the adapter does not commit; the draft's `commit_target` is
+> the module's existing create/update **endpoint**, which the frontend calls directly.
 
 Router rules:
 - Output a single intent + the user's detected language + any extracted slots (amounts, dates, names, ids).
@@ -122,58 +130,66 @@ full static taxonomy in the prompt. Build the intent list **per request** from t
 
 ## 4. Draft-and-Confirm (every write intent uses this)
 
-Flow: `user describes data (+ optional file) → agent builds Draft → frontend renders it → user edits/accepts → commit`.
+Flow: `user describes data (+ optional file) → agent builds Draft (payload + commit_target) → frontend renders it
+→ user edits/accepts → frontend POSTs to the module's own endpoint → frontend notifies the assistant`.
 
-Build a generic, module-agnostic `Draft` mechanism (it will be reused by other modules later), with the
-financial adapter only supplying *how to build* and *how to commit* a financial payload.
+**The assistant never writes the entity.** It assembles the draft and tells the frontend *where* to commit; the
+frontend performs the write against the module's existing create/update endpoint (keeping the write load off the
+assistant server), then reports the result back. Build a generic, module-agnostic `Draft` mechanism (reused by
+other modules later); the financial adapter only supplies *how to build* a financial payload and *which endpoint*
+commits it.
 
 `Draft` model (`assistant/drafts/models.py`, registered in `Models/__init__.py`, Alembic migration):
 ```
 Draft(id, chat_id, agent_run_id, created_by_user_id, company_id,
       target_module="financial_management", target_action="create_receipt"|"update_receipt"|...,
       payload JSONB,            # proposed fields, pre-filled, canonical names
+      commit_target JSONB,      # { method, endpoint, permission } the frontend POSTs to, e.g.
+                                #   {"method":"POST","endpoint":"/financial/receipts",
+                                #    "permission":"financial_management:receipts:create"}
+                                #   (PUT/PATCH + entity id for updates)
       attachments JSONB,        # FileAsset ids extracted from uploaded file(s)
       language str,             # BCP-47, e.g. "fa", "en"
       status: pending|committed|cancelled|failed,   # see §4.1 for the lifecycle ('confirmed' removed)
       validation JSONB,         # per-field validation result for the frontend
-      committed_entity_ref JSONB nullable,
+      committed_entity_ref JSONB nullable,   # set from the frontend's committed-notification
       created_at, updated_at)
 ```
 
 Endpoints (multilingual responses):
-- `POST /assistant/chat` — the agentic endpoint; may return a `Draft` for the frontend to render. This endpoint
-  **never commits**, regardless of what the user typed.
+- `POST /assistant/chat` — the agentic endpoint; may return a `Draft` (with its `commit_target`) for the frontend
+  to render. This endpoint **never commits**, regardless of what the user typed.
 - `GET /assistant/drafts/{id}` — fetch/resume a draft.
-- `PATCH /assistant/drafts/{id}` — (optional) user edits fields before confirming.
-- `POST /assistant/drafts/{id}/confirm` — the **button** action. **This is the only path that writes.**
+- `PATCH /assistant/drafts/{id}` — (optional) user edits fields on the assistant-side copy before committing.
+- `POST /assistant/drafts/{id}/committed` — **record-only notification.** The frontend calls this *after* it has
+  written via the module endpoint. **This endpoint writes no domain data.**
 - `POST /assistant/drafts/{id}/cancel` — discard.
 
-**Confirmation is an explicit human action that carries the final data — not an LLM decision.** Design the
-confirm endpoint so the user can edit fields *and* commit in one request:
+**The write is NOT an assistant endpoint.** There is no `/confirm`. Commit is an explicit human action in the
+frontend: the user reviews the draft, optionally edits fields, presses confirm, and the **frontend POSTs the
+final (possibly-edited) payload straight to `draft.commit_target.endpoint`** — the module's normal create/update
+route, which applies `require_permission` and validation exactly as for a UI write.
 
-```
-POST /assistant/drafts/{id}/confirm
-body: { payload: { ...the final, possibly-edited fields... } }   # body optional; if omitted, commit the stored draft payload
-```
+Commit sequence (who does what):
+1. **Frontend** POSTs the final payload to `draft.commit_target.endpoint` (the module's own create/update route).
+   That route re-checks RBAC, re-validates, writes the entity, emits any Celery side-effects, and returns the
+   new/updated entity ref. (If it returns `403 → PERMISSION_DENIED` or a validation error, the frontend shows it;
+   the draft stays `pending` so the user can edit and retry.)
+2. **Frontend** then calls `POST /assistant/drafts/{id}/committed` with `{ committed_entity_ref }`.
+3. **Assistant** (record-only): loads the draft, asserts the caller owns it and its status is `pending`, sets
+   `status = committed`, stores `committed_entity_ref`, writes the assistant-side audit/history record, and
+   returns. It performs **no domain write and re-checks no domain permission** — the module endpoint already did.
 
-Confirm flow (server side):
-1. Load the draft; assert its status is `pending` (reject `committed`/`cancelled`).
-2. If the request body includes a `payload`, **use that as the source of truth** — overwrite the draft's stored
-   payload with the user's edited values (this is the "person changed some data and sends it directly" case).
-   Re-run field validation on the final payload.
-3. **Re-check RBAC** for the target action as the current user (§5).
-4. Call the financial `commit_*_draft(db, user, draft)` service → write the entity through the module's
-   create/update service.
-5. Set draft `status = committed`, store `committed_entity_ref`, write the audit record, return the entity.
+So the user commits in one of two equivalent ways, both via the frontend button: (a) accept the draft as-is →
+POST the stored payload to the module endpoint; (b) tweak fields in the rendered form → POST the edited payload.
+Either way the **chat turn never commits** — only the explicit frontend call to the module endpoint does. The
+agent's job ends at "here is the draft (and where to commit it) for you to review."
 
-So there are two equivalent ways the user commits, both via the button: (a) accept the draft as-is → confirm with
-no body; (b) tweak some fields in the rendered form → confirm with the edited `payload`. Either way the **chat
-turn never commits** — only this endpoint does. The agent's job ends at "here is the draft for you to review."
-
-The financial adapter implements two functions per write entity:
-- `build_*_draft(db, user, payload, attachments) -> Draft` (validates fields, fills defaults, **does not write**).
-- `commit_*_draft(db, user, draft) -> entity_ref` (re-checks permission, writes via the module's create/update
-  service, returns the new/updated id; never commits from file contents alone).
+The financial adapter implements, per write entity:
+- `build_*_draft(db, user, payload, attachments) -> Draft` (validates fields, fills defaults, **resolves the
+  `commit_target` endpoint+method+permission**, checks that permission early so no un-committable draft is
+  offered, and **does not write**). There is **no `commit_*_draft`** — committing is the frontend calling the
+  module's own endpoint.
 
 Field labels shown to the user are localized; **stored values use canonical field names/enums** (e.g. currency
 as ISO code, dates stored canonically even if displayed in the user's locale/solar calendar — note
@@ -200,17 +216,19 @@ several `pending` drafts may coexist; every draft endpoint is keyed by `draft_id
 ### Draft lifecycle
 
 `Draft.status` is **`pending | committed | cancelled | failed`** (the earlier `confirmed` value is **removed** —
-see note). Commit is transactional: on a commit error the entity write rolls back and the draft **stays
-`pending`** with the error surfaced, so the user can edit and retry. `failed` is terminal and only used when the
-draft can never be committed (e.g. its target entity was deleted, or an unrecoverable validation conflict).
+see note). The write happens on the module endpoint (called by the frontend), not on the assistant. If that
+endpoint returns an error (RBAC/validation/conflict), the frontend surfaces it and the draft **stays `pending`**,
+so the user can edit and retry; the assistant only moves the draft to `committed` when the frontend reports
+success via the `committed` notification. `failed` is terminal and only used when the draft can never be
+committed (e.g. its target entity was deleted, or an unrecoverable validation conflict).
 
 ```mermaid
 stateDiagram-v2
     [*] --> pending: build_*_draft (no write)
-    pending --> committed: POST /drafts/{id}/confirm — RBAC ok, validation ok, write succeeded
+    pending --> committed: frontend wrote via module endpoint, then POST /drafts/{id}/committed
     pending --> cancelled: POST /drafts/{id}/cancel
     pending --> failed: commit unrecoverable (target gone / hard conflict)
-    pending --> pending: confirm raised, txn rolled back — retry after edit
+    pending --> pending: module endpoint returned an error — retry after edit
     committed --> [*]
     cancelled --> [*]
     failed --> [*]
@@ -218,17 +236,18 @@ stateDiagram-v2
 
 | From | To | Trigger / guard |
 |---|---|---|
-| `(build)` | `pending` | `build_*_draft` fills + validates fields; **never writes** |
-| `pending` | `committed` | `POST /drafts/{id}/confirm`; RBAC re-checked, payload re-validated, module `create/update` service succeeded |
+| `(build)` | `pending` | `build_*_draft` fills + validates fields and resolves `commit_target`; **never writes** |
+| `pending` | `committed` | frontend wrote via `commit_target` endpoint (RBAC + validation enforced there), then `POST /drafts/{id}/committed` recorded the `committed_entity_ref` |
 | `pending` | `cancelled` | `POST /drafts/{id}/cancel` |
-| `pending` | `pending` | confirm attempted but commit raised; transaction rolled back, error returned, draft re-confirmable |
+| `pending` | `pending` | frontend's commit to the module endpoint returned an error; nothing recorded, draft re-committable after edit |
 | `pending` | `failed` | commit can never succeed (target entity deleted, irreconcilable conflict) — terminal |
 | `committed` / `cancelled` / `failed` | — | terminal; reject any further transition |
 
-> **`confirmed` vs `committed` (resolved).** The original §4 enum listed both but the confirm flow set
-> `committed` directly, leaving `confirmed` unreachable. Decision: **drop `confirmed`.** A draft is either waiting
-> (`pending`) or written (`committed`); there is no persisted intermediate "approved but not yet written" state —
-> confirm is a single transactional step. (If you ever need an async two-phase commit, reintroduce `confirmed` as
+> **`confirmed` vs `committed` (resolved).** The original §4 enum listed both, but the assistant only ever records
+> a draft as `committed` once the frontend reports a successful write, leaving `confirmed` unreachable. Decision:
+> **drop `confirmed`.** A draft is either waiting (`pending`) or written (`committed`); there is no persisted
+> intermediate "approved but not yet written" state on the assistant side — the write and its acknowledgement are
+> a single step from the assistant's view. (If you ever need an async two-phase commit, reintroduce `confirmed` as
 > the transient "write in flight" state, but do not add it speculatively.)
 
 ### AgentRun lifecycle
@@ -274,21 +293,23 @@ stateDiagram-v2
 
 The `AgentRun` **produces** a `Draft` (sets `AgentState.pending_draft`) but **never commits it** — the run can
 reach `completed` while the draft it built is still `pending`. The draft is committed later, independently, by the
-confirm endpoint (possibly after the run that built it is long finished, possibly from another device). This is
-why the `Draft` lives in its own table with its own lifecycle, referenced from the `ChatMessage` that rendered it
-(§8.1) — not embedded in the run.
+**frontend** writing to the module's own endpoint (possibly after the run that built it is long finished, possibly
+from another device), which then notifies the assistant. This is why the `Draft` lives in its own table with its
+own lifecycle, referenced from the `ChatMessage` that rendered it (§8.1) — not embedded in the run.
 
 ---
 
 ## 5. RBAC — the agent has exactly the caller's access
 
 - The agent **always runs as `current_user`** (carry the `User` through every node). Never elevate.
-- **Every intent handler re-checks the permission** from the §3 table using the project's permission check
+- **Every read intent handler re-checks the permission** from the §3 table using the project's permission check
   (the same one `require_permission` uses) **before** invoking the service. Failure → `PERMISSION_DENIED`.
 - **Reads are scoped to the user/company** — pass `company_id` (and owner scoping where the services already do)
   so search/summary/ask only return rows the user may see.
-- **Confirm re-checks.** A draft may only be committed if the confirming user holds the action's permission at
-  confirm time (not just at create time).
+- **Writes are enforced by the module endpoint.** `build_draft` checks the create/update permission early (so the
+  agent never offers a draft the user can't commit), but the **authoritative** check is the module's own
+  create/update route the frontend POSTs to — it runs `require_permission` exactly as for a UI write. The
+  assistant's `committed` notification does **not** re-check the domain permission, because it performs no write.
 - **File actions are access-checked** (`assistant:files` + `financial_management:receipt_files:create`).
 - Seed assistant-level permissions in the RBAC seeder + migration:
   `assistant:chat`, `assistant:draft`, `assistant:files`.
@@ -483,7 +504,7 @@ Rules:
   the complete object, never from partial tokens.
 - **Persist after streaming.** Save the assistant `ChatMessage` (§8.1) once the stream completes (or on the
   `done` event), with the final answer + citations + retrieved items — so history matches what was streamed.
-- The confirm/cancel and draft endpoints stay plain JSON (no streaming); only the chat reply streams.
+- The committed-notification/cancel and draft endpoints stay plain JSON (no streaming); only the chat reply streams.
 
 ---
 
@@ -501,17 +522,21 @@ Rules:
 
 Ship all of:
 1. **Unit tests with the LLM mocked** for each handler: `search_receipts`, `summarize_finance`, `ask_finance`,
-   `build_*_draft`, `commit_*_draft`. Deterministic.
-2. **Route integration tests** for every new endpoint: success, RBAC (`403 → PERMISSION_DENIED`), validation, and
-   that only catalogued error codes are returned.
-3. **Agent end-to-end tests** (stubbed model): intent routing per branch, `draft → confirm`, `draft → cancel`,
-   resume-after-restart, **and a VLM vs non-VLM test** asserting image blocks are sent only when
-   `supports_vision` is true and text-only otherwise.
+   `build_*_draft` (asserting it resolves the correct `commit_target` endpoint/method/permission and checks the
+   permission early). Deterministic.
+2. **Route integration tests** for every new endpoint: success, RBAC (`403 → PERMISSION_DENIED`) — **including on
+   the module's own create/update endpoint** the frontend commits to — validation, and that only catalogued error
+   codes are returned.
+3. **Agent end-to-end tests** (stubbed model): intent routing per branch, `draft built with the right
+   commit_target`, `draft → committed` (the notification records `committed_entity_ref` and writes **no** domain
+   data), `draft → cancel`, resume-after-restart, **and a VLM vs non-VLM test** asserting image blocks are sent
+   only when `supports_vision` is true and text-only otherwise.
 4. A test that an instruction embedded in an uploaded file does **not** cause an auto-commit (guardrail §12.19).
 5. A test that **chat text never commits**: sending "yes, accept it" / "confirm" / "do it" to `POST /assistant/chat`
-   leaves the draft `pending` and writes nothing — only `POST /assistant/drafts/{id}/confirm` commits.
-6. A test of **confirm-with-edited-payload**: posting a changed `payload` to the confirm endpoint commits the
-   user's edited values (not the original draft values), after re-validation and RBAC re-check.
+   leaves the draft `pending` and writes nothing — commit happens only when the frontend POSTs to the module
+   endpoint. Also assert the assistant has **no** `/confirm` (or any) endpoint that writes domain data.
+6. A test that the **`committed` notification is record-only**: it sets `status=committed` + `committed_entity_ref`
+   and does not create/modify any financial entity; and that it rejects a caller who does not own the draft.
 7. **History persistence**: after a chat turn, both the user and assistant `ChatMessage` rows exist and
    `GET /{chat_id}/history` returns them with citations/retrieved items (and the `draft_id` when a draft was made).
 8. **Streaming**: `POST /assistant/chat` returns `text/event-stream`, emits `delta` events for answer tokens and
@@ -524,16 +549,20 @@ Ship all of:
 
 ## 11. Deliverables checklist
 
-- [ ] `financial_management/assistant_tools.py` — the `ModuleToolSet` (search/summarize/ask/build_draft/commit_draft)
+- [ ] `financial_management/assistant_tools.py` — the `ModuleToolSet` (search/summarize/ask/build_draft; **no
+      commit_draft** — `build_draft` resolves each write's `commit_target` endpoint/method/permission)
       wrapping existing services; registered into the assistant tool registry.
-- [ ] Generic draft machinery (`Draft`, `AgentRun`) + endpoints, registered in `Models/__init__.py`, with Alembic migration.
+- [ ] Generic draft machinery (`Draft` with `commit_target`, `AgentRun`) + endpoints (chat, GET/PATCH draft,
+      `committed` record-only notification, cancel — **no `/confirm` write endpoint**), registered in
+      `Models/__init__.py`, with Alembic migration.
 - [ ] Router/intent node with the §3 taxonomy and per-intent descriptions.
 - [ ] Conversation history wired (§8.1): user + assistant `ChatMessage` rows saved (with citations, retrieved
       items, and any `draft_id`); history served via the existing `GET /{chat_id}/history`. Resumable agent state
       (checkpointer + `AgentRun`) kept as a separate store.
 - [ ] Streaming chat reply over SSE (§8.2) reusing the `tag_management/routes/ask.py` pattern; structured payloads
       (drafts/search/summary) emitted as complete objects; assistant message persisted after the stream completes.
-- [ ] Refactors that move route-handler business logic into `financial_management/services.py` (no duplication).
+- [ ] Refactors that move **read** route-handler business logic (summary/ask) into `financial_management/services.py`
+      (no duplication). Writes need no refactor — the frontend commits via the module's existing create/update route.
 - [ ] File-intake helper using `StorageManager`; VLM-vs-text branching per §7; `supports_vision` on `ChatAIModels`.
 - [ ] `assistant:chat` / `assistant:draft` / `assistant:files` permissions seeded + migration.
 - [ ] `ASSISTANT_*` error codes; rate limit; Langfuse tracing.

@@ -22,8 +22,9 @@ the procurement/warehouse UI must also be doable by talking to the assistant.** 
    packing list / delivery note, an item datasheet, a photo of a nameplate or a delivered carton).
 2. **Decide which Phase 1 task the user wants** — intent routing over the task list in §3, across all six modules.
 3. **Execute that task** by calling each module's **existing service functions** (never re-implement them).
-4. If the task is a write, **ask for any missing required data first (§3A)**, then build a **draft**, show it,
-   and commit **only after the user confirms** via the explicit button endpoint (§4).
+4. If the task is a write, **ask for any missing required data first (§3A)**, then build a **draft** (with its
+   `commit_target`) and show it; **the frontend commits it to the module's own create/update endpoint after the
+   user confirms — the assistant never performs the write** (§4).
 5. Handle **file uploads** through the project's existing upload mechanism (§6).
 6. Branch on **whether the active chat model is a VLM** when a file is involved (§7).
 7. Run **as the current user with exactly their RBAC** — never more (§5).
@@ -69,15 +70,20 @@ is mandatory.**
   `material_management.services.get_item_reference`, a supplier via `supplier_management.services`). The generic
   agent/draft machinery imports no domain models. (This mirrors the §A1 seam rules already enforced in Phase 1.)
 - **Cross-module writes go through the existing events, not the agent.** The assistant never bypasses the
-  GRN→stock event. When it commits a GRN post draft, it calls `goods_receipt_management.services.post_goods_receipt`
-  — which already emits the Celery event that creates stock. The agent does not write stock directly.
+  GRN→stock event, and it never writes the GRN itself. A GRN-post draft's `commit_target` is the existing GRN post
+  endpoint (`goods_receipt_management` `post` route, backed by `services.post_goods_receipt`); when the **frontend**
+  commits there, that route emits the Celery event that creates stock — exactly as for a UI-initiated post. The
+  agent does not write stock (or the GRN) directly.
 - **Alembic owns the schema.** Any new table/column ships as a migration; register new models in
   `backend/Models/__init__.py`. Never `create_all()`.
-- **RBAC = the caller's access, never more (§5).** Re-check the intent's permission before acting, and **again at
-  confirm time** for writes. Missing permission → catalogued `PERMISSION_DENIED`.
-- **Writes go through draft-and-confirm (§4).** A chat message never writes directly. The agent/LLM must **never**
-  treat chat text as confirmation — "yes / accept / do it / confirmed" in prose commits nothing. Commit happens
-  only when `POST /assistant/drafts/{id}/confirm` is called by the client (the rendered button).
+- **RBAC = the caller's access, never more (§5).** Re-check the intent's permission before acting (and check the
+  write permission early in `build_draft`); the **authoritative write-time check is the module's own endpoint** the
+  frontend commits to. Missing permission → catalogued `PERMISSION_DENIED`.
+- **Writes go through draft-and-confirm (§4) — the assistant never performs the write.** A chat message never
+  writes directly. The agent/LLM must **never** treat chat text as confirmation — "yes / accept / do it /
+  confirmed" in prose commits nothing. Commit happens only when the **frontend POSTs the final payload to the
+  draft's `commit_target`** (the module's own create/update/post endpoint, the rendered button); the frontend then
+  notifies the assistant via `POST /assistant/drafts/{id}/committed` (record-only).
 - **Incomplete data → ask, never invent (§3A).** For any write intent, if a required field is missing or a
   reference is ambiguous, the assistant must **clarify** (one focused question, in the user's language) instead of
   guessing a value, inventing an id, or building a draft with blanks/placeholders.
@@ -220,7 +226,7 @@ router → completeness_gate
   checkpointer + `AgentRun`, so the user can answer over several messages and the partial requisition/GRN survives
   app close. Re-run the completeness check after each answer; loop until complete, then build the draft.
 - **Never commit from the clarify loop.** Completing the fields produces a **pending draft** the user still
-  confirms with the button (§4). Clarify fills data; confirm writes it.
+  confirms with the frontend button (§4). Clarify fills data; the frontend's commit to the module endpoint writes it.
 - **Guard the loop.** Cap clarify rounds (`step_count`); if the user stops providing a hard-required field, end
   gracefully with `ASSISTANT_MISSING_FIELDS` explaining what is still needed — do not loop forever and do not
   proceed with a placeholder.
@@ -247,9 +253,15 @@ Use the generic `Draft` / `AgentRun` models, the lifecycle, and the endpoints ex
 work is, **per write entity**, a pair of adapter functions that plug into that generic flow:
 
 - `build_<action>_draft(db, user, slots, attachments) -> Draft` — runs the §3A completeness check, validates and
-  fills defaults, applies the 4-column money rule, sets `target_module` / `target_action`, **writes nothing**.
-- `commit_<action>_draft(db, user, draft) -> entity_ref` — re-checks RBAC, re-validates the (possibly edited)
-  payload, calls the module's real create/update/transition/post service, returns the new/updated id.
+  fills defaults, applies the 4-column money rule, sets `target_module` / `target_action`, **resolves the
+  `commit_target`** (the module's real create/update/transition/post endpoint + HTTP method + required permission),
+  checks that permission early, and **writes nothing**.
+
+There is **no `commit_<action>_draft`** — the assistant does not commit. The **frontend** POSTs the final
+(possibly-edited) payload to `draft.commit_target.endpoint` (the module's own route, which re-checks RBAC,
+re-validates, writes, and emits any events), then calls `POST /assistant/drafts/{id}/committed` so the assistant
+records the result. Each adapter only needs to know **which endpoint+permission** is the `commit_target` for each
+action below.
 
 Targets to implement (each is `target_module:target_action`):
 `supplier_management:create_supplier|update_supplier|add_evaluation`,
@@ -260,10 +272,11 @@ Targets to implement (each is `target_module:target_action`):
 `warehouse_management:create_location|record_movement|start_count|post_count`.
 
 The endpoints (`POST /assistant/chat`, `GET/PATCH /assistant/drafts/{id}`,
-`POST /assistant/drafts/{id}/confirm`, `POST /assistant/drafts/{id}/cancel`), the draft status machine
-(`pending|committed|cancelled|failed`), the "confirm carries the final edited payload" rule, and the
-"chat text never commits" rule are all inherited from the financial prompt. **Confirm re-checks RBAC and
-re-validates** (including the §3A completeness check on the final payload) before calling the service.
+`POST /assistant/drafts/{id}/committed` (record-only), `POST /assistant/drafts/{id}/cancel`), the `commit_target`
+on each draft, the draft status machine (`pending|committed|cancelled|failed`), the "the frontend POSTs the final
+edited payload to the module endpoint" rule, and the "chat text never commits" rule are all inherited from the
+financial prompt. There is **no assistant `/confirm` write endpoint**. The module's own endpoint re-checks RBAC and
+re-validates (the assistant's `build_draft` also runs the §3A completeness check before offering the draft).
 
 **High-impact writes get an explicit recap in the draft.** `post_goods_receipt` (creates stock) and
 `record_stock_movement` ISSUE / `post_stock_count` (move stock) must render a clear summary of consequences in the
@@ -274,8 +287,9 @@ The user still presses confirm.
 
 ## 5. RBAC — the agent has exactly the caller's access
 Same as `PROMPT_financial_assistant.md` §5, applied to the Phase 1 permission strings in §3. The agent always runs
-as `current_user`; every handler re-checks its intent's permission before acting; reads are company-scoped;
-confirm re-checks at write time; file actions need `assistant:files` + the module's relevant create permission.
+as `current_user`; every read handler re-checks its intent's permission before acting and `build_draft` checks the
+write permission early; reads are company-scoped; the **module's own endpoint enforces RBAC at write time** when the
+frontend commits; file actions need `assistant:files` + the module's relevant create permission.
 Seed `assistant:chat`, `assistant:draft`, `assistant:files` (these may already be seeded by the financial build —
 do not duplicate the rows).
 
@@ -314,8 +328,9 @@ catalogued codes. Per-user/company rate guard → `ASSISTANT_RATE_LIMITED`. Lang
 
 ## 10. Tests (mandatory — CI runs `pytest` + `alembic check`)
 In addition to the generic suite inherited from `PROMPT_financial_assistant.md` §10 (intent routing,
-draft→confirm, draft→cancel, resume-after-restart, VLM-vs-text, file-instruction-no-auto-commit, chat-text-never-
-commits, confirm-with-edited-payload, history persistence, streaming), ship Phase 1 specifics:
+draft-built-with-right-commit_target, draft→committed (record-only), draft→cancel, resume-after-restart,
+VLM-vs-text, file-instruction-no-auto-commit, chat-text-never-commits, assistant-never-writes-domain-data,
+history persistence, streaming), ship Phase 1 specifics:
 
 1. **Per-intent unit tests (LLM mocked)** for each handler in §3 across all six modules, calling the real services
    with a stub DB; deterministic.
@@ -328,24 +343,29 @@ commits, confirm-with-edited-payload, history persistence, streaming), ship Phas
      a name matching 0 rows → `ASSISTANT_AMBIGUOUS_REFERENCE`/not-found, **no invented id**.
    - slot accumulation across 3 messages then build; and the loop cap → `ASSISTANT_MISSING_FIELDS`, no placeholder.
    - **reads do not clarify**: `search_stock` with a vague query still runs and returns results.
-3. **Cross-module-via-service test:** committing a `post_grn` draft calls `post_goods_receipt`, which emits the
-   stock event — the agent does **not** write stock directly (assert no direct StockMovement insert from the agent).
-4. **RBAC tests** per intent: `403 → PERMISSION_DENIED`, and confirm-time re-check.
-5. **High-impact recap test:** the `post_grn` / ISSUE draft includes the consequences summary before confirm.
+3. **Cross-module-via-event test:** the `post_grn` draft's `commit_target` is the GRN post endpoint; committing
+   there (the frontend's call, exercised in the integration test) runs `post_goods_receipt`, which emits the stock
+   event — the agent does **not** write stock or the GRN directly (assert the assistant makes no StockMovement/GRN insert).
+4. **RBAC tests** per intent: `403 → PERMISSION_DENIED` on reads, and on the **module's own create/update/post
+   endpoint** the frontend commits to.
+5. **High-impact recap test:** the `post_grn` / ISSUE draft includes the consequences summary before the user commits.
 
 ---
 
 ## 11. Deliverables checklist
 - [ ] One `assistant_tools.py` (a `ModuleToolSet`) per Phase 1 module wrapping its existing services
-      (search/ask/summary/build_draft/commit_draft), registered into the assistant tool registry.
+      (search/ask/summary/build_draft; **no commit_draft** — `build_draft` resolves each action's `commit_target`),
+      registered into the assistant tool registry.
 - [ ] `/ask` added for `requisition_management`, `rfq_management`, `goods_receipt_management`,
       `warehouse_management` (supplier + material already have it) — same shape as `supplier_management/routes/ask.py`.
 - [ ] Router/intent node with the full §3 taxonomy and mutually-exclusive descriptions.
 - [ ] **`completeness_gate` node + per-action field specs + clarify loop (§3A)** — the required "ask when data is
       incomplete" behavior, with slot accumulation, enum/lookup choices, ambiguity disambiguation, and a loop cap.
-- [ ] `build_*_draft` / `commit_*_draft` adapter pairs for every write target in §4, plugged into the **generic**
-      Draft/AgentRun machinery (reused, not rebuilt).
-- [ ] Refactors moving any needed route-handler logic into the modules' `services.py` (no duplication).
+- [ ] `build_*_draft` adapter (resolving each write target's `commit_target` endpoint/method/permission) for every
+      write target in §4 — **no `commit_*_draft`** — plugged into the **generic** Draft/AgentRun machinery (reused,
+      not rebuilt).
+- [ ] Refactors moving any needed **read** route-handler logic into the modules' `services.py` (no duplication);
+      writes commit through each module's existing endpoint, so no write-path refactor for the assistant.
 - [ ] File intake via `StorageManager`; VLM/text branch (§7); file-assisted slot filling (§3A.4).
 - [ ] `ASSISTANT_*` error codes incl. `MISSING_FIELDS` / `AMBIGUOUS_REFERENCE`; rate limit; Langfuse.
 - [ ] Streaming chat reply over SSE; history persisted via existing `GET /{chat_id}/history`.
