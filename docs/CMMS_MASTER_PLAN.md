@@ -1944,7 +1944,7 @@ Run prompts in this order (currency must exist before purchase_management):
 | Prompt 6 | `warehouse_management` | Warehouse, Zone, Shelf, Bin, StockItem, StockMovement |
 | Prompt 7 | Phase 1 KPIs | Procurement dashboards: PO cycle time, GRN vs PO variance, stock value |
 
-> **Phase 1-AI (parallel track).** Register tool sets (search/summarize/ask/add_draft/commit_draft) for supplier,
+> **Phase 1-AI (parallel track).** Register tool sets (search/summarize/ask/add_draft) for supplier,
 > material, requisition, RFQ, goods-receipt, and warehouse into the Assistant Core (Section 12.4/12.13). Enables
 > chat to e.g. "add this supplier", "how many of item X are in the main warehouse", "find POs for supplier Y".
 > Full test suite per Section 12.12.
@@ -3355,8 +3355,9 @@ REQUIREMENTS:
 8. Search (Section 2.1): keyword ILIKE on full_name, employee_number, position title, department name
    + semantic pgvector on description_embedding. ensure_employee_embeddings() + build_searchable_text().
 9. Assistant Tool Contract (Section 12.4): register hr_management ToolSet (search / summarize / ask /
-   add_draft / commit_draft) so the agent can answer "who is the maintenance manager?" and draft a new
-   employee via draft-and-confirm — RBAC enforced as the caller (Section 12.11).
+   add_draft) so the agent can answer "who is the maintenance manager?" and draft a new employee via
+   draft-and-confirm (the frontend commits to the hr create endpoint; the assistant never writes) — RBAC
+   enforced by that endpoint as the caller (Section 12.11).
 10. RBAC (seed in seed_rbac.py): hr_management:employees:read / create / update / delete / search;
     hr_management:summary. hr_manager gets hr_management:*; department_head sees own department
     (record-level scope deferred per Section 6 — seed names now); employee can read own profile.
@@ -3886,9 +3887,10 @@ REQUIREMENTS:
 4. LLM routing refinement: improve tool selection as the number of registered tools grows — better tool
    descriptions, disambiguation/clarify (§12.7) when intent is ambiguous, and a fallback when no tool
    fits. No new graph; refine the existing router + tool descriptions.
-5. RBAC (§12.11, non-negotiable): the agent runs as exactly the current user. Every tool action re-checks
+5. RBAC (§12.11, non-negotiable): the agent runs as exactly the current user. Every read tool action re-checks
    the user's permissions before running; reads are scoped to the user; drafts commit only if the user
-   holds the action permission at confirm time. Cross-module synthesis must never surface rows the user
+   holds the action permission — enforced by the module's own create/update endpoint that the frontend commits
+   to (the agent performs no write). Cross-module synthesis must never surface rows the user
    can't read. No new permission names beyond assistant:chat / assistant:draft / assistant:files (§12.11)
    — manager-only features are gated by the underlying module summary permissions, not a new agent role.
 6. Audit (§12.18): every agent query/answer and every committed draft is logged (who asked what, which
@@ -4094,8 +4096,8 @@ backend/assistant/
     contract.py       ← the Module Tool Contract (Section 12.4) — base classes/protocols
   drafts/
     models.py         ← Draft, AgentRun models
-    service.py        ← create/get/update/confirm/cancel draft
-    routes.py         ← draft confirm/cancel endpoints
+    service.py        ← create/get/update/cancel draft + record-committed (no domain write)
+    routes.py         ← draft committed-notification/cancel endpoints
   intake/
     service.py        ← multimodal routing: heavy pipeline vs inline (Section 12.6)
   routes.py           ← POST /assistant/chat (the one agentic endpoint), plus session/run endpoints
@@ -4152,34 +4154,42 @@ class ModuleToolSet:
     def search(db, user, query, mode, filters, limit) -> list[Hit]: ...
     def summarize(db, user, request) -> Summary:    # totals/KPIs in user's base currency
     def ask(db, user, question) -> GroundedAnswer:  # grounded NL answer + sources
-    def add_draft(db, user, payload, attachments) -> Draft:  # builds a draft, does NOT commit
-    def commit_draft(db, user, draft) -> EntityRef:          # called only after user confirms
+    def add_draft(db, user, payload, attachments) -> Draft:  # builds a draft + its commit_target; does NOT commit
 ```
 
 - `search` / `summarize` / `ask` reuse the module's existing `search/` + `/ask` + `/summary` work — no duplication.
-- `add_draft` returns a structured `Draft` (see 12.5). `commit_draft` performs the real write through the module's normal create path, fully RBAC-checked.
-- Every action maps to an existing module permission (`{module}:search`, `{module}:summary`, `{module}:ask`, `{module}:create`). The agent enforces the user's RBAC before invoking any action; a missing permission surfaces as `PERMISSION_DENIED` from the error catalog (Section 12.9).
+- `add_draft` returns a structured `Draft` (see 12.5) pre-filled with the proposed payload **and a `commit_target`** (the module's own create/update endpoint + HTTP method + required permission). **There is no `commit_draft` seam: the assistant never writes domain data.** The actual write is performed by the **frontend** calling that module endpoint directly (see 12.5) — the same endpoint the module UI uses, fully RBAC-checked there.
+- Every action maps to an existing module permission (`{module}:search`, `{module}:summary`, `{module}:ask`, `{module}:create`). For reads the agent enforces the user's RBAC before invoking the action; for writes `add_draft` checks the create/update permission early (so no un-committable draft is offered) and the **module endpoint is the authoritative enforcement point** at commit. A missing permission surfaces as `PERMISSION_DENIED` from the error catalog (Section 12.9).
 
 #### 12.4.1 How the agent talks to modules — in-process service calls, NOT loopback HTTP
 
 **Decision:** The agent reaches modules through **in-process service-function calls** (via each module's tool-set adapter), never by making HTTP requests to the system's own routes, and never through a duplicated AI-only function layer.
 
-- **Do** call the same service functions the routes call. If business logic currently lives inside a route handler, refactor it down into a service function and have both the route and the tool set call it. One implementation, one test surface.
+- **This applies to reads** (`search` / `summarize` / `ask`). **Do** call the same service functions the routes call. If read logic currently lives inside a route handler, refactor it down into a service function and have both the route and the tool set call it. One implementation, one test surface.
 - **Do not** make the agent issue HTTP requests to `/purchase/...`, `/warehouse/...`, etc. (loopback HTTP). In a single-process modular monolith this only adds JSON serialization, a second auth round-trip, and middleware overhead, and it violates Rule 2 ("routes are HTTP handlers, not a service API").
 - **Do not** write a parallel set of AI-only functions that re-implement what the services already do — they will drift from the routes.
-- **RBAC is still enforced.** Because the tool set bypasses the route's `require_permission` dependency, the agent must call the shared permission check (`has_permission` / `get_user_permissions`) **before** invoking any action, mapping failures to `PERMISSION_DENIED`. The agent never gains access the user lacks.
-- **Cross-module side-effects keep the existing pattern:** `commit_draft` performs its own module's write through that module's service, and any cross-module effect (e.g. warehouse intake on receipt) is published as a Celery event — not a direct call into another module (Rules 3, 8, 10).
-- **When HTTP becomes correct:** only after a module is extracted into its own microservice (Phase 4+). At that point the tool-set adapter for that module switches from an in-process service call to an HTTP/RPC call — and nothing else in the agent changes. This is exactly why the adapter layer exists.
+- **Writes need no assistant-side path.** The agent does **not** commit. `add_draft` only assembles the payload and resolves the `commit_target`; the **frontend** performs the write by calling the module's existing create/update route directly (a real external client, not loopback HTTP). This keeps the write load off the assistant server and reuses the module's one create path.
+- **RBAC is still enforced.** For reads, because the tool set bypasses the route's `require_permission` dependency, the agent calls the shared permission check (`has_permission` / `get_user_permissions`) **before** invoking the action, mapping failures to `PERMISSION_DENIED`. For writes, the module's create/update route applies its normal `require_permission` at commit time — the authoritative check — and `add_draft` checks the same permission early to avoid offering an un-committable draft. The agent never gains access the user lacks.
+- **Cross-module side-effects keep the existing pattern:** the module's create/update route performs its own write and publishes any cross-module effect (e.g. warehouse intake on receipt) as a Celery event — not a direct call into another module (Rules 3, 8, 10). This is unchanged: the effect fires on the module's normal write path regardless of whether the write was triggered from the UI or from a confirmed assistant draft.
+- **When HTTP becomes correct:** the read adapters switch from in-process service calls to an HTTP/RPC client only after a module is extracted into its own microservice (Phase 4+) — and nothing else in the agent changes. This is exactly why the adapter layer exists.
 
-**Draft ownership (answering "central vs per-app"):** the generic draft machinery — the `Draft` table, lifecycle (create/edit/confirm/cancel), persistence, resume, checkpointer, multilingual handling — lives **centrally in `backend/assistant/`**. Each module owns only its thin `assistant_tools.py` adapter: how to build/validate a draft payload for its entities and how to commit it via its own service. This keeps module isolation (each module owns its data, validation, and migrations) while keeping the agent machinery DRY and giving the frontend one consistent draft/confirm API.
+**Draft ownership (answering "central vs per-app"):** the generic draft machinery — the `Draft` table, lifecycle (create/edit/cancel/record-committed), persistence, resume, checkpointer, multilingual handling — lives **centrally in `backend/assistant/`**. Each module owns only its thin `assistant_tools.py` adapter: how to build/validate a draft payload for its entities and which endpoint+permission is its `commit_target`. The module does **not** expose a commit function to the assistant — committing is the frontend calling the module's own create/update route. This keeps module isolation (each module owns its data, validation, and migrations) while keeping the agent machinery DRY and giving the frontend one consistent draft API.
 
 ### 12.5 Draft-and-Confirm Write Framework (multilingual)
 
-Writes never happen directly from a chat message. Flow:
+Writes never happen directly from a chat message, and **the assistant server never performs the write itself**.
+Flow:
 
 ```
-user describes data (+ optional file) → agent builds Draft → frontend renders Draft → user edits/accepts → commit
+user describes data (+ optional file)
+  → agent builds Draft (payload + commit_target)
+  → frontend renders Draft → user edits/accepts
+  → frontend POSTs the final payload to the module's OWN create/update endpoint (RBAC + validation there)
+  → frontend notifies POST /assistant/drafts/{id}/committed → assistant records the result
 ```
+
+This keeps the write load on the module's normal API path (the same endpoint the module UI calls) and off the
+assistant server. The assistant's role for writes is to **assemble and track** the draft, not to commit it.
 
 **`Draft` model** (in `assistant/drafts/models.py`):
 ```
@@ -4188,20 +4198,30 @@ Draft
   ├── target_module (str)        # "warehouse", "financial", ...
   ├── target_action (str)        # "create_item", ...
   ├── payload (JSONB)            # the proposed fields, pre-filled
+  ├── commit_target (JSONB)      # { "method": "POST", "endpoint": "/financial/receipts",
+  │                              #   "permission": "financial_management:receipts:create" }
+  │                              # what the frontend calls to commit (PUT/PATCH + entity id for updates)
   ├── attachments (JSONB)        # file_asset ids extracted from uploaded PDF/photo
   ├── language (str)             # detected user language (BCP-47), e.g. "fa", "en"
-  ├── status: pending | confirmed | cancelled | committed | failed
+  ├── status: pending | cancelled | committed | failed
   ├── validation (JSONB)         # per-field validation result for the frontend
-  ├── committed_entity_ref (JSONB nullable)
+  ├── committed_entity_ref (JSONB nullable)  # set from the frontend's committed-notification
   └── created_at, updated_at
 ```
 
 **Endpoints** (Assistant Core):
-- `POST /assistant/chat` — the agentic endpoint; may return a `Draft` for the frontend to render.
+- `POST /assistant/chat` — the agentic endpoint; may return a `Draft` (with its `commit_target`) for the frontend to render.
 - `GET  /assistant/drafts/{id}` — fetch a draft (resume later).
-- `PATCH /assistant/drafts/{id}` — user edits fields before confirming.
-- `POST /assistant/drafts/{id}/confirm` — commit via the target module's `commit_draft` (RBAC-checked).
+- `PATCH /assistant/drafts/{id}` — user edits fields before committing (assistant-side bookkeeping copy).
+- `POST /assistant/drafts/{id}/committed` — **record-only.** The frontend calls this *after* it has written via the
+  module endpoint, passing the resulting `committed_entity_ref`. The assistant verifies the caller owns the draft,
+  marks it `committed`, and logs it to history. **It writes no domain data and re-checks no domain permission** —
+  the module endpoint already enforced RBAC and validation when the frontend wrote.
 - `POST /assistant/drafts/{id}/cancel` — discard.
+
+> The actual create/update is **not** an assistant endpoint. The frontend POSTs the final (possibly edited)
+> payload straight to `commit_target.endpoint`, which applies `require_permission` and validation exactly as for a
+> UI-initiated write. "Chat text never commits" still holds: commit requires the explicit frontend call, never prose.
 
 **Multilingual rules:**
 - The agent detects the user's language and conducts the whole exchange (questions, field labels, confirmations, errors) in that language.
@@ -4274,15 +4294,15 @@ Tag (existing tag_management) gains:
 Concrete rules:
 
 - The agent **always runs as the current user** (`current_user`), carrying that user's identity and permission set into every step. It never elevates to admin or a system identity to "be helpful".
-- **Every tool action re-checks the user's RBAC** before it runs (`has_permission` / `get_user_permissions` in the adapter, per Section 12.4.1). A missing permission returns `PERMISSION_DENIED` from the error catalog — the agent does not silently skip or work around it.
+- **Every read tool action re-checks the user's RBAC** before it runs (`has_permission` / `get_user_permissions` in the adapter, per Section 12.4.1). A missing permission returns `PERMISSION_DENIED` from the error catalog — the agent does not silently skip or work around it. For writes, `add_draft` checks the create/update permission early (so no un-committable draft is offered).
 - **Reads are scoped to the user too.** Search / summarize / ask only return data the user is allowed to read (company scope today; record-level scope when Section 6's `scope_checker` is activated). The agent must never surface rows from a module or company the user can't access.
-- **Drafts inherit the creator's permissions.** A draft can only be *committed* if the user confirming it holds the target action's permission at confirm time (re-checked on confirm, not just on create).
+- **Drafts inherit the creator's permissions.** A draft can only be *committed* if the user holds the target action's permission — enforced by the **module's own create/update endpoint** that the frontend POSTs to (which runs `require_permission` exactly as for a UI write). The assistant performs no domain write and re-checks no domain permission on the `committed` notification.
 - **Multimodal / file input is access-checked too** — a user can only attach and act on files they're permitted to use (`assistant:files`).
 - **Group chat (Phase 5):** each participant interacts with the agent under **their own** permissions. The agent's answer to person A may legitimately differ from its answer to person B in the same thread, because they have different access. The agent never leaks one participant's restricted data to another. See Section 12.17.
 - Assistant-level permissions (declare in `assistant/permissions.py`, seed in migration) gate *use of the assistant itself*, on top of the per-module permissions above:
   ```
   assistant:chat      assistant   chat      Use the chat assistant
-  assistant:draft     assistant   draft     Create/confirm add-drafts
+  assistant:draft     assistant   draft     Create/track add-drafts (commit is the module endpoint's own permission)
   assistant:files     assistant   files     Upload files to the assistant
   ```
 - A user can only ever do *through chat* what they could do through the UI — chat is an interface, not an escalation path.
@@ -4291,16 +4311,16 @@ Concrete rules:
 
 Chosen bar: **unit (mocked LLM) + route integration + agent end-to-end.** Non-negotiable, enforced in CI. Every AI track and every backend module it touches must ship:
 
-1. **Unit tests** for services and tool-set methods with the **LLM mocked** (deterministic) — `search`, `summarize`, `ask`, `add_draft`, `commit_draft`.
-2. **Route integration tests** for every endpoint, asserting: success path, RBAC (403 → `PERMISSION_DENIED`), validation, and that only **catalogued error codes** are returned.
-3. **Agent end-to-end tests** (with a stubbed model) covering: intent routing per branch, draft → confirm, draft → cancel, **interruption (pause → answer → resume)**, resume-after-restart (checkpointer), and multilingual response.
+1. **Unit tests** for services and tool-set methods with the **LLM mocked** (deterministic) — `search`, `summarize`, `ask`, `add_draft` (incl. that it resolves the correct `commit_target`).
+2. **Route integration tests** for every endpoint, asserting: success path, RBAC (403 → `PERMISSION_DENIED`) — including on the **module's own create/update endpoint** that the frontend commits to — validation, and that only **catalogued error codes** are returned.
+3. **Agent end-to-end tests** (with a stubbed model) covering: intent routing per branch, draft built with the right `commit_target`, draft → `committed` notification (status + `committed_entity_ref` recorded, no domain write), draft → cancel, **interruption (pause → answer → resume)**, resume-after-restart (checkpointer), and multilingual response.
 4. Tests for both the **LangGraph/LangChain layer** and the **backend routes** must be complete before a track is considered done. CI runs `pytest` + `alembic check`.
 
 ### 12.13 Per-phase AI sub-phase (parallel track template)
 
 Each delivery phase has a matching **AI sub-phase** (`Phase N-AI`) worked **in parallel by a separate developer**, depending only on (a) the Assistant Core (Phase 0-AI) and (b) that phase's module APIs existing. Each `Phase N-AI` delivers:
 
-1. A `{module}/assistant_tools.py` `ModuleToolSet` for each module in the phase (search/summarize/ask/add_draft/commit_draft).
+1. A `{module}/assistant_tools.py` `ModuleToolSet` for each module in the phase (search/summarize/ask/add_draft — no commit_draft; the frontend commits via the module's own endpoint).
 2. Registration of those tool sets into the Assistant Core registry.
 3. Router/description updates so the agent knows when to use them.
 4. The full test suite from Section 12.12 for the new tools.
@@ -4342,7 +4362,7 @@ Design notes (to be detailed when Phase 5 is scheduled):
 
 Because the agent acts on the user's behalf, every state-changing thing it does is auditable through the existing **Audit Log** (Section 5.4.3 / Section 6 "Audit Trail").
 
-- Every `commit_draft`, cancel, approval, or other write the agent performs writes an audit record: `user_id`, `action`, `target_module`, `entity_type`, `entity_id`, `old_value → new_value`, plus AI-specific context: `agent_run_id`, `draft_id`, the tool invoked, and the originating chat message id.
+- The **domain write** is audited where it always was — on the module's create/update route the frontend commits to (`user_id`, `action`, `target_module`, `entity_type`, `entity_id`, `old_value → new_value`). To tie that write back to the assistant, the frontend includes the `draft_id` when committing (and again in the `committed` notification), so the assistant records the AI-specific context (`agent_run_id`, `draft_id`, the originating chat message id, `committed_entity_ref`) against the run. Draft cancels and the committed-notification itself are audited by the assistant.
 - Reads via the agent are not audited as writes, but the `AgentRun` history (12.8) preserves what was asked and which tools ran, so any query is reconstructable.
 - Audit records are immutable and queryable (and searchable by the agent itself, for "who changed PO-123 and when").
 

@@ -69,6 +69,7 @@ def add_message(
     content: str,
     citations: list[Any] | None = None,
     retrieved_chunks: list[dict] | None = None,
+    draft_id: int | None = None,
 ) -> ChatMessage:
     message = ChatMessage(
         chat_id=chat_id,
@@ -76,6 +77,7 @@ def add_message(
         content=content,
         citations=citations,
         retrieved_chunks=retrieved_chunks,
+        draft_id=draft_id,
     )
 
     db.add(message)
@@ -698,6 +700,7 @@ async def get_chat_history(
                 citations=message.citations or [],
                 retrieved_chunks=retrieved_items,
                 retrieve_information=retrieve_information,
+                draft_id=getattr(message, "draft_id", None),
                 created_at=message.created_at,
             )
         )

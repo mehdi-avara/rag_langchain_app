@@ -32,6 +32,7 @@ from warehouse_management.routes import warehouse_router
 from shared.currency.routes import router as currency_router
 from shared.export.routes import router as export_router
 from shared.reporting.routes import router as reporting_router
+from assistant.routes import router as assistant_router
 from routs.tasks import router as tasks_router
 from db.session import SessionLocal
 from db.init_db import seed_default_user
@@ -109,6 +110,7 @@ app.include_router(goods_receipt_router, tags=["goods_receipt_management"])
 app.include_router(warehouse_router, tags=["warehouse_management"])
 app.include_router(currency_router, prefix="/currencies", tags=["currencies"])
 app.include_router(tasks_router, tags=["tasks"])
+app.include_router(assistant_router, prefix="/assistant", tags=["assistant"])
 app.include_router(di_router)
 
 

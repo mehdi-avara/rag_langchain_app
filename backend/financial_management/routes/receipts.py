@@ -20,6 +20,7 @@ from ..services import (
     get_receipt_or_404,
     receipt_to_out,
     safe_embed_text,
+    summarize_receipts,
 )
 
 
@@ -139,73 +140,13 @@ def get_receipts_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:receipts:read")),
 ):
-    query = db.query(FinancialReceipt).filter(FinancialReceipt.company_id == current_user.company_id)
-
-    if direction:
-        query = query.filter(FinancialReceipt.direction == direction)
-
-    if credit_card_id is not None:
-        query = query.filter(FinancialReceipt.credit_card_id == credit_card_id)
-
-    if date_from:
-        query = query.filter(FinancialReceipt.receipt_date >= datetime.combine(date_from, time.min))
-
-    if date_to:
-        query = query.filter(FinancialReceipt.receipt_date <= datetime.combine(date_to, time.max))
-
-    total_row = query.with_entities(
-        func.coalesce(
-            func.sum(case((FinancialReceipt.direction == "input", FinancialReceipt.base_amount), else_=0)),
-            0,
-        ).label("total_input_base"),
-        func.coalesce(
-            func.sum(case((FinancialReceipt.direction == "output", FinancialReceipt.base_amount), else_=0)),
-            0,
-        ).label("total_output_base"),
-        func.count(FinancialReceipt.id).label("receipt_count"),
-    ).one()
-
-    currency_rows = (
-        query.with_entities(
-            FinancialReceipt.currency.label("currency"),
-            func.coalesce(
-                func.sum(case((FinancialReceipt.direction == "input", FinancialReceipt.amount), else_=0)),
-                0,
-            ).label("input_amount"),
-            func.coalesce(
-                func.sum(case((FinancialReceipt.direction == "output", FinancialReceipt.amount), else_=0)),
-                0,
-            ).label("output_amount"),
-            func.count(FinancialReceipt.id).label("receipt_count"),
-        )
-        .group_by(FinancialReceipt.currency)
-        .order_by(FinancialReceipt.currency.asc())
-        .all()
-    )
-
-    total_input_base = total_row.total_input_base
-    total_output_base = total_row.total_output_base
-
-    by_currency = [
-        FinancialReceiptCurrencySummaryOut(
-            currency=row.currency,
-            input_amount=row.input_amount,
-            output_amount=row.output_amount,
-            net_amount=row.input_amount - row.output_amount,
-            receipt_count=row.receipt_count,
-        )
-        for row in currency_rows
-    ]
-
-    base_currency = getattr(getattr(current_user, "company", None), "base_currency", None) or "IRT"
-
-    return FinancialReceiptSummaryOut(
-        base_currency=base_currency,
-        total_input_base=total_input_base,
-        total_output_base=total_output_base,
-        net_base=total_input_base - total_output_base,
-        receipt_count=total_row.receipt_count,
-        by_currency=by_currency,
+    return summarize_receipts(
+        db,
+        current_user,
+        direction=direction,
+        credit_card_id=credit_card_id,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 @router.get("/{receipt_id}", response_model=FinancialReceiptOut)

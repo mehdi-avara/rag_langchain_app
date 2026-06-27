@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-primary, #0f1117);
+    color: var(--text-primary, #e2e8f0);
+    min-height: 100vh;
+    padding: 16px;
+  }
+  h1 { font-size: 17px; font-weight: 700; margin-bottom: 4px; color: var(--text-primary, #e2e8f0); }
+  .subtitle { font-size: 12px; color: var(--text-secondary, #94a3b8); margin-bottom: 16px; }
+
+  /* TABS */
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+    border: 1.5px solid transparent; transition: all .15s;
+    background: var(--bg-secondary, #1e2433); color: var(--text-secondary, #94a3b8);
+  }
+  .tab:hover { border-color: #4f6ef7; color: #a0b4ff; }
+  .tab.active { background: #1e2a6e; border-color: #4f6ef7; color: #a0b4ff; }
+  .tab.p0 { }
+  .tab.p1 { }
+  .tab.roles { }
+  .tab.flow { }
+
+  /* PANELS */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* PHASE GRID */
+  .phase-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 14px;
+    border-radius: 8px; border-left: 3px solid;
+  }
+  .phase-header.p0 { background: #1a1f2e; border-color: #f59e0b; }
+  .phase-header.p1 { background: #1a2e1a; border-color: #22c55e; }
+  .phase-header h2 { font-size: 14px; font-weight: 700; }
+  .phase-header .badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .phase-header.p0 .badge { background: #78350f; color: #fcd34d; }
+  .phase-header.p1 .badge { background: #14532d; color: #86efac; }
+  .phase-header p { font-size: 11px; color: var(--text-secondary, #94a3b8); }
+
+  .modules-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 20px;
+  }
+  .module-card {
+    background: var(--bg-secondary, #1e2433); border-radius: 10px; padding: 14px;
+    border: 1px solid #2d3748; cursor: pointer; transition: all .15s;
+  }
+  .module-card:hover { border-color: #4f6ef7; transform: translateY(-1px); }
+  .module-card.expanded { border-color: #4f6ef7; background: #1a2040; }
+  .module-title {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .module-icon { font-size: 18px; }
+  .module-name { font-size: 13px; font-weight: 700; }
+  .module-tag {
+    font-size: 10px; padding: 2px 7px; border-radius: 8px; font-weight: 600; margin-left: auto;
+  }
+  .mod-0 .module-tag { background: #78350f; color: #fcd34d; }
+  .mod-1 .module-tag { background: #14532d; color: #86efac; }
+  .module-desc { font-size: 11px; color: var(--text-secondary, #94a3b8); margin-bottom: 10px; line-height: 1.5; }
+  .use-cases { display: none; }
+  .module-card.expanded .use-cases { display: block; }
+  .uc-list { list-style: none; }
+  .uc-item {
+    display: flex; align-items: flex-start; gap: 8px; padding: 6px 0;
+    border-bottom: 1px solid #2d3748; font-size: 11px; line-height: 1.4;
+  }
+  .uc-item:last-child { border-bottom: none; }
+  .uc-actor {
+    font-size: 9px; padding: 1px 5px; border-radius: 4px; font-weight: 600;
+    white-space: nowrap; margin-top: 1px; flex-shrink: 0;
+  }
+  .actor-admin { background: #4c1d95; color: #c4b5fd; }
+  .actor-finance { background: #1e3a5f; color: #93c5fd; }
+  .actor-procurement { background: #1a3a2a; color: #86efac; }
+  .actor-warehouse { background: #3b2207; color: #fcd34d; }
+  .actor-requester { background: #2d1c3b; color: #f0abfc; }
+  .actor-system { background: #1e2433; color: #94a3b8; border: 1px solid #4b5563; }
+  .uc-text { color: var(--text-primary, #e2e8f0); }
+  .uc-text .perm { font-size: 9px; color: #64748b; font-family: monospace; display: block; margin-top: 2px; }
+  .expand-hint { font-size: 10px; color: #4f6ef7; margin-top: 6px; }
+
+  /* ROLES PANEL */
+  .roles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .role-card {
+    background: var(--bg-secondary, #1e2433); border-radius: 10px; padding: 14px;
+    border: 1px solid #2d3748;
+  }
+  .role-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .role-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .role-name { font-size: 13px; font-weight: 700; }
+  .role-desc { font-size: 11px; color: var(--text-secondary, #94a3b8); }
+  .role-permissions { margin-top: 10px; }
+  .role-permissions h4 { font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 6px; }
+  .perm-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .perm-chip {
+    font-size: 9px; padding: 2px 6px; border-radius: 4px; font-family: monospace;
+    background: #1a2040; border: 1px solid #2d3748; color: #94a3b8;
+  }
+  .perm-chip.has { background: #1a3030; border-color: #22c55e44; color: #86efac; }
+  .test-as { margin-top: 12px; padding-top: 10px; border-top: 1px solid #2d3748; }
+  .test-as h4 { font-size: 11px; font-weight: 600; color: #f59e0b; margin-bottom: 6px; }
+  .test-steps { font-size: 11px; color: var(--text-secondary, #94a3b8); line-height: 1.6; }
+  .test-steps li { margin-left: 14px; list-style: decimal; }
+
+  /* FLOW PANEL */
+  .flow-section { margin-bottom: 20px; }
+  .flow-section h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #a0b4ff; }
+  .flow-diagram {
+    background: var(--bg-secondary, #1e2433); border-radius: 10px; padding: 16px;
+    border: 1px solid #2d3748; overflow-x: auto;
+  }
+  .flow-row { display: flex; align-items: center; gap: 0; margin-bottom: 8px; flex-wrap: nowrap; min-width: max-content; }
+  .flow-node {
+    padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  .flow-arrow { color: #4b5563; font-size: 14px; margin: 0 4px; flex-shrink: 0; }
+  .fn-draft { background: #1e2433; border: 1px solid #4b5563; color: #94a3b8; }
+  .fn-action { background: #1e2a6e; border: 1px solid #4f6ef7; color: #a0b4ff; }
+  .fn-approve { background: #1a3a2a; border: 1px solid #22c55e; color: #86efac; }
+  .fn-event { background: #3b2207; border: 1px solid #f59e0b; color: #fcd34d; }
+  .fn-done { background: #1e293b; border: 1px solid #64748b; color: #94a3b8; }
+  .fn-result { background: #2d1c3b; border: 1px solid #a855f7; color: #f0abfc; }
+  .flow-label { font-size: 10px; color: #64748b; margin-left: 8px; font-style: italic; }
+  .actor-pill {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; margin-right: 8px; flex-shrink: 0;
+  }
+
+  /* SUMMARY TABLE */
+  .summary-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .summary-table th {
+    text-align: left; padding: 8px 10px; background: #1a2040;
+    border-bottom: 1px solid #2d3748; color: #a0b4ff; font-weight: 600;
+  }
+  .summary-table td { padding: 7px 10px; border-bottom: 1px solid #1e2433; vertical-align: top; }
+  .summary-table tr:hover td { background: #1a2040; }
+  .status-done { color: #22c55e; font-weight: 600; }
+  .status-live { color: #86efac; font-size: 10px; }
+
+  /* SEARCH */
+  .search-bar {
+    display: flex; gap: 8px; margin-bottom: 16px;
+  }
+  .search-input {
+    flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid #2d3748;
+    background: var(--bg-secondary, #1e2433); color: var(--text-primary, #e2e8f0);
+    font-size: 12px; outline: none;
+  }
+  .search-input:focus { border-color: #4f6ef7; }
+</style>
+</head>
+<body>
+<h2 class="sr-only">PORSA CMMS Use Case Diagram — Phase 0 and Phase 1 modules, actors, and workflows</h2>
+<h1>🛢️ PORSA CMMS — Use Case Diagram</h1>
+<p class="subtitle">Phase 0 (Foundation) · Phase 1 (Commerce & Warehouse) — click a module to expand its use cases</p>
+
+<div class="tabs">
+  <div class="tab active p0" onclick="showTab('phase0')">Phase 0 — Foundation</div>
+  <div class="tab p1" onclick="showTab('phase1')">Phase 1 — Commerce & Warehouse</div>
+  <div class="tab roles" onclick="showTab('roles')">Actors & How to Test</div>
+  <div class="tab flow" onclick="showTab('flows')">Key Workflows</div>
+</div>
+
+<!-- PHASE 0 -->
+<div id="panel-phase0" class="panel active">
+  <div class="phase-header p0">
+    <div>
+      <h2>Phase 0 — Foundation <span class="badge">✅ Complete</span></h2>
+      <p>Currency · Purchase Management · Celery Task Engine · Structured Logging · Financial Dashboard</p>
+    </div>
+  </div>
+  <div class="modules-grid">
+
+    <div class="module-card mod-0" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">💱</span>
+        <span class="module-name">Currency &amp; Exchange Rates</span>
+        <span class="module-tag">Phase 0</span>
+      </div>
+      <p class="module-desc">Foundation for all money — every monetary field in the system uses a currency + exchange rate. Must exist before everything else.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">View list of active currencies (IRT, IRR, USD, AED…)<span class="perm">currencies:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Add a new currency (ISO 4217 code, symbol, decimal places)<span class="perm">currencies:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">Enter today's exchange rate (e.g. USD → IRT)<span class="perm">exchange_rates:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View exchange rate history (filter by currency pair, date range)<span class="perm">exchange_rates:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Set company base currency (e.g. IRT) — all dashboards report in this<span class="perm">currencies:manage</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-0" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📦</span>
+        <span class="module-name">Purchase Orders</span>
+        <span class="module-tag">Phase 0</span>
+      </div>
+      <p class="module-desc">Create and track purchase orders through draft → approval → delivery phases. Core procurement record.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Create a Purchase Order (title, supplier name, currency)<span class="perm">purchase_management:orders:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Add delivery phases to a PO (expected date, batch info)<span class="perm">purchase_management:phases:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Add line items to a phase (item name, qty, unit price in any currency)<span class="perm">purchase_management:phases:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">Add additional costs (freight, customs, insurance) to a PO<span class="perm">purchase_management:costs:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">Link a financial receipt/payment to a PO<span class="perm">purchase_management:orders:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Submit PO for approval<span class="perm">purchase_management:orders:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Manager</span><span class="uc-text">Approve or reject a purchase order<span class="perm">purchase_management:orders:approve</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Mark a phase as received → triggers warehouse notification<span class="perm">purchase_management:phases:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Search POs by keyword or semantic (description, supplier, ref number)<span class="perm">purchase_management:orders:search</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View procurement spend summary (total value, by currency)<span class="perm">purchase_management:summary</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Cancel or soft-delete a PO<span class="perm">purchase_management:orders:delete</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-0" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">⚙️</span>
+        <span class="module-name">Background Tasks (Celery)</span>
+        <span class="module-tag">Phase 0</span>
+      </div>
+      <p class="module-desc">Async job engine for heavy work — STT transcription, exports, embeddings, and more. Users get a task_id and poll for completion.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-system">System</span><span class="uc-text">Upload audio → get task_id; poll status; retrieve transcript when done<span class="perm">STT async via GET /tasks/{task_id}</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-system">System</span><span class="uc-text">All heavy operations (>200ms) return 202 + task_id immediately<span class="perm">GET /tasks/{task_id}</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-system">System</span><span class="uc-text">System auto-retries failed tasks (up to 3×) with backoff<span class="perm">internal</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-system">System</span><span class="uc-text">Daily cleanup prunes task results older than 30 days<span class="perm">internal beat job</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-0" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📊</span>
+        <span class="module-name">Financial Dashboard</span>
+        <span class="module-tag">Phase 0</span>
+      </div>
+      <p class="module-desc">Summary view of income, expenses, cash flow, receivables aging, and procurement KPIs — all in base currency.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View KPI cards: total income, expenses, net cash position, receivables outstanding<span class="perm">financial:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View cashflow line chart (income vs expense over time)<span class="perm">financial:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View spend by category (donut chart)<span class="perm">financial:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View currency exposure (stacked bar: multi-currency breakdown)<span class="perm">financial:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View receivables aging (0–30, 31–60, 61–90, 90+ days buckets)<span class="perm">financial:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View top customers by transaction value<span class="perm">financial:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">View purchase KPIs: open POs, total spend, avg PO lead time<span class="perm">purchase_management:summary</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">Export dashboard to Excel or PDF<span class="perm">financial:export</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">Filter dashboard by date range, currency, group_by (day/week/month)<span class="perm">financial:read</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- PHASE 1 -->
+<div id="panel-phase1" class="panel">
+  <div class="phase-header p1">
+    <div>
+      <h2>Phase 1 — Commerce &amp; Warehouse <span class="badge">✅ Complete</span></h2>
+      <p>Supplier · Material Master · MR → RFQ → PO → GRN → Stock workflow, plus Export Engine &amp; dashboards</p>
+    </div>
+  </div>
+  <div class="modules-grid">
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🏢</span>
+        <span class="module-name">Supplier Management</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">Vendor registry — who you buy from, with contacts, documents, categories, and performance scoring.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Create a supplier (name, type, country, tax ID, category)<span class="perm">supplier_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Add contacts to a supplier (name, email, phone, position)<span class="perm">supplier_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Attach documents to a supplier (contract, NDA, catalog, certificate)<span class="perm">supplier_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Record a supplier evaluation (delivery, quality, price scores 0–10)<span class="perm">supplier_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Approve or blacklist a supplier<span class="perm">supplier_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Search suppliers by name, country, or what they supply<span class="perm">supplier_management:search</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Ask AI about a supplier ("which supplier has best delivery score for valves?")<span class="perm">supplier_management:ask</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🔩</span>
+        <span class="module-name">Material Master (Items)</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">The universal catalog of everything the company stocks or buys — spares, materials, tools, chemicals, PPE.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Create an item (code, name, type: Spare Part / Material / Consumable / Tool / PPE / Chemical)<span class="perm">material_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Assign item to a category (tree hierarchy)<span class="perm">material_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Link item to an equipment model (optional — for model-specific spares)<span class="perm">material_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Add alternative items / substitute part numbers<span class="perm">material_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Attach datasheet or SDS document to an item<span class="perm">material_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Admin</span><span class="uc-text">Bulk import items from Excel file<span class="perm">material_management:import</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Search items by code, name, specs, or description (keyword/semantic/hybrid)<span class="perm">material_management:search</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Ask AI about items ("find 6-inch gate valve spare parts")<span class="perm">material_management:ask</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📝</span>
+        <span class="module-name">Material Requisition (MR)</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">Any department requests materials/spares. Goes through approval before procurement acts on it.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-requester">Requester</span><span class="uc-text">Create a Material Requisition (MR-2026-0001) with priority (Normal/Urgent/Critical)<span class="perm">requisition_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-requester">Requester</span><span class="uc-text">Add line items to MR (select from Item catalog, qty, estimated cost)<span class="perm">requisition_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-requester">Requester</span><span class="uc-text">Submit MR for approval<span class="perm">requisition_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-admin">Dept Head</span><span class="uc-text">Approve or reject the MR<span class="perm">requisition_management:approve</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">View approved MRs, create an RFQ from one<span class="perm">requisition_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-requester">Requester</span><span class="uc-text">Track MR status (Draft → Submitted → Approved → Ordered → Closed)<span class="perm">requisition_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Search requisitions by item, department, priority<span class="perm">requisition_management:search</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📬</span>
+        <span class="module-name">RFQ &amp; Quotations</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">Send requests for quotation to multiple suppliers, collect their responses, and compare to select the best offer.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Create an RFQ (from an MR or standalone) with line items and deadline<span class="perm">rfq_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Assign multiple suppliers to the RFQ<span class="perm">rfq_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Mark RFQ as Sent (status: Draft → Sent)<span class="perm">rfq_management:update</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Record a supplier's quotation response (prices, lead times, payment terms)<span class="perm">rfq_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">View side-by-side supplier comparison for the RFQ<span class="perm">rfq_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Select winning quotation → creates or links to a PO<span class="perm">rfq_management:approve</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">Close an RFQ<span class="perm">rfq_management:update</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🚚</span>
+        <span class="module-name">Goods Receipt (GRN)</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">Record what physically arrived against a PO. Posting a GRN automatically creates stock movements in the warehouse.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Create a GRN linked to a PO/phase and a delivery note number<span class="perm">goods_receipt_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Add received items (accepted qty, rejected qty, rejection reason, storage location)<span class="perm">goods_receipt_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Post GRN → triggers RECEIPT stock movements (via Celery event)<span class="perm">goods_receipt_management:approve</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Handle partial delivery (PO can have multiple GRNs)<span class="perm">goods_receipt_management:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">View receiving dashboard (what's been received, PO status updates)<span class="perm">goods_receipt_management:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Search GRNs by GRN number, PO number, date, item<span class="perm">goods_receipt_management:search</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">🏭</span>
+        <span class="module-name">Warehouse &amp; Stock</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">Physical stock management — locations, on-hand quantities, movement history, stock counts, and reorder alerts.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Create warehouses, zones, and storage locations (shelf/bin hierarchy)<span class="perm">warehouse_management:locations:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">View stock by item/location (on-hand, reserved, available)<span class="perm">warehouse_management:stock:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Issue stock (deduct qty for a work order or manual use)<span class="perm">warehouse_management:movements:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Transfer stock between locations<span class="perm">warehouse_management:movements:create</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Perform a stock count — record counted qty vs system qty<span class="perm">warehouse_management:stock:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Post stock count → auto-creates COUNT_ADJUSTMENT movements for variances<span class="perm">warehouse_management:stock:manage</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">View movement history (RECEIPT / ISSUE / TRANSFER / ADJUSTMENT / RETURN)<span class="perm">warehouse_management:movements:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">View low-stock alerts (items at or below reorder point)<span class="perm">warehouse_management:stock:read</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Search items in warehouse (keyword or semantic)<span class="perm">warehouse_management:search</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">Ask AI about stock ("how many 6-inch valves do we have?")<span class="perm">warehouse_management:ask</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="module-card mod-1" onclick="toggle(this)">
+      <div class="module-title">
+        <span class="module-icon">📤</span>
+        <span class="module-name">Export Engine + Dashboards</span>
+        <span class="module-tag">Phase 1</span>
+      </div>
+      <p class="module-desc">One-click Excel/CSV/PDF export from any module, plus inventory & procurement KPI dashboards.</p>
+      <p class="expand-hint">▶ Click to see use cases</p>
+      <div class="use-cases">
+        <ul class="uc-list">
+          <li class="uc-item"><span class="uc-actor actor-finance">Finance</span><span class="uc-text">Export any list to Excel, CSV, or PDF (filters apply)<span class="perm">{module}:read + {module}:export</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">View inventory KPI dashboard (stock value, low-stock count, movement rate)<span class="perm">warehouse_management:summary</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">View procurement cycle KPIs (MR→PO→GRN time, spend by supplier)<span class="perm">purchase_management:summary</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-warehouse">Warehouse</span><span class="uc-text">View stock value over time (line chart, base currency)<span class="perm">warehouse_management:summary</span></span></li>
+          <li class="uc-item"><span class="uc-actor actor-procurement">Procurement</span><span class="uc-text">View GRN vs PO variance report (what was ordered vs received)<span class="perm">purchase_management:summary</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ROLES -->
+<div id="panel-roles" class="panel">
+  <p style="font-size:12px;color:#94a3b8;margin-bottom:16px;">Each role has a distinct set of RBAC permissions. As owner/admin you can test every flow. Here's how to test as each user type.</p>
+  <div class="roles-grid">
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#4c1d95;">👑</div>
+        <div><div class="role-name">System Admin</div><div class="role-desc">Full access — you, the owner</div></div>
+      </div>
+      <div class="role-permissions">
+        <h4>Has all permissions including:</h4>
+        <div class="perm-list">
+          <span class="perm-chip has">currencies:manage</span>
+          <span class="perm-chip has">purchase_management:orders:approve</span>
+          <span class="perm-chip has">supplier_management:create</span>
+          <span class="perm-chip has">material_management:import</span>
+          <span class="perm-chip has">requisition_management:approve</span>
+          <span class="perm-chip has">warehouse_management:stock:manage</span>
+          <span class="perm-chip has">financial:export</span>
+        </div>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test as Admin:</h4>
+        <ol class="test-steps">
+          <li>Login as <code>admin / admin123</code> (seed credentials)</li>
+          <li>Go to Currency Settings → add IRT + USD, set exchange rate</li>
+          <li>Create a Purchase Order → add phases + items → submit for approval → approve it</li>
+          <li>Check Financial Dashboard shows the PO spend</li>
+          <li>Create a Supplier, add contacts and an evaluation</li>
+          <li>Create Items in Material Master</li>
+          <li>Create a Warehouse, Zone, and Storage Locations</li>
+          <li>Create a GRN against the PO → Post it → verify stock appears</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#1e3a5f;">💼</div>
+        <div><div class="role-name">Finance Manager</div><div class="role-desc">Sees money — dashboards, receipts, exports</div></div>
+      </div>
+      <div class="role-permissions">
+        <h4>Key permissions:</h4>
+        <div class="perm-list">
+          <span class="perm-chip has">financial:read</span>
+          <span class="perm-chip has">financial:export</span>
+          <span class="perm-chip has">exchange_rates:create</span>
+          <span class="perm-chip has">purchase_management:summary</span>
+          <span class="perm-chip has">purchase_management:costs:manage</span>
+          <span class="perm-chip">purchase_management:orders:approve</span>
+        </div>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test as Finance:</h4>
+        <ol class="test-steps">
+          <li>Open Financial Dashboard → verify KPI cards, cashflow chart</li>
+          <li>Enter a new exchange rate (e.g. today's USD/IRT)</li>
+          <li>Add a freight cost to a PO</li>
+          <li>Link a financial receipt to a PO</li>
+          <li>Export a report to Excel and PDF</li>
+          <li>Verify you cannot approve a PO (403 if not granted)</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#1a3a2a;">🛒</div>
+        <div><div class="role-name">Procurement Officer</div><div class="role-desc">Creates POs, RFQs, manages suppliers</div></div>
+      </div>
+      <div class="role-permissions">
+        <h4>Key permissions:</h4>
+        <div class="perm-list">
+          <span class="perm-chip has">purchase_management:orders:create</span>
+          <span class="perm-chip has">purchase_management:phases:manage</span>
+          <span class="perm-chip has">supplier_management:create</span>
+          <span class="perm-chip has">rfq_management:create</span>
+          <span class="perm-chip has">rfq_management:approve</span>
+          <span class="perm-chip has">requisition_management:read</span>
+          <span class="perm-chip">purchase_management:orders:approve</span>
+        </div>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test as Procurement:</h4>
+        <ol class="test-steps">
+          <li>View list of approved MRs → pick one</li>
+          <li>Create an RFQ from the MR → assign 2 suppliers</li>
+          <li>Record quotation responses for each supplier</li>
+          <li>Open the comparison table → select winning bid</li>
+          <li>Create a PO, add phases + line items → submit for approval</li>
+          <li>Search POs by keyword ("pump") and semantic</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#3b2207;">🏭</div>
+        <div><div class="role-name">Warehouse Manager</div><div class="role-desc">Receives goods, manages stock</div></div>
+      </div>
+      <div class="role-permissions">
+        <h4>Key permissions:</h4>
+        <div class="perm-list">
+          <span class="perm-chip has">warehouse_management:locations:manage</span>
+          <span class="perm-chip has">warehouse_management:stock:manage</span>
+          <span class="perm-chip has">warehouse_management:movements:create</span>
+          <span class="perm-chip has">goods_receipt_management:create</span>
+          <span class="perm-chip has">goods_receipt_management:approve</span>
+          <span class="perm-chip has">material_management:create</span>
+        </div>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test as Warehouse:</h4>
+        <ol class="test-steps">
+          <li>Create a Warehouse → Zone → Storage Location</li>
+          <li>Create a GRN against an approved PO phase</li>
+          <li>Fill in accepted/rejected quantities per item</li>
+          <li>Post GRN → check stock levels updated automatically</li>
+          <li>Issue stock for a work order → verify deduction</li>
+          <li>Run a stock count → post it → see adjustment movements</li>
+          <li>Check low-stock alerts list</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#2d1c3b;">📋</div>
+        <div><div class="role-name">Department Requester</div><div class="role-desc">Raises requisitions for their dept</div></div>
+      </div>
+      <div class="role-permissions">
+        <h4>Key permissions:</h4>
+        <div class="perm-list">
+          <span class="perm-chip has">requisition_management:create</span>
+          <span class="perm-chip has">requisition_management:read</span>
+          <span class="perm-chip has">material_management:read</span>
+          <span class="perm-chip has">material_management:search</span>
+          <span class="perm-chip">requisition_management:approve</span>
+        </div>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test as Requester:</h4>
+        <ol class="test-steps">
+          <li>Create an MR (priority: Urgent, reason: breakdown)</li>
+          <li>Search Item catalog → add 3 line items with estimated cost</li>
+          <li>Submit the MR</li>
+          <li>Track MR status — changes to "Under Review"</li>
+          <li>After dept head approves → status becomes "Approved"</li>
+          <li>Verify you cannot approve your own MR (403)</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="role-card">
+      <div class="role-header">
+        <div class="role-avatar" style="background:#1e2433;">🤖</div>
+        <div><div class="role-name">AI Assistant (Chat)</div><div class="role-desc">Runs with caller's permissions — no more</div></div>
+      </div>
+      <div class="role-permissions">
+        <h4>Available to all users with the right permissions:</h4>
+        <div class="perm-list">
+          <span class="perm-chip has">supplier_management:ask</span>
+          <span class="perm-chip has">material_management:ask</span>
+          <span class="perm-chip has">requisition_management:ask</span>
+          <span class="perm-chip has">rfq_management:ask</span>
+          <span class="perm-chip has">goods_receipt_management:ask</span>
+          <span class="perm-chip has">warehouse_management:ask</span>
+          <span class="perm-chip has">purchase_management:orders:ask</span>
+        </div>
+      </div>
+      <div class="test-as">
+        <h4>🧪 How to test the AI chat:</h4>
+        <ol class="test-steps">
+          <li>Open the Chat page (primary interface)</li>
+          <li>Ask: "What's my current stock of 6-inch gate valves?"</li>
+          <li>Ask: "Which supplier gave the best quote for pumps last month?"</li>
+          <li>Ask: "Show me open POs above $50,000"</li>
+          <li>AI shows a draft action → you confirm or cancel it</li>
+          <li>Verify it respects your role — no actions you lack permission for</li>
+        </ol>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- FLOWS -->
+<div id="panel-flows" class="panel">
+  <p style="font-size:12px;color:#94a3b8;margin-bottom:16px;">The two end-to-end procurement flows showing how every module connects. Money flows through multi-currency at every step.</p>
+
+  <div class="flow-section">
+    <h3>🔄 Full Procurement Flow: MR → RFQ → PO → GRN → Stock</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="actor-pill" style="background:#2d1c3b;color:#f0abfc;">Requester</span>
+        <span class="flow-node fn-draft">Create MR (Draft)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Submit MR</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Dept Head Approves</span>
+        <span class="flow-label">MR status: Approved</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#1a3a2a;color:#86efac;">Procurement</span>
+        <span class="flow-node fn-action">Create RFQ from MR</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Assign suppliers</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Record quotations</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Select winner</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#1a3a2a;color:#86efac;">Procurement</span>
+        <span class="flow-node fn-action">Create PO + phases</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Submit for approval</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Manager Approves PO</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Mark phase Ordered/Shipped</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#3b2207;color:#fcd34d;">Warehouse</span>
+        <span class="flow-node fn-action">Create GRN (Draft)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Fill accepted/rejected qty</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Post GRN</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Celery Event →</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-result">RECEIPT StockMovement</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="actor-pill" style="background:#3b2207;color:#fcd34d;">Warehouse</span>
+        <span class="flow-node fn-result">Stock level ↑</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Weighted avg cost updated</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">PO → Received/Closed</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>💱 Multi-Currency Money Flow (at every step)</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="flow-node fn-action">Transaction in any currency</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Look up exchange rate ≤ date</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Store 4 columns</span>
+        <span class="flow-label">amount · currency_id · amount_base · exchange_rate_used</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;">
+        <span class="flow-node fn-result">Dashboard aggregates</span>
+        <span class="flow-arrow">←</span>
+        <span class="flow-node fn-action">All in base currency (IRT)</span>
+        <span class="flow-label">Rate is frozen — never recalculated after the fact</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>📦 Stock Issue Flow (warehouse → work order)</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="actor-pill" style="background:#3b2207;color:#fcd34d;">Warehouse</span>
+        <span class="flow-node fn-action">Issue Stock (qty, item, location)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Check available ≥ requested</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-result">ISSUE StockMovement (append-only)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">Stock level ↓</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>📤 Export Flow (any module)</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="flow-node fn-action">POST /{module}/{entity}/export</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-result">202 + task_id</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-event">Celery generates xlsx/csv/pdf</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-done">Poll GET /tasks/{id} → download_url</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-section">
+    <h3>🔒 RBAC Flow (every request)</h3>
+    <div class="flow-diagram">
+      <div class="flow-row">
+        <span class="flow-node fn-action">Request arrives</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">Authenticate (JWT/session)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-action">require_permission("module:action")</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node fn-approve">Has permission?</span>
+      </div>
+      <div class="flow-row" style="margin-top:4px;margin-left:20px;">
+        <span class="flow-node fn-done" style="margin-right:8px;">✅ Yes → proceed</span>
+        <span style="color:#64748b;font-size:12px;margin-right:24px;">|</span>
+        <span class="flow-node fn-event">❌ No → 403 PERMISSION_DENIED</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+function toggle(card) {
+  const wasExpanded = card.classList.contains('expanded');
+  // close all in same grid
+  card.closest('.modules-grid').querySelectorAll('.module-card').forEach(c => {
+    c.classList.remove('expanded');
+    const hint = c.querySelector('.expand-hint');
+    if (hint) hint.textContent = '▶ Click to see use cases';
+  });
+  if (!wasExpanded) {
+    card.classList.add('expanded');
+    const hint = card.querySelector('.expand-hint');
+    if (hint) hint.textContent = '▼ Use cases';
+  }
+}
+</script>
+</body>
+</html>

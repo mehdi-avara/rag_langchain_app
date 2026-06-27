@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Financial AI Assistant — Implementation Overview</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#2b333f;
+    --ink:#e6edf3; --muted:#9aa7b4; --accent:#4493f8; --green:#3fb950;
+    --amber:#d29922; --red:#f85149; --purple:#bc8cff; --cyan:#39c5cf;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:1100px;margin:0 auto;padding:32px 20px 80px}
+  header h1{font-size:28px;margin:0 0 6px}
+  header p{color:var(--muted);margin:0 0 4px}
+  .pill{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;
+    background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.35)}
+  h2{font-size:18px;margin:38px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h2 .n{color:var(--accent);font-weight:600;margin-right:8px}
+  .grid{display:grid;gap:14px}
+  .cols-2{grid-template-columns:repeat(2,1fr)}
+  .cols-3{grid-template-columns:repeat(3,1fr)}
+  .cols-4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:820px){.cols-2,.cols-3,.cols-4{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .card h3{margin:0 0 6px;font-size:15px}
+  .card p{margin:0;color:var(--muted);font-size:13.5px}
+  .tag{font-size:11px;padding:1px 7px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  .mono{font-size:12.5px}
+  .layer{display:flex;align-items:center;gap:14px;background:var(--panel);
+    border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:12px 16px;margin-bottom:10px}
+  .layer .lab{min-width:140px;font-weight:600}
+  .layer .desc{color:var(--muted);font-size:13.5px}
+  .layer.core{border-left-color:var(--purple)}
+  .layer.fin{border-left-color:var(--cyan)}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--panel);border-radius:10px;overflow:hidden}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  td code{color:var(--cyan)}
+  .kind{font-size:11px;padding:1px 7px;border-radius:6px}
+  .k-read{background:rgba(68,147,248,.15);color:var(--accent)}
+  .k-write{background:rgba(210,153,34,.15);color:var(--amber)}
+  .k-file{background:rgba(57,197,207,.15);color:var(--cyan)}
+  .k-meta{background:rgba(154,167,180,.15);color:var(--muted)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:16px}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:13px}
+  .node.hl{border-color:var(--accent);color:var(--accent)}
+  .node.warn{border-color:var(--amber);color:var(--amber)}
+  .arrow{color:var(--muted)}
+  .states{display:flex;flex-wrap:wrap;gap:8px}
+  .state{font-size:12.5px;padding:4px 10px;border-radius:7px;border:1px solid var(--line)}
+  .s-active{border-color:var(--green);color:var(--green)}
+  .s-wait{border-color:var(--amber);color:var(--amber)}
+  .s-term{border-color:var(--muted);color:var(--muted)}
+  .note{background:rgba(68,147,248,.08);border:1px solid rgba(68,147,248,.3);border-radius:10px;padding:12px 16px;font-size:13.5px;margin-top:12px}
+  .note.warn{background:rgba(210,153,34,.08);border-color:rgba(210,153,34,.35)}
+  .note b{color:var(--ink)}
+  ul.clean{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:13.5px}
+  ul.clean li{margin:3px 0}
+  .ep{display:grid;grid-template-columns:80px 1fr;gap:10px;align-items:start;padding:8px 0;border-bottom:1px solid var(--line)}
+  .ep:last-child{border:none}
+  .m{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-align:center;height:fit-content}
+  .m-post{background:rgba(63,185,80,.15);color:var(--green)}
+  .m-get{background:rgba(68,147,248,.15);color:var(--accent)}
+  .m-patch{background:rgba(210,153,34,.15);color:var(--amber)}
+  .ep .path{color:var(--cyan)}
+  .ep .d{color:var(--muted);font-size:12.5px}
+  footer{margin-top:50px;color:var(--muted);font-size:12px;text-align:center}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:10px 0}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Financial AI Assistant — Implementation Overview</h1>
+    <p>Phase 0 · <span class="mono">PROMPT_financial_assistant.md</span> · modular monolith (FastAPI · PostgreSQL · LangGraph · Celery)</p>
+    <p><span class="pill">✓ implemented &amp; tested (39 assistant + 17 financial tests pass)</span></p>
+  </header>
+
+  <h2><span class="n">1</span>Architecture layers</h2>
+  <p style="color:var(--muted);margin-top:-4px">A single generic engine; each domain module plugs in one thin adapter. The assistant <b>never writes</b> — it only proposes drafts.</p>
+  <div class="layer">
+    <div class="lab">Transport</div>
+    <div class="desc"><code class="mono">assistant/routes.py</code> — <code class="mono">/assistant</code> endpoints; SSE chat stream + draft endpoints.</div>
+  </div>
+  <div class="layer core">
+    <div class="lab">Generic core <span class="tag">reused by every module</span></div>
+    <div class="desc"><code class="mono">runner</code> (orchestration + streaming + history) · <code class="mono">graph</code> (LangGraph) · <code class="mono">router</code> (LLM intent) · <code class="mono">registry</code> (RBAC-filtered intents) · <code class="mono">service</code> (Draft/AgentRun) · <code class="mono">intake</code> (VLM/text) · <code class="mono">rbac · errors · rate_limit · tracing</code></div>
+  </div>
+  <div class="layer fin">
+    <div class="lab">Financial adapter <span class="tag">one per module</span></div>
+    <div class="desc"><code class="mono">financial_management/assistant_tools.py</code> — wraps existing services; builds drafts with their <code class="mono">commit_target</code>.</div>
+  </div>
+  <div class="layer">
+    <div class="lab">Existing module</div>
+    <div class="desc"><code class="mono">financial_management/services.py</code> &amp; routes — the real create/update endpoints the <b>frontend</b> commits to.</div>
+  </div>
+
+  <h2><span class="n">2</span>Intent taxonomy <span class="tag">RBAC-filtered per request</span></h2>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--accent)"></i>read</span>
+    <span><i class="dot" style="background:var(--amber)"></i>write → draft</span>
+    <span><i class="dot" style="background:var(--cyan)"></i>file</span>
+    <span><i class="dot" style="background:var(--muted)"></i>meta</span>
+  </div>
+  <table>
+    <thead><tr><th>Intent</th><th>Kind</th><th>Permission</th><th>Seam / commit target</th></tr></thead>
+    <tbody>
+      <tr><td><code>search_receipts</code></td><td><span class="kind k-read">read</span></td><td class="mono">…receipts:search</td><td><code>search_receipt_hits()</code></td></tr>
+      <tr><td><code>summarize_finance</code></td><td><span class="kind k-read">read</span></td><td class="mono">…receipts:read</td><td><code>summarize_receipts()</code></td></tr>
+      <tr><td><code>ask_finance</code></td><td><span class="kind k-read">read</span></td><td class="mono">…receipts:ask</td><td><code>answer_receipts_question()</code></td></tr>
+      <tr><td><code>add_receipt</code></td><td><span class="kind k-write">write</span></td><td class="mono">…receipts:create</td><td><code>POST /financial_management/receipts</code></td></tr>
+      <tr><td><code>update_receipt</code></td><td><span class="kind k-write">write</span></td><td class="mono">…receipts:update</td><td><code>PATCH …/receipts/{id}</code></td></tr>
+      <tr><td><code>add_card / update_card</code></td><td><span class="kind k-write">write</span></td><td class="mono">…cards:create/update</td><td><code>POST/PATCH …/cards</code></td></tr>
+      <tr><td><code>add_customer / update_customer</code></td><td><span class="kind k-write">write</span></td><td class="mono">…customers:create/update</td><td><code>POST/PATCH …/customers</code></td></tr>
+      <tr><td><code>add_receipt_comment</code></td><td><span class="kind k-write">write</span></td><td class="mono">…receipt_comments:create</td><td><code>POST …/receipts/{id}/comments</code></td></tr>
+      <tr><td><code>attach_receipt_file</code></td><td><span class="kind k-file">file</span></td><td class="mono">…receipt_files:create</td><td><code>POST …/complete-upload/{asset}</code></td></tr>
+      <tr><td><code>general</code></td><td><span class="kind k-meta">meta</span></td><td class="mono">assistant:chat</td><td>model knowledge — cite nothing</td></tr>
+      <tr><td><code>clarify</code></td><td><span class="kind k-meta">meta</span></td><td class="mono">—</td><td>ask one focused question</td></tr>
+    </tbody>
+  </table>
+  <div class="note">The router only ever sees intents the caller is <b>permitted</b> to use. A user lacking a permission never has that intent named back to them — restricted tasks simply don't exist in their prompt.</div>
+
+  <h2><span class="n">3</span>Turn flow (LangGraph)</h2>
+  <div class="flow">
+    <span class="node hl">router</span><span class="arrow">→</span>
+    <span class="node">read</span><span class="arrow">/</span>
+    <span class="node warn">write → draft</span><span class="arrow">/</span>
+    <span class="node">general</span><span class="arrow">/</span>
+    <span class="node">clarify</span><span class="arrow">→</span>
+    <span class="node">decide_next</span><span class="arrow">→</span>
+    <span class="node">end</span>
+  </div>
+  <div class="grid cols-2" style="margin-top:12px">
+    <div class="card"><h3>Reply streaming (SSE)</h3>
+      <p>Events: <code class="mono">status</code> · <code class="mono">references</code> · <code class="mono">partial_draft</code> · <code class="mono">draft</code> · <code class="mono">delta</code> · <code class="mono">error</code> · <code class="mono">done</code>. Structured objects are sent whole; only the answer streams token-by-token.</p></div>
+    <div class="card"><h3>Two stores, kept apart</h3>
+      <p><b>Transcript</b> = <code class="mono">ChatMessage</code> rows (visible history, served by <code class="mono">/chat/{id}/history</code>). <b>Resumable run</b> = <code class="mono">AgentRun.state</code> snapshot. The <code class="mono">Draft</code> lives in its own table.</p></div>
+  </div>
+
+  <h2><span class="n">4</span>Draft-and-Confirm <span class="tag">the assistant never writes</span></h2>
+  <div class="flow">
+    <span class="node">user describes data (+file)</span><span class="arrow">→</span>
+    <span class="node hl">agent builds Draft + commit_target</span><span class="arrow">→</span>
+    <span class="node">frontend renders &amp; user edits</span><span class="arrow">→</span>
+    <span class="node warn">frontend POSTs to module endpoint</span><span class="arrow">→</span>
+    <span class="node">POST /drafts/{id}/committed (record-only)</span>
+  </div>
+  <div class="note warn"><b>Chat text never commits.</b> Even "yes / confirm / do it" only produces a <b>pending</b> draft. The write happens only when the frontend POSTs the final payload to the module's own route — there is deliberately <b>no</b> <code class="mono">/confirm</code> endpoint.</div>
+  <div class="grid cols-2" style="margin-top:12px">
+    <div class="card"><h3>Draft lifecycle</h3>
+      <div class="states" style="margin-top:8px">
+        <span class="state s-active">pending</span><span class="state s-term">committed</span>
+        <span class="state s-term">cancelled</span><span class="state s-term">failed</span>
+      </div>
+      <p style="margin-top:8px">Module endpoint error → stays <code class="mono">pending</code> (retry after edit).</p></div>
+    <div class="card"><h3>AgentRun lifecycle</h3>
+      <div class="states" style="margin-top:8px">
+        <span class="state s-active">active</span><span class="state s-wait">suspended</span>
+        <span class="state s-wait">waiting_on_task</span><span class="state s-term">completed</span>
+        <span class="state s-term">cancelled</span><span class="state s-term">failed</span>
+      </div>
+      <p style="margin-top:8px">Invariant: at most one <code class="mono">active</code> run per chat.</p></div>
+  </div>
+
+  <h2><span class="n">5</span>Incomplete write → partial object + missing nouns</h2>
+  <div class="card">
+    <p style="color:var(--muted)">When required fields are missing, <b>no draft is persisted</b>. The assistant returns the object completed so far and names what's missing as nouns, then asks one question.</p>
+    <pre class="mono" style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;color:var(--ink);font-size:12.5px">{
+  "intent": "clarify",
+  "partial_draft": {
+    "target_action": "create_receipt",
+    "payload": { "description": "pump", "amount": "100", "currency": "IRT" },
+    "missing": ["credit card", "receipt date", "counterparty"]
+  },
+  "clarify_question": "I still need: credit card, receipt date, counterparty."
+}</pre>
+  </div>
+
+  <h2><span class="n">6</span>File intake — VLM vs text branch</h2>
+  <div class="grid cols-2">
+    <div class="card"><h3>Vision model (<code class="mono">supports_vision = true</code>)</h3>
+      <p>Sends OpenAI <code class="mono">image_url</code> blocks (base64) for images. PDFs → heavy Celery pipeline.</p></div>
+    <div class="card"><h3>Text model</h3>
+      <p>Never sends image blocks; sends <b>extracted text only</b>, wrapped as clearly-delimited quoted <b>data</b> (instructions inside files are ignored — §12.19).</p></div>
+  </div>
+  <div class="note"><b>Wired end-to-end:</b> when the active model is a VLM, the receipt/invoice image is sent to the model in <b>both</b> the router (to read fields like amount, date, counterparty straight off the photo) and the answer step. Non-vision models receive extracted text only.</div>
+
+  <h2><span class="n">7</span>Endpoints</h2>
+  <div class="card">
+    <div class="ep"><span class="m m-post">POST</span><div><span class="path mono">/assistant/chat</span><div class="d">Agentic, SSE-streamed. May return a draft / partial_draft. Never commits. <span class="tag">assistant:chat</span></div></div></div>
+    <div class="ep"><span class="m m-get">GET</span><div><span class="path mono">/assistant/drafts/{id}</span><div class="d">Fetch / resume a draft. <span class="tag">assistant:draft</span></div></div></div>
+    <div class="ep"><span class="m m-patch">PATCH</span><div><span class="path mono">/assistant/drafts/{id}</span><div class="d">Edit fields on the assistant-side copy before committing.</div></div></div>
+    <div class="ep"><span class="m m-post">POST</span><div><span class="path mono">/assistant/drafts/{id}/committed</span><div class="d">Record-only notification — writes <b>no</b> domain data, re-checks no domain permission.</div></div></div>
+    <div class="ep"><span class="m m-post">POST</span><div><span class="path mono">/assistant/drafts/{id}/cancel</span><div class="d">Discard a pending draft.</div></div></div>
+  </div>
+
+  <h2><span class="n">8</span>Cross-cutting</h2>
+  <div class="grid cols-4">
+    <div class="card"><h3>RBAC</h3><p>Runs as exactly the caller; read handlers &amp; <code class="mono">build_draft</code> re-check permission. New perms: <code class="mono">assistant:chat/draft/files</code>.</p></div>
+    <div class="card"><h3>Errors</h3><p>Catalogued <code class="mono">ASSISTANT_*</code> codes only (unclear / draft-not-found / not-pending / rate-limited…).</p></div>
+    <div class="card"><h3>Rate limit</h3><p>Per-user &amp; per-company sliding window → <code class="mono">ASSISTANT_RATE_LIMITED</code>.</p></div>
+    <div class="card"><h3>Tracing</h3><p>Fire-and-forget Langfuse (no-op unless configured). One trace per run.</p></div>
+  </div>
+
+  <h2><span class="n">9</span>New / changed files</h2>
+  <div class="grid cols-2">
+    <div class="card"><h3>New — generic core <span class="tag">assistant/</span></h3>
+      <ul class="clean">
+        <li><code class="mono">models.py</code> — Draft, AgentRun</li>
+        <li><code class="mono">registry.py · router.py · graph.py · state.py</code></li>
+        <li><code class="mono">runner.py · service.py · intake.py</code></li>
+        <li><code class="mono">rbac.py · errors.py · rate_limit.py · tracing.py</code></li>
+        <li><code class="mono">routes.py · schemas.py</code></li>
+        <li><code class="mono">tests/</code> — 39 tests</li>
+      </ul></div>
+    <div class="card"><h3>Changed / added</h3>
+      <ul class="clean">
+        <li><code class="mono">financial_management/assistant_tools.py</code> (new adapter)</li>
+        <li><code class="mono">services.py</code> — <code class="mono">summarize_receipts</code>, <code class="mono">answer_receipts_question</code></li>
+        <li><code class="mono">Models/__init__.py</code>, <code class="mono">ai_model.py</code> (+supports_vision), <code class="mono">chat.py</code> (+draft_id)</li>
+        <li><code class="mono">alembic/…/2c3d4e5f6a7b_add_assistant_core.py</code></li>
+        <li><code class="mono">db/seed_rbac.py</code>, <code class="mono">error_codes.py</code>, <code class="mono">api.py</code></li>
+      </ul></div>
+  </div>
+
+  <footer>Generated overview of the Phase 0 financial assistant implementation · open <span class="mono">/docs</span> for live API.</footer>
+</div>
+</body>
+</html>
