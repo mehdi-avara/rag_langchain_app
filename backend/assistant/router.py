@@ -93,6 +93,12 @@ async def classify(
     client = client or llm_client.async_openai_client
     model = model or settings.openai_model
 
+    from .intake import LLM_TIMEOUT
+
+    logger.info(
+        "assistant router: calling model=%s images=%s (timeout=%ss)…",
+        model, has_images, LLM_TIMEOUT,
+    )
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -102,11 +108,15 @@ async def classify(
                 {"role": "system", "content": _system_prompt(intents, has_attachments, has_images)},
                 _user_message(question, image_blocks),
             ],
+            timeout=LLM_TIMEOUT,
         )
     except AppException:
         raise
     except Exception as exc:  # network/model failure -> catalogued LLM error
+        logger.exception("assistant router: model call failed for model=%s", model)
         raise_llm_exception(exc, "assistant_router")
+
+    logger.info("assistant router: model responded")
 
     raw = (response.choices[0].message.content or "").strip()
 

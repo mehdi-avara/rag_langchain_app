@@ -39,6 +39,9 @@ settings = get_settings()
 _IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
 _TEXT_TYPES = {"text/plain", "text/csv", "text/markdown", "application/json"}
 
+# Fail a stuck model call instead of hanging forever (seconds).
+LLM_TIMEOUT = float(os.getenv("ASSISTANT_LLM_TIMEOUT", "60"))
+
 
 # ---------------------------------------------------------------------------
 # VLM capability detection (PROMPT §7)
@@ -90,19 +93,28 @@ class ChatModelConfig:
 def resolve_chat_model(db: Session) -> ChatModelConfig:
     row = get_active_chat_model(db)
     if row is not None:
+        base_url = getattr(row, "url", None) or settings.openai_base_url
+        model = getattr(row, "name", None) or settings.openai_model
+        vision = bool(getattr(row, "supports_vision", False))
+        logger.info(
+            "assistant: using model '%s' at %s (vision=%s, source=chat_ai_models#%s)",
+            model, base_url, vision, getattr(row, "id", "?"),
+        )
         client = AsyncOpenAI(
             api_key=getattr(row, "api_key", None) or settings.openai_api_key,
-            base_url=getattr(row, "url", None) or settings.openai_base_url,
+            base_url=base_url,
+            timeout=LLM_TIMEOUT,
         )
-        return ChatModelConfig(
-            client=client,
-            model=getattr(row, "name", None) or settings.openai_model,
-            supports_vision=bool(getattr(row, "supports_vision", False)),
-        )
+        return ChatModelConfig(client=client, model=model, supports_vision=vision)
 
     # No configured model row — fall back to the shared settings-based client and
     # the env vision flag.
     vision = os.getenv("DI_LLM_VISION_ENABLED", "0") not in ("0", "false", "False")
+    logger.warning(
+        "assistant: no active chat_ai_models row; falling back to settings model '%s' at %s "
+        "(vision=%s). Add a model row or set settings.openai_base_url correctly.",
+        settings.openai_model, settings.openai_base_url, vision,
+    )
     return ChatModelConfig(
         client=llm_client.async_openai_client,
         model=settings.openai_model,

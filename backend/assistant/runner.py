@@ -126,6 +126,7 @@ async def _stream_model_answer(state: AgentState):
         temperature=settings.llm_temperature,
         messages=_answer_messages(state),
         stream=True,
+        timeout=intake_mod.LLM_TIMEOUT,
     )
     async for chunk in stream:
         choices = getattr(chunk, "choices", None) or []
