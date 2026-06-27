@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from assistant.tests.fakes import ALL_FINANCIAL_PERMS, make_user
 
 import financial_management.assistant_tools  # noqa: F401
@@ -58,6 +60,86 @@ def test_missing_fields_routes_to_clarify_with_partial_object(monkeypatch):
     partial = result.get("partial_draft")
     assert partial and partial["payload"]["description"] == "only this"
     assert "amount" in partial["missing"]
+
+
+def test_partial_draft_answer_is_the_clarify_question(monkeypatch):
+    # Regression: an incomplete write must surface the builder's targeted
+    # "I still need: …" prompt as the answer. The write branch never routes
+    # through clarify_node, so if the graph leaves answer empty the runner
+    # free-writes a generic refusal instead of naming the missing fields.
+    result = _run_graph(monkeypatch, intent="add_receipt", slots={"description": "pump", "amount": "100"})
+    assert result["intent"] == "clarify"
+    answer = result.get("answer") or ""
+    assert answer, "incomplete draft must carry a clarify answer, not an empty string"
+    assert answer == result.get("clarify_question")
+    # The answer names the still-missing fields rather than refusing.
+    assert "credit card" in answer
+    assert "counterparty" in answer
+
+
+# Progressively filled receipts: each adds one more part of the draft. Until the
+# required set (description, amount, direction, credit card, receipt date,
+# counterparty) is complete the turn yields a partial_draft naming what's left;
+# once complete it yields a committable pending_draft.
+_FULL_RECEIPT_SLOTS = {
+    "description": "pump maintenance",
+    "amount": "1200000",
+    "currency": "IRR",
+    "direction": "output",
+    "credit_card_id": 3,
+    "receipt_date": "2026-06-20",
+    "counterparty_name": "ACME",
+}
+
+
+@pytest.mark.parametrize(
+    "slots, expected_missing",
+    [
+        ({"description": "pump"}, {"amount", "direction", "credit card", "receipt date", "counterparty"}),
+        (
+            {"description": "pump", "amount": "1200000", "currency": "IRR"},
+            {"direction", "credit card", "receipt date", "counterparty"},
+        ),
+        (
+            {
+                "description": "pump",
+                "amount": "1200000",
+                "currency": "IRR",
+                "direction": "output",
+                "receipt_date": "2026-06-20",
+                "counterparty_name": "ACME",
+            },
+            {"credit card"},
+        ),
+    ],
+)
+def test_incomplete_receipt_yields_partial_draft_naming_missing_parts(monkeypatch, slots, expected_missing):
+    result = _run_graph(monkeypatch, intent="add_receipt", slots=slots)
+    assert result["intent"] == "clarify"
+    assert result.get("pending_draft") in (None, {})
+    partial = result.get("partial_draft")
+    assert partial is not None
+    assert partial["target_action"] == "create_receipt"
+    # Only the absent fields are reported missing; provided ones carry through.
+    assert set(partial["missing"]) == expected_missing
+    for key, value in slots.items():
+        assert partial["payload"].get(key) == value
+
+
+def test_complete_receipt_yields_committable_pending_draft(monkeypatch):
+    result = _run_graph(monkeypatch, intent="add_receipt", slots=dict(_FULL_RECEIPT_SLOTS))
+    assert result["intent"] == "add_receipt"
+    assert result.get("partial_draft") is None
+    draft = result.get("pending_draft")
+    assert draft is not None
+    assert draft["validation"]["valid"] is True
+    assert draft["commit_target"] == {
+        "method": "POST",
+        "endpoint": "/financial_management/receipts",
+        "permission": "financial_management:receipts:create",
+    }
+    assert draft["payload"]["amount"] == "1200000"
+    assert draft["payload"]["direction"] == "output"
 
 
 def test_general_intent(monkeypatch):

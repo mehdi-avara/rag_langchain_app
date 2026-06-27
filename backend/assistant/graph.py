@@ -108,12 +108,16 @@ async def write_node(state: AgentState) -> AgentState:
     if not draft_data.valid:
         # Prefer clarify over an un-committable draft (PROMPT §3), but still hand
         # back the object completed so far + the missing field nouns so the user
-        # can finish it.
+        # can finish it. Surface the builder's clarify_question as the answer so
+        # the runner streams the targeted "I still need: …" prompt instead of
+        # letting the model free-write a generic refusal (the write branch never
+        # routes through clarify_node, so answer must be set here).
+        clarify_question = draft_data.clarify_question or "Could you provide the missing details?"
         return {
             **state,
             "current_step": intent,
             "intent": "clarify",
-            "clarify_question": draft_data.clarify_question or "Could you provide the missing details?",
+            "clarify_question": clarify_question,
             "pending_draft": None,
             "partial_draft": {
                 "target_module": draft_data.target_module,
@@ -122,7 +126,7 @@ async def write_node(state: AgentState) -> AgentState:
                 "missing": draft_data.validation.get("missing", []),
                 "validation": draft_data.validation,
             },
-            "answer": "",
+            "answer": clarify_question,
         }
 
     pending_draft = {
