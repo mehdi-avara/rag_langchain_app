@@ -141,13 +141,39 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
         body_text = body_text[:MAX_LOG_CHARS]
 
+        # Replay the buffered body to the downstream app. IMPORTANT: only deliver
+        # the body ONCE, then report a disconnect. A function that always returns
+        # http.request breaks streaming responses (SSE): when StreamingResponse
+        # later calls receive() to listen for disconnect it would get http.request
+        # and raise "Unexpected message received: http.request".
+        body_delivered = False
+
         async def receive():
-            return {"type": "http.request", "body": body_bytes}
+            nonlocal body_delivered
+            if not body_delivered:
+                body_delivered = True
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+            return {"type": "http.disconnect"}
 
         request._receive = receive
 
         # -------- Process request --------
         response = await call_next(request)
+
+        # -------- Streaming responses (e.g. SSE) must NOT be buffered --------
+        # Buffering body_iterator would defeat streaming and hold the connection
+        # until the whole stream finished. Pass them straight through.
+        response_content_type = response.headers.get("content-type", "").lower()
+        if "text/event-stream" in response_content_type:
+            process_time = round(time.time() - start_time, 3)
+            logger.info(
+                f"{request.method} {request.url.path} | "
+                f"Status: {response.status_code} | "
+                f"Time: {process_time}s | "
+                f"Request: {body_text} | "
+                f"Response: <streaming>"
+            )
+            return response
 
         # -------- Response body --------
         response_body = b""
