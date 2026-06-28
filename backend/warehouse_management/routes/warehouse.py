@@ -83,7 +83,7 @@ def create_warehouse_endpoint(
     )
 
 
-@router.get("", response_model=list[WarehouseRead])
+@router.get("/warehouses", response_model=list[WarehouseRead])
 def list_warehouses_endpoint(
     active_only: bool = Query(False),
     db: Session = Depends(get_db),
