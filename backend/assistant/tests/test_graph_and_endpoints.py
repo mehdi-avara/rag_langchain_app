@@ -4,12 +4,34 @@ import asyncio
 
 import pytest
 
-from assistant.tests.fakes import ALL_FINANCIAL_PERMS, make_user
+from assistant.tests.fakes import ALL_FINANCIAL_PERMS, FakeProvider, make_user
 
 import financial_management.assistant_tools  # noqa: F401
 from assistant import router as router_mod
 from assistant.graph import build_assistant_graph
+from assistant.module_interface import ResourceSpec, get_resource, register_resource
 from assistant.routes import router as assistant_api_router
+
+
+@pytest.fixture(autouse=True)
+def _empty_resolution_providers():
+    """This graph harness runs with db=None, so swap the card/customer providers
+    for empty fakes — free-text names (e.g. counterparty 'ACME') stay free text and
+    no provider hits the (absent) database."""
+    keys = ("financial_card", "financial_customer")
+    saved = {k: get_resource(k) for k in keys}
+    for key, orig in saved.items():
+        if orig is None:
+            continue
+        register_resource(ResourceSpec(
+            key=key, read_permission=orig.read_permission, provider=FakeProvider([]),
+            create_permission=orig.create_permission, create_endpoint=orig.create_endpoint,
+            create_method=orig.create_method, suggestion_from=orig.suggestion_from,
+        ))
+    yield
+    for key, orig in saved.items():
+        if orig is not None:
+            register_resource(orig)
 
 
 def _run_graph(monkeypatch, *, intent, slots=None, language="en", clarify=None, extracted_text=None, question="hi"):

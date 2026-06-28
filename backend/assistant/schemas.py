@@ -38,6 +38,11 @@ class DraftOut(BaseModel):
 class DraftPatchRequest(BaseModel):
     # User edits to the assistant-side copy before committing (optional, §4).
     payload: Optional[Dict[str, Any]] = None
+    # Create-callback: the frontend created a previously-missing FK record (or picked
+    # an alternative) and reports the chosen id back so the server writes it into the
+    # payload and clears the pending reference (FK-resolution task).
+    # shape: { "<field>": { "id": <int>, "label": "<optional str>" } }
+    resolved_references: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class DraftCommittedRequest(BaseModel):

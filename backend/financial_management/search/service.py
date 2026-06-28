@@ -3,11 +3,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Iterable, List, Optional, Sequence
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from Models import User
 
-from ..models import FinancialReceipt
+from ..models import FinancialCard, FinancialCustomer, FinancialReceipt
 from ..schemas import FinancialReceiptSemanticHit
 from ..services import (
     ensure_receipt_embeddings,
@@ -164,6 +165,62 @@ def list_text_receipts(
     )
 
     return [receipt_to_out(receipt) for receipt in receipts]
+
+
+def search_card_hits(
+    db: Session,
+    current_user: User,
+    query_text: str,
+    ids: Optional[List[int]] = None,
+    is_active: Optional[bool] = None,
+    limit: int = 10,
+) -> List[FinancialCard]:
+    """ILIKE search over card text fields, company-scoped. Moved verbatim from the route.
+
+    This is the module's **interface function** for card search: the route handler
+    and the assistant's ``FunctionSearchProvider`` both call it, so search behavior
+    stays in one place (master plan §12.4 Module Tool Contract).
+    """
+    q = db.query(FinancialCard).filter(FinancialCard.company_id == current_user.company_id)
+    if ids:
+        q = q.filter(FinancialCard.id.in_(list(dict.fromkeys(ids))))
+    pattern = f"%{query_text}%"
+    q = q.filter(or_(
+        FinancialCard.title.ilike(pattern),
+        FinancialCard.card_number.ilike(pattern),
+        FinancialCard.bank_name.ilike(pattern),
+        FinancialCard.account_owner_name.ilike(pattern),
+        FinancialCard.description.ilike(pattern),
+    ))
+    if is_active is not None:
+        q = q.filter(FinancialCard.is_active == is_active)
+    return q.order_by(FinancialCard.created_at.desc()).limit(limit).all()
+
+
+def search_customer_hits(
+    db: Session,
+    current_user: User,
+    query_text: str,
+    ids: Optional[List[int]] = None,
+    limit: int = 10,
+) -> List[FinancialCustomer]:
+    """ILIKE search over customer text fields, company-scoped. Moved verbatim from the route.
+
+    The module's **interface function** for customer search (see ``search_card_hits``).
+    """
+    q = db.query(FinancialCustomer).filter(FinancialCustomer.company_id == current_user.company_id)
+    if ids:
+        q = q.filter(FinancialCustomer.id.in_(list(dict.fromkeys(ids))))
+    pattern = f"%{query_text}%"
+    q = q.filter(or_(
+        FinancialCustomer.name.ilike(pattern),
+        FinancialCustomer.phone_number1.ilike(pattern),
+        FinancialCustomer.phone_number2.ilike(pattern),
+        FinancialCustomer.access_method.ilike(pattern),
+        FinancialCustomer.email.ilike(pattern),
+        FinancialCustomer.description.ilike(pattern),
+    ))
+    return q.order_by(FinancialCustomer.created_at.desc()).limit(limit).all()
 
 
 def validate_receipt_scope(

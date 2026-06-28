@@ -125,13 +125,42 @@ def get_draft(db: Session, *, draft_id: int, user: User) -> Draft:
     return draft
 
 
-def patch_draft(db: Session, *, draft: Draft, payload: Optional[dict]) -> Draft:
+def patch_draft(
+    db: Session,
+    *,
+    draft: Draft,
+    payload: Optional[dict] = None,
+    resolved_references: Optional[dict] = None,
+) -> Draft:
     if draft.status != DraftStatus.PENDING.value:
         raise draft_not_pending()
     if payload is not None:
         merged = dict(draft.payload or {})
         merged.update(payload)
         draft.payload = merged
+    if resolved_references:
+        # Create-callback: the frontend created the missing record (or picked an
+        # alternative) and reports the id back. Write it into the payload, flip the
+        # matching reference to resolved, and drop it from references_pending.
+        # NOTE: SQLAlchemy JSON columns only persist when REASSIGNED — always build a
+        # new dict and reassign (do not mutate draft.payload / draft.validation in place).
+        new_payload = dict(draft.payload or {})
+        validation = dict(draft.validation or {})
+        refs = list(validation.get("references") or [])
+        pending = list(validation.get("references_pending") or [])
+        for field_name, chosen in resolved_references.items():
+            if not isinstance(chosen, dict) or "id" not in chosen:
+                continue
+            new_payload[field_name] = chosen["id"]
+            for ref in refs:
+                if ref.get("field") == field_name:
+                    ref["status"] = "resolved"
+                    ref["chosen"] = {"id": chosen["id"], "label": chosen.get("label")}
+            pending = [f for f in pending if f != field_name]
+        draft.payload = new_payload
+        validation["references"] = refs
+        validation["references_pending"] = pending
+        draft.validation = validation
     db.commit()
     db.refresh(draft)
     return draft

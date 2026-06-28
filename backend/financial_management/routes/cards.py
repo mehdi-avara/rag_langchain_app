@@ -13,6 +13,7 @@ from Models import User
 
 from ..models import FinancialCard, FinancialReceipt
 from ..schemas import FinancialCardCreate, FinancialCardOut, FinancialCardSearchRequest, FinancialCardUpdate
+from ..search.service import search_card_hits
 from ..services import card_to_out, get_card_or_404, normalize_card_number
 
 
@@ -93,33 +94,17 @@ def search_cards(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("financial_management:cards:read")),
 ):
-    query = db.query(FinancialCard).filter(FinancialCard.company_id == current_user.company_id)
-
-    if payload.ids:
-        query = query.filter(FinancialCard.id.in_(list(dict.fromkeys(payload.ids))))
-
-    pattern = f"%{payload.query}%"
-    query = query.filter(
-        or_(
-            FinancialCard.title.ilike(pattern),
-            FinancialCard.card_number.ilike(pattern),
-            FinancialCard.bank_name.ilike(pattern),
-            FinancialCard.account_owner_name.ilike(pattern),
-            FinancialCard.description.ilike(pattern),
-        )
+    # Delegates to the module interface function (search/service.py) so search
+    # logic lives in one place; offset/limit windowing is applied here, unchanged.
+    rows = search_card_hits(
+        db,
+        current_user,
+        payload.query,
+        ids=payload.ids or None,
+        is_active=payload.is_active,
+        limit=payload.offset + payload.limit,
     )
-
-    if payload.is_active is not None:
-        query = query.filter(FinancialCard.is_active == payload.is_active)
-
-    cards = (
-        query
-        .order_by(FinancialCard.created_at.desc())
-        .offset(payload.offset)
-        .limit(payload.limit)
-        .all()
-    )
-
+    cards = rows[payload.offset:]
     return [card_to_out(card) for card in cards]
 
 

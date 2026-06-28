@@ -63,7 +63,12 @@ def patch_draft(
     db: Session = Depends(get_db),
 ):
     draft = draft_service.get_draft(db, draft_id=draft_id, user=current_user)
-    draft = draft_service.patch_draft(db, draft=draft, payload=payload.payload)
+    draft = draft_service.patch_draft(
+        db,
+        draft=draft,
+        payload=payload.payload,
+        resolved_references=payload.resolved_references,
+    )
     return DraftOut.model_validate(draft)
 
 

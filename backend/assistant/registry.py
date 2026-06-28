@@ -37,6 +37,7 @@ class DraftData:
     validation: dict = field(default_factory=dict)
     valid: bool = True
     clarify_question: Optional[str] = None
+    references: list = field(default_factory=list)   # list of ReferenceResolution.as_dict()
 
 
 @dataclass(frozen=True)

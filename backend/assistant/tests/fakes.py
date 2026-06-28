@@ -55,13 +55,31 @@ ALL_FINANCIAL_PERMS = [
     "financial_management:receipts:ask",
     "financial_management:receipts:create",
     "financial_management:receipts:update",
+    "financial_management:cards:read",
     "financial_management:cards:create",
     "financial_management:cards:update",
+    "financial_management:customers:read",
     "financial_management:customers:create",
     "financial_management:customers:update",
     "financial_management:receipt_comments:create",
     "financial_management:receipt_files:create",
 ]
+
+
+class FakeProvider:
+    """A SearchProvider stand-in for reference-resolution tests.
+
+    Records every ``search`` call (so a test can assert the provider was NOT
+    called for an explicit id) and returns a fixed candidate list.
+    """
+
+    def __init__(self, candidates=None):
+        self.candidates = list(candidates or [])
+        self.calls = []
+
+    def search(self, *, db, user, query, ids=None, limit=10):
+        self.calls.append({"query": query, "ids": ids, "limit": limit})
+        return list(self.candidates)
 
 
 class FakeQuery:
@@ -73,6 +91,12 @@ class FakeQuery:
         return self
 
     def order_by(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    def offset(self, *args, **kwargs):
         return self
 
     def first(self):

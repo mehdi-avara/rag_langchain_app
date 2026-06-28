@@ -1,0 +1,106 @@
+"""Reference (foreign-key) resolution (FK-resolution task).
+
+Real users say *"Ali's Mellat card"*, not ``credit_card_id=12``. The LLM passes
+the **text**; the server resolves it deterministically against the module's
+search and returns the matched record's **id** (for the frontend to submit) plus
+a human-readable **label** (for the user to confirm).
+
+- :func:`resolve_reference` is **pure** — ranking only, no DB, no model. ILIKE
+  gives no scores, so it ranks by exact-name match then provider order. A future
+  scored / trigram matcher can replace its body without changing callers.
+- :func:`resolve_field` orchestrates: explicit-id short-circuit → RBAC check →
+  provider search → rank → build a create-suggestion for a ``missing`` reference.
+
+The LLM never touches the DB: all data access happens here, in deterministic
+server-side Python that calls the module's registered :class:`SearchProvider`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from Models import User
+
+from .module_interface import Candidate, get_resource
+from .rbac import has_permission
+
+RESOLVED = "resolved"
+AMBIGUOUS = "ambiguous"
+MISSING = "missing"
+
+
+@dataclass
+class ReferenceResolution:
+    field: str                                  # payload field this fills, e.g. "credit_card_id"
+    raw: str                                    # the user's text (or the explicit id as string)
+    status: str                                 # resolved | ambiguous | missing
+    chosen: Optional[Dict[str, Any]] = None     # {"id": int, "label": str | None}
+    alternatives: List[Dict[str, Any]] = field(default_factory=list)  # [{"id","label"}]
+    create_suggestion: Optional[Dict[str, Any]] = None
+    note: Optional[str] = None                  # e.g. "no_access", "explicit_id"
+
+    def as_dict(self) -> dict:
+        return {
+            "field": self.field, "raw": self.raw, "status": self.status,
+            "chosen": self.chosen, "alternatives": self.alternatives,
+            "create_suggestion": self.create_suggestion, "note": self.note,
+        }
+
+
+def _slim(c: Candidate) -> Dict[str, Any]:
+    return {"id": c.id, "label": c.label}
+
+
+def resolve_reference(field: str, raw_text: str, candidates: List[Candidate]) -> ReferenceResolution:
+    """Pure ranking. ILIKE gives no scores, so rank by exact-name match then provider order.
+    (A future scored matcher can replace this body without changing callers.)"""
+    raw = (raw_text or "").strip()
+    if not candidates:
+        return ReferenceResolution(field=field, raw=raw, status=MISSING)
+
+    norm = raw.lower()
+    exact = [c for c in candidates if (c.match_text or "").strip().lower() == norm]
+
+    if len(candidates) == 1:
+        chosen = candidates[0]
+        return ReferenceResolution(field, raw, RESOLVED, chosen=_slim(chosen))
+    if len(exact) == 1:
+        chosen = exact[0]
+        others = [c for c in candidates if c.id != chosen.id][:5]
+        return ReferenceResolution(field, raw, RESOLVED, chosen=_slim(chosen),
+                                   alternatives=[_slim(c) for c in others])
+    # ambiguous: default to first, return up to 5 alternatives
+    chosen = candidates[0]
+    alts = [c for c in candidates if c.id != chosen.id][:5]
+    return ReferenceResolution(field, raw, AMBIGUOUS, chosen=_slim(chosen),
+                               alternatives=[_slim(c) for c in alts])
+
+
+def resolve_field(db, user: User, *, field: str, resource_key: str, raw_text: str,
+                  slots: dict, explicit_id=None) -> ReferenceResolution:
+    spec = get_resource(resource_key)
+    if spec is None:
+        return ReferenceResolution(field, raw_text or "", MISSING, note="unknown_resource")
+
+    # Explicit numeric id always wins; skip search.
+    if explicit_id is not None and str(explicit_id).strip().isdigit():
+        return ReferenceResolution(field, str(explicit_id), RESOLVED,
+                                   chosen={"id": int(explicit_id), "label": None}, note="explicit_id")
+
+    if not has_permission(user, spec.read_permission):
+        return ReferenceResolution(field, raw_text or "", MISSING, note="no_access")
+
+    candidates = spec.provider.search(db=db, user=user, query=raw_text or "", limit=5)
+    res = resolve_reference(field, raw_text or "", candidates)
+
+    if res.status == MISSING and spec.create_endpoint and \
+            (spec.create_permission is None or has_permission(user, spec.create_permission)):
+        res.create_suggestion = {
+            "resource": spec.key,
+            "method": spec.create_method,
+            "endpoint": spec.create_endpoint,
+            "permission": spec.create_permission,
+            "payload": (spec.suggestion_from(raw_text or "", slots) if spec.suggestion_from else {}),
+        }
+    return res

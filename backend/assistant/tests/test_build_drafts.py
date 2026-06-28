@@ -2,8 +2,9 @@
 
 import pytest
 
-from assistant.tests.fakes import ALL_FINANCIAL_PERMS, make_user
+from assistant.tests.fakes import ALL_FINANCIAL_PERMS, FakeProvider, make_user
 
+from assistant.module_interface import ResourceSpec, get_resource, register_resource
 from core.exceptions.app_exception import AppException
 from core.exceptions.error_codes import PERMISSION_DENIED
 from financial_management.assistant_tools import FinancialAssistantToolSet
@@ -18,11 +19,23 @@ def test_add_receipt_resolves_commit_target():
         "amount": "1200000",
         "currency": "IRR",
         "direction": "output",
-        "credit_card_id": 3,
+        "credit_card_id": 3,                  # explicit id -> used directly, no search
         "receipt_date": "2026-06-01",
         "counterparty_name": "ACME",
     }
-    draft = toolset.build_draft(intent="add_receipt", db=None, user=user, slots=slots, attachments=[])
+    # counterparty_name now triggers a customer search; swap in an empty provider so
+    # the free-text name is kept (no match) without needing a real DB.
+    saved = get_resource("financial_customer")
+    register_resource(ResourceSpec(
+        key="financial_customer", read_permission=saved.read_permission,
+        provider=FakeProvider([]), create_permission=saved.create_permission,
+        create_endpoint=saved.create_endpoint, create_method=saved.create_method,
+        suggestion_from=saved.suggestion_from,
+    ))
+    try:
+        draft = toolset.build_draft(intent="add_receipt", db=None, user=user, slots=slots, attachments=[])
+    finally:
+        register_resource(saved)
 
     assert draft.valid is True
     assert draft.target_action == "create_receipt"
@@ -34,6 +47,8 @@ def test_add_receipt_resolves_commit_target():
     assert draft.payload["amount"] == "1200000"
     assert draft.payload["currency"] == "IRR"
     assert draft.payload["direction"] == "output"
+    assert draft.payload["credit_card_id"] == 3
+    assert draft.payload["counterparty_name"] == "ACME"
 
 
 def test_add_receipt_missing_fields_returns_partial_object_and_noun_missing():

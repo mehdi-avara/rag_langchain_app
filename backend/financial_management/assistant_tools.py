@@ -21,6 +21,14 @@ from Models import User
 
 from assistant.registry import DraftData, IntentSpec, ModuleToolSet, register_toolset
 from assistant.rbac import ensure_permission
+from assistant.module_interface import (
+    Candidate,
+    FunctionSearchProvider,
+    ResourceSpec,
+    get_resource,
+    register_resource,
+)
+from assistant.resolve import resolve_field
 
 from .models import FinancialAccessMethod, FinancialCurrency, FinancialDirection
 from .schemas import FinancialReceiptSemanticHit
@@ -28,7 +36,7 @@ from .services import (
     answer_receipts_question,
     summarize_receipts,
 )
-from .search.service import search_receipt_hits
+from .search.service import search_card_hits, search_customer_hits, search_receipt_hits
 
 MODULE = "financial_management"
 _API_PREFIX = "/financial_management"
@@ -39,8 +47,10 @@ P_READ = "financial_management:receipts:read"
 P_ASK = "financial_management:receipts:ask"
 P_RECEIPT_CREATE = "financial_management:receipts:create"
 P_RECEIPT_UPDATE = "financial_management:receipts:update"
+P_CARD_READ = "financial_management:cards:read"
 P_CARD_CREATE = "financial_management:cards:create"
 P_CARD_UPDATE = "financial_management:cards:update"
+P_CUSTOMER_READ = "financial_management:customers:read"
 P_CUSTOMER_CREATE = "financial_management:customers:create"
 P_CUSTOMER_UPDATE = "financial_management:customers:update"
 P_COMMENT_CREATE = "financial_management:receipt_comments:create"
@@ -85,6 +95,74 @@ def _enum_value(enum_cls, value) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Reference resolution — resolvable resources (cards, customers) (FK-resolution task)
+#
+# The LLM passes free text ("Ali's Mellat card"); the server resolves it to a
+# real record via the module interface functions and shows a human-readable label
+# while keeping the id for the frontend to submit. Only financial resources are
+# registered — the core mechanism is generic and module-agnostic.
+# ---------------------------------------------------------------------------
+
+def _card_to_candidate(card) -> Candidate:
+    last4 = (card.card_number or "")[-4:]
+    parts = [
+        p for p in [
+            card.title,
+            card.bank_name,
+            (f"••••{last4}" if last4 else None),
+            card.account_owner_name,
+        ] if p
+    ]
+    return Candidate(
+        id=card.id,
+        match_text=card.title or "",
+        label=" — ".join(parts),
+        data={
+            "id": card.id,
+            "title": card.title,
+            "bank_name": card.bank_name,
+            "account_owner_name": card.account_owner_name,
+        },
+    )
+
+
+def _customer_to_candidate(cust) -> Candidate:
+    contact = cust.phone_number1 or cust.email
+    label = f"{cust.name} — {contact}" if contact else (cust.name or "")
+    return Candidate(
+        id=cust.id,
+        match_text=cust.name or "",
+        label=label,
+        data={
+            "id": cust.id,
+            "name": cust.name,
+            "phone_number1": cust.phone_number1,
+            "email": cust.email,
+        },
+    )
+
+
+def register_financial_resources() -> None:
+    """Register the module's resolvable resources. Idempotent (keyed by resource key)."""
+    register_resource(ResourceSpec(
+        key="financial_card",
+        read_permission=P_CARD_READ,
+        provider=FunctionSearchProvider(search_card_hits, _card_to_candidate),
+        create_permission=P_CARD_CREATE,
+        create_endpoint=f"{_API_PREFIX}/cards",
+        suggestion_from=lambda raw, slots: {"title": raw},
+    ))
+    register_resource(ResourceSpec(
+        key="financial_customer",
+        read_permission=P_CUSTOMER_READ,
+        provider=FunctionSearchProvider(search_customer_hits, _customer_to_candidate),
+        create_permission=P_CUSTOMER_CREATE,
+        create_endpoint=f"{_API_PREFIX}/customers",
+        suggestion_from=lambda raw, slots: {"name": raw},
+    ))
+
+
 class FinancialAssistantToolSet(ModuleToolSet):
     module = MODULE
 
@@ -119,6 +197,27 @@ class FinancialAssistantToolSet(ModuleToolSet):
                 ),
                 kind="read",
                 permission=P_ASK,
+                module=MODULE,
+            ),
+            IntentSpec(
+                name="lookup_customer",
+                description=(
+                    "Check whether a customer/counterparty exists in the data — e.g. "
+                    "'do we have Ali Rezaei?', 'is there a customer named ACME?'. A yes/no existence "
+                    "check, not a totals question."
+                ),
+                kind="read",
+                permission=P_CUSTOMER_READ,
+                module=MODULE,
+            ),
+            IntentSpec(
+                name="lookup_card",
+                description=(
+                    "Check whether a credit/bank card exists — e.g. 'do we have a Mellat card?', "
+                    "'is Ali's card saved?'."
+                ),
+                kind="read",
+                permission=P_CARD_READ,
                 module=MODULE,
             ),
             IntentSpec(
@@ -200,7 +299,29 @@ class FinancialAssistantToolSet(ModuleToolSet):
             return self._summarize(db, user, slots)
         if intent == "ask_finance":
             return await self._ask(db, user, slots)
+        if intent == "lookup_customer":
+            return self._lookup(db, user, slots, resource_key="financial_customer",
+                                permission=P_CUSTOMER_READ, resource_type="customer")
+        if intent == "lookup_card":
+            return self._lookup(db, user, slots, resource_key="financial_card",
+                                permission=P_CARD_READ, resource_type="card")
         raise ValueError(f"Unsupported read intent: {intent}")
+
+    def _lookup(self, db, user, slots, *, resource_key, permission, resource_type) -> dict:
+        # Existence lookup: search the resource and return its hits as generic items.
+        # answer="" so the model composes the NL reply in the user's language from
+        # the retrieved items (runner._build_context renders them by label).
+        ensure_permission(user, permission)
+        query = _str(slots, "query", "name", "customer", "card", "text") or ""
+        spec = get_resource(resource_key)
+        candidates = spec.provider.search(db=db, user=user, query=query, limit=10)
+        items = [{
+            "resource_type": resource_type,
+            "citation_key": f"{resource_type}:{c.id}",
+            "title": c.label,
+            "data": c.data,
+        } for c in candidates]
+        return {"retrieved_items": items, "citations": [], "answer": "", "summary": None}
 
     def _search(self, db: Session, user: User, slots: dict) -> dict:
         ensure_permission(user, P_SEARCH)
@@ -310,10 +431,7 @@ class FinancialAssistantToolSet(ModuleToolSet):
         description = _str(slots, "description")
         amount = _decimal(slots.get("amount"))
         direction = _enum_value(FinancialDirection, slots.get("direction"))
-        credit_card_id = slots.get("credit_card_id")
         receipt_date = _str(slots, "receipt_date", "date")
-        counterparty_name = _str(slots, "counterparty_name", "counterparty")
-        customer_id = slots.get("customer_id")
         currency = _enum_value(FinancialCurrency, slots.get("currency")) or FinancialCurrency.TOMAN.value
 
         # Assemble whatever is known so far (the partial object).
@@ -324,21 +442,42 @@ class FinancialAssistantToolSet(ModuleToolSet):
             payload["amount"] = str(amount)
         if direction:
             payload["direction"] = direction
-        if credit_card_id:
-            payload["credit_card_id"] = credit_card_id
         if receipt_date:
             payload["receipt_date"] = receipt_date
-        if counterparty_name:
-            payload["counterparty_name"] = counterparty_name
-        if customer_id:
-            payload["customer_id"] = customer_id
         if _str(slots, "tracking_number"):
             payload["tracking_number"] = _str(slots, "tracking_number")
         rate = _decimal(slots.get("exchange_rate_to_base"))
         if rate is not None:
             payload["exchange_rate_to_base"] = str(rate)
 
+        # --- reference resolution: card + customer/counterparty (FK-resolution task) ---
+        references = []
+
+        # credit card (required FK): explicit id wins, else resolve the text query.
+        explicit_card = slots.get("credit_card_id")
+        card_query = _str(slots, "credit_card_query", "card_query", "credit_card", "card")
+        if explicit_card or card_query:
+            r = resolve_field(db, user, field="credit_card_id", resource_key="financial_card",
+                              raw_text=card_query or "", slots=slots, explicit_id=explicit_card)
+            references.append(r)
+            if r.status == "resolved":
+                payload["credit_card_id"] = r.chosen["id"]
+
+        # customer / counterparty: counterparty stays free text; link customer_id when matched.
+        explicit_customer = slots.get("customer_id")
+        cust_query = _str(slots, "customer_query", "customer", "counterparty_name", "counterparty")
+        if explicit_customer or cust_query:
+            r = resolve_field(db, user, field="customer_id", resource_key="financial_customer",
+                              raw_text=cust_query or "", slots=slots, explicit_id=explicit_customer)
+            references.append(r)
+            if r.status == "resolved":
+                payload["customer_id"] = r.chosen["id"]
+            if cust_query and "customer_id" not in payload:
+                payload["counterparty_name"] = cust_query   # keep typed name as fallback
+
         # Missing required fields, named as nouns (PROMPT: localize labels later).
+        # FK fields that the user supplied but that did NOT resolve are handled via
+        # references / references_pending, NOT the scalar missing list.
         missing: list = []
         if not description:
             missing.append("description")
@@ -346,22 +485,34 @@ class FinancialAssistantToolSet(ModuleToolSet):
             missing.append("amount")
         if not direction:
             missing.append("direction")
-        if not credit_card_id:
-            missing.append("credit card")
         if not receipt_date:
             missing.append("receipt date")
-        if not counterparty_name and not customer_id:
+        if not payload.get("credit_card_id") and not (explicit_card or card_query):
+            missing.append("credit card")
+        if not payload.get("customer_id") and not payload.get("counterparty_name"):
             missing.append("counterparty")
 
+        references_dicts = [r.as_dict() for r in references]
+        references_pending = [r.field for r in references if r.status in ("ambiguous", "missing")]
+
         if missing:
-            return self._invalid(
-                "create_receipt",
-                missing,
-                {},
-                "I still need: " + ", ".join(missing) + ".",
-                partial_payload=payload,
+            validation = {"valid": False, "missing": missing, "errors": {}}
+            if references_dicts:
+                validation["references"] = references_dicts
+                validation["references_pending"] = references_pending
+            return DraftData(
+                target_module=MODULE,
+                target_action="create_receipt",
+                payload=payload,
+                commit_target={},
+                validation=validation,
+                valid=False,
+                clarify_question="I still need: " + ", ".join(missing) + ".",
+                references=references_dicts,
             )
 
+        # Valid: the draft is persisted/streamed even with pending references — the
+        # frontend settles every pending reference before it commits (Step 7).
         return DraftData(
             target_module=MODULE,
             target_action="create_receipt",
@@ -372,7 +523,12 @@ class FinancialAssistantToolSet(ModuleToolSet):
                 "permission": P_RECEIPT_CREATE,
             },
             attachments=list(attachments),
-            validation={"valid": True},
+            validation={
+                "valid": True,
+                "references": references_dicts,
+                "references_pending": references_pending,
+            },
+            references=references_dicts,
         )
 
     def _build_update_receipt(self, db, user, slots, attachments) -> DraftData:
@@ -395,19 +551,41 @@ class FinancialAssistantToolSet(ModuleToolSet):
         direction = _enum_value(FinancialDirection, slots.get("direction"))
         if direction:
             payload["direction"] = direction
-        for key in ("tracking_number", "counterparty_name", "receipt_date"):
+        for key in ("tracking_number", "receipt_date"):
             value = _str(slots, key)
             if value:
                 payload[key] = value
-        if slots.get("credit_card_id"):
-            payload["credit_card_id"] = slots["credit_card_id"]
-        if "customer_id" in slots:
-            payload["customer_id"] = slots["customer_id"]
         rate = _decimal(slots.get("exchange_rate_to_base"))
         if rate is not None:
             payload["exchange_rate_to_base"] = str(rate)
 
-        if not payload:
+        # --- reference resolution: card + customer/counterparty (FK-resolution task) ---
+        references = []
+
+        explicit_card = slots.get("credit_card_id")
+        card_query = _str(slots, "credit_card_query", "card_query", "credit_card", "card")
+        if explicit_card or card_query:
+            r = resolve_field(db, user, field="credit_card_id", resource_key="financial_card",
+                              raw_text=card_query or "", slots=slots, explicit_id=explicit_card)
+            references.append(r)
+            if r.status == "resolved":
+                payload["credit_card_id"] = r.chosen["id"]
+
+        explicit_customer = slots.get("customer_id")
+        cust_query = _str(slots, "customer_query", "customer", "counterparty_name", "counterparty")
+        if explicit_customer or cust_query:
+            r = resolve_field(db, user, field="customer_id", resource_key="financial_customer",
+                              raw_text=cust_query or "", slots=slots, explicit_id=explicit_customer)
+            references.append(r)
+            if r.status == "resolved":
+                payload["customer_id"] = r.chosen["id"]
+            if cust_query and "customer_id" not in payload:
+                payload["counterparty_name"] = cust_query
+
+        references_dicts = [r.as_dict() for r in references]
+        references_pending = [r.field for r in references if r.status in ("ambiguous", "missing")]
+
+        if not payload and not references_dicts:
             return self._invalid(
                 "update_receipt", [], {"fields": "no updatable fields provided"},
                 "What should I change on this receipt?",
@@ -424,7 +602,12 @@ class FinancialAssistantToolSet(ModuleToolSet):
                 "entity_id": receipt_id,
             },
             attachments=list(attachments),
-            validation={"valid": True},
+            validation={
+                "valid": True,
+                "references": references_dicts,
+                "references_pending": references_pending,
+            },
+            references=references_dicts,
         )
 
     def _build_create_card(self, db, user, slots, attachments) -> DraftData:
@@ -611,6 +794,7 @@ class FinancialAssistantToolSet(ModuleToolSet):
 def register() -> FinancialAssistantToolSet:
     toolset = FinancialAssistantToolSet()
     register_toolset(toolset)
+    register_financial_resources()
     return toolset
 
 

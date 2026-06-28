@@ -57,6 +57,10 @@ def _system_prompt(intents: List[IntentSpec], has_attachments: bool, has_images:
         "- Extract any useful slots: amounts, dates, names, ids, currency, direction, mode, query text "
         "(from BOTH the text and any attached image).\n"
         "- For a write intent, if required fields are still missing, choose 'clarify' instead of guessing.\n"
+        "- NEVER invent or guess numeric database IDs. If the user refers to a card, customer, or "
+        "counterparty by name/nickname/description, put that TEXT into slots: credit_card_query, "
+        "customer_query (and/or counterparty for a receipt's counterparty). Only put an id in "
+        "credit_card_id / customer_id if the user literally gave a number.\n"
         "- Respond ONLY with JSON of the form:\n"
         '{"intent": "<one of: ' + names + '>", "language": "<bcp47>", '
         '"slots": { ... }, "clarify_question": "<question in the user\'s language or null>"}'

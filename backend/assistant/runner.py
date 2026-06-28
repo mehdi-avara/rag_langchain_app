@@ -54,14 +54,20 @@ def _build_context(state: AgentState) -> str:
         parts.append("Summary/KPIs:\n" + json.dumps(summary, default=str))
     items = state.get("retrieved_items") or []
     if items:
-        lines = ["Receipts found:"]
+        # Render receipts in detail; render generic lookup items (customers, cards
+        # from lookup_* intents) by their human-readable label so the model can
+        # answer "do we have X?".
+        lines = ["Records found:"]
         for item in items[:10]:
             data = item.get("data", {})
-            lines.append(
-                f"[{item.get('citation_key')}] amount={data.get('amount')} "
-                f"direction={data.get('direction')} counterparty={data.get('counterparty_name')} "
-                f"description={data.get('description')}"
-            )
+            if data.get("amount") is not None or item.get("resource_type") in (None, "receipt"):
+                lines.append(
+                    f"[{item.get('citation_key')}] amount={data.get('amount')} "
+                    f"direction={data.get('direction')} counterparty={data.get('counterparty_name')} "
+                    f"description={data.get('description')}"
+                )
+            else:
+                lines.append(f"[{item.get('citation_key')}] {item.get('title')}")
         parts.append("\n".join(lines))
     draft = state.get("pending_draft")
     if draft:
