@@ -202,7 +202,7 @@ def create_storage_location_endpoint(
     )
 
 
-@router.get("/locations/list", response_model=list[StorageLocationRead])
+@router.get("/locations", response_model=list[StorageLocationRead])
 def list_storage_locations_endpoint(
     warehouse_id: Optional[int] = Query(None, gt=0),
     zone_id: Optional[int] = Query(None, gt=0),
@@ -241,7 +241,7 @@ def update_storage_location_endpoint(
     )
 
 
-@router.get("/stock/list", response_model=list[StockItemRead])
+@router.get("/stock", response_model=list[StockItemRead])
 def list_stock_items_endpoint(
     item_id: Optional[int] = Query(None, gt=0),
     warehouse_id: Optional[int] = Query(None, gt=0),
@@ -314,7 +314,7 @@ def create_stock_movement_endpoint(
     )
 
 
-@router.get("/movements/list", response_model=list[StockMovementRead])
+@router.get("/movements", response_model=list[StockMovementRead])
 def list_stock_movements_endpoint(
     item_id: Optional[int] = Query(None, gt=0),
     warehouse_id: Optional[int] = Query(None, gt=0),
