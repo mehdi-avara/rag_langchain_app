@@ -9,6 +9,7 @@ canonical engine/sessionmaker.
 from passlib.hash import bcrypt
 
 from db.session import SessionLocal, get_db  # re-exported for existing imports
+from db.provision_company_defaults import provision_company_defaults
 from Models import Company, User
 from Models.rbac import Role
 from settings import get_settings
@@ -85,6 +86,9 @@ def seed_default_user() -> None:
         )
         if admin_role is not None and admin_role not in user.roles:
             user.roles.append(admin_role)
+
+        db.flush()  # ensure user.id is assigned before provisioning
+        provision_company_defaults(db, company, created_by_user_id=user.id)
 
         db.commit()
     finally:

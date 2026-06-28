@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from Models import User, Company, Role
 from core.exceptions.error_codes import AUTH_REQUIRED, INVALID_TOKEN, USER_NOT_FOUND
 from db.init_db import get_db
+from db.provision_company_defaults import provision_company_defaults
 from deps import require_permission
 from schemas.auth import (
     LoginRequest,
@@ -158,6 +159,10 @@ async def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         user.roles.append(admin_role)
 
     db.add(user)
+    db.flush()  # assign user.id so it can own the seeded default records
+
+    provision_company_defaults(db, company, created_by_user_id=user.id)
+
     db.commit()
     db.refresh(user)
 
