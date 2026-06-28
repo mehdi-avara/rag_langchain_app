@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG System — Implementation Guide & Test Harness</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #222636;
+      --border: #2e3347;
+      --accent: #5b8dee;
+      --accent2: #7c5bd4;
+      --green: #3ecf8e;
+      --orange: #f59e0b;
+      --red: #ef4444;
+      --text: #e2e8f0;
+      --muted: #8892a4;
+      --code-bg: #12151f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    h1 { font-size: 1.7rem; font-weight: 700; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin-bottom: 0.6rem; color: var(--accent); }
+    h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text); }
+
+    /* Layout */
+    .page { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1.2rem 4rem; }
+    header {
+      background: linear-gradient(135deg, #1a2040 0%, #1d1a35 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 1.4rem 1.2rem;
+      margin-bottom: 2rem;
+    }
+    header .subtitle { color: var(--muted); margin-top: 0.3rem; }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.2rem 1.4rem;
+      margin-bottom: 1.4rem;
+    }
+    .card.accent-left { border-left: 3px solid var(--accent); }
+    .card.green-left  { border-left: 3px solid var(--green); }
+    .card.orange-left { border-left: 3px solid var(--orange); }
+
+    /* Pipeline flow diagram */
+    .pipeline {
+      display: flex;
+      align-items: stretch;
+      flex-wrap: wrap;
+      gap: 0;
+      margin: 1rem 0;
+    }
+    .pipe-step {
+      flex: 1;
+      min-width: 130px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.8rem 0.9rem;
+      position: relative;
+    }
+    .pipe-step + .pipe-step { margin-left: 0.5rem; }
+    .pipe-step::after {
+      content: '→';
+      position: absolute;
+      right: -1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--accent);
+      font-size: 1.1rem;
+      z-index: 2;
+    }
+    .pipe-step:last-child::after { display: none; }
+    .pipe-step .step-num {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 99px;
+      margin-bottom: 0.4rem;
+    }
+    .pipe-step .step-title { font-weight: 600; font-size: 0.82rem; }
+    .pipe-step .step-detail { color: var(--muted); font-size: 0.73rem; margin-top: 0.25rem; }
+
+    /* Code blocks */
+    pre, code {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 0.8rem 1rem;
+      overflow-x: auto;
+      font-size: 0.78rem;
+      color: #c9d1e0;
+      margin: 0.5rem 0;
+    }
+    code { font-size: 0.82rem; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge.post  { background: #1d4024; color: var(--green); }
+    .badge.get   { background: #1a2f4a; color: var(--accent); }
+    .badge.patch { background: #3a2800; color: var(--orange); }
+
+    /* Test harness */
+    .test-section { margin-top: 2rem; }
+    .test-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 1.2rem;
+      overflow: hidden;
+    }
+    .test-header {
+      background: var(--surface2);
+      padding: 0.7rem 1.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .test-header:hover { background: #262a3a; }
+    .test-header .step-badge {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    .test-header .test-title { font-weight: 600; font-size: 0.9rem; flex: 1; }
+    .test-header .chevron { color: var(--muted); transition: transform 0.2s; }
+    .test-header.open .chevron { transform: rotate(90deg); }
+    .test-body { padding: 1.2rem; display: none; }
+    .test-body.open { display: block; }
+
+    label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 0.25rem; margin-top: 0.7rem; }
+    input, select, textarea {
+      width: 100%;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.82rem;
+      padding: 0.45rem 0.7rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 80px; }
+    select option { background: var(--surface); }
+
+    .btn {
+      display: inline-block;
+      margin-top: 0.9rem;
+      padding: 0.5rem 1.2rem;
+      border-radius: 7px;
+      border: none;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:hover { opacity: 0.88; }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-green   { background: var(--green);  color: #0f1f14; }
+    .btn-orange  { background: var(--orange); color: #1f1200; }
+
+    .response-box {
+      margin-top: 1rem;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 0.8rem 1rem;
+      font-size: 0.75rem;
+      color: #a5b4c8;
+      min-height: 40px;
+      max-height: 350px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      display: none;
+    }
+    .response-box.visible { display: block; }
+    .response-box.ok  { border-color: var(--green); }
+    .response-box.err { border-color: var(--red); color: #fca5a5; }
+
+    .info-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    .info-pill {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.3rem 0.7rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .info-pill strong { color: var(--text); }
+
+    /* Doc recommendations */
+    .doc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.9rem;
+      margin-top: 0.9rem;
+    }
+    .doc-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+    }
+    .doc-card .doc-icon { font-size: 1.4rem; margin-bottom: 0.4rem; }
+    .doc-card .doc-name { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.3rem; }
+    .doc-card .doc-desc { color: var(--muted); font-size: 0.75rem; }
+    .doc-card .doc-pages {
+      margin-top: 0.5rem;
+      font-size: 0.72rem;
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    /* Tabs for search modes */
+    .tabs { display: flex; gap: 0.4rem; margin-bottom: 0.8rem; }
+    .tab {
+      padding: 0.35rem 0.85rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tab:hover { background: #262a3a; }
+    .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Notice box */
+    .notice {
+      background: #1a2640;
+      border: 1px solid #2a3f60;
+      border-radius: 7px;
+      padding: 0.7rem 1rem;
+      font-size: 0.8rem;
+      color: #93b8e0;
+      margin: 0.6rem 0;
+    }
+    .notice strong { color: var(--accent); }
+
+    /* Status indicator */
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+    .dot-green  { background: var(--green); }
+    .dot-orange { background: var(--orange); }
+    .dot-red    { background: var(--red); }
+    .dot-grey   { background: var(--muted); }
+
+    hr { border: none; border-top: 1px solid var(--border); margin: 1.6rem 0; }
+
+    /* Global config bar */
+    .config-bar {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.9rem 1.2rem;
+      margin-bottom: 1.6rem;
+      display: flex;
+      gap: 0.8rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .config-bar .cfg-field { flex: 1; min-width: 180px; }
+    .config-bar label { margin-top: 0; }
+
+    @media (max-width: 700px) {
+      .pipeline { flex-direction: column; }
+      .pipe-step + .pipe-step { margin-left: 0; margin-top: 0.5rem; }
+      .pipe-step::after { content: '↓'; right: auto; left: 50%; bottom: -1rem; top: auto; transform: translateX(-50%); }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="max-width:1100px; margin:0 auto; padding:0 1.2rem;">
+    <h1>RAG System — Implementation Guide &amp; Test Harness</h1>
+    <p class="subtitle">Porsa Search · FastAPI + pgvector + LangChain + MinerU · Interactive testing UI</p>
+  </div>
+</header>
+
+<div class="page">
+
+  <!-- ============================================================ -->
+  <!-- 1. ARCHITECTURE OVERVIEW                                     -->
+  <!-- ============================================================ -->
+  <div class="card accent-left">
+    <h2>How the RAG Pipeline Works</h2>
+    <p style="color:var(--muted); font-size:0.82rem; margin-bottom:1rem;">
+      The system has two phases: <strong>ingestion</strong> (offline, Celery-driven) and
+      <strong>retrieval + generation</strong> (online, per request).
+    </p>
+
+    <h3 style="margin-bottom:0.6rem;">Phase 1 — Document Ingestion</h3>
+    <div class="pipeline">
+      <div class="pipe-step">
+        <span class="step-num">1</span>
+        <div class="step-title">PDF Upload</div>
+        <div class="step-detail">POST /documents/upload-url<br>→ complete-upload<br>S3 / local store</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">2</span>
+        <div class="step-title">MinerU Parse</div>
+        <div class="step-detail">Celery task<br>Extracts text + figures<br>→ <em>_middle.json</em></div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">3</span>
+        <div class="step-title">Chunking</div>
+        <div class="step-detail">Token-based (LangChain)<br>800 tok / 150 overlap<br>page-aware</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">4</span>
+        <div class="step-title">Embedding</div>
+        <div class="step-detail">Jina embeddings<br>via EmbeddingConfig<br>stored in pgvector</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">5</span>
+        <div class="step-title">DB Write</div>
+        <div class="step-detail">Chunk rows + vectors<br>in PostgreSQL<br>status → DONE</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:1.2rem; margin-bottom:0.6rem;">Phase 2 — Query &amp; Answer</h3>
+    <div class="pipeline">
+      <div class="pipe-step">
+        <span class="step-num">1</span>
+        <div class="step-title">User Query</div>
+        <div class="step-detail">POST /documents/ask<br>or POST /chat<br>optional rewrite</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">2</span>
+        <div class="step-title">Embed Query</div>
+        <div class="step-detail">Same Jina model<br>→ query vector<br>for cosine search</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">3</span>
+        <div class="step-title">Vector Search</div>
+        <div class="step-detail">pgvector cosine<br>top-K chunks<br>RBAC-filtered</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">4</span>
+        <div class="step-title">Context Build</div>
+        <div class="step-detail">[chunk:id] citations<br>injected into prompt<br>system + user msg</div>
+      </div>
+      <div class="pipe-step">
+        <span class="step-num">5</span>
+        <div class="step-title">LLM Answer</div>
+        <div class="step-detail">gemma3:27b / OpenAI<br>grounded in refs only<br>→ cited answer</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key API Endpoints -->
+  <div class="card">
+    <h2>Key API Endpoints</h2>
+    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border); text-align:left;">
+          <th style="padding:0.4rem 0.6rem; color:var(--muted);">Method</th>
+          <th style="padding:0.4rem 0.6rem; color:var(--muted);">Path</th>
+          <th style="padding:0.4rem 0.6rem; color:var(--muted);">Purpose</th>
+          <th style="padding:0.4rem 0.6rem; color:var(--muted);">Permission</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/auth/token</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Get JWT token (form body)</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">—</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge get">GET</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">List accessible documents</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:read</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents/upload-url</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Get pre-signed S3 upload URL</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:create</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents/complete-upload/{asset_id}</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Trigger MinerU Celery task</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:create</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents/import-processed-zip</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Upload pre-processed MinerU zip (fastest)</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:create</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents/search</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Keyword / semantic / hybrid search</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:search</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents/ask</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">RAG Q&amp;A over your docs</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:ask</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1e2130;">
+          <td style="padding:0.45rem 0.6rem;"><span class="badge post">POST</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/chat</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Stateful agent chat (history)</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">chat:use</td>
+        </tr>
+        <tr>
+          <td style="padding:0.45rem 0.6rem;"><span class="badge get">GET</span></td>
+          <td style="padding:0.45rem 0.6rem;"><code>/documents/{doc_id}/chunks</code></td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">Browse parsed chunks by page</td>
+          <td style="padding:0.45rem 0.6rem; color:var(--muted);">documents:read</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 2. DOCUMENT RECOMMENDATIONS                                  -->
+  <!-- ============================================================ -->
+  <div class="card green-left">
+    <h2>Ideal Document Types &amp; Page Counts</h2>
+    <p style="color:var(--muted); font-size:0.82rem; margin-bottom:0.8rem;">
+      The chunker uses MinerU (PDF parser) + token-based splitting (800 tok / 150 overlap).
+      Documents that work <em>best</em> have dense, structured text — not scanned images.
+    </p>
+
+    <div class="doc-grid">
+      <div class="doc-card">
+        <div class="doc-icon">🔧</div>
+        <div class="doc-name">Equipment Manuals</div>
+        <div class="doc-desc">Maintenance procedures, specifications, troubleshooting trees. Rich technical vocabulary = strong semantic recall.</div>
+        <div class="doc-pages">10 – 80 pages</div>
+      </div>
+      <div class="doc-card">
+        <div class="doc-icon">📋</div>
+        <div class="doc-name">Inspection / SOP Reports</div>
+        <div class="doc-desc">Structured sections, numbered steps. Both keyword and vector search perform well on these.</div>
+        <div class="doc-pages">5 – 30 pages</div>
+      </div>
+      <div class="doc-card">
+        <div class="doc-icon">⚙️</div>
+        <div class="doc-name">P&amp;ID / Technical Specs</div>
+        <div class="doc-desc">Valve specs, pump curves, instrument lists. Dense term tables are ideal for exact keyword matching.</div>
+        <div class="doc-pages">3 – 20 pages</div>
+      </div>
+      <div class="doc-card">
+        <div class="doc-icon">📜</div>
+        <div class="doc-name">Safety &amp; HSE Procedures</div>
+        <div class="doc-desc">Numbered regulations, permits, HAZOP findings. Q&amp;A retrieval shines on "what is the procedure for X".</div>
+        <div class="doc-pages">10 – 50 pages</div>
+      </div>
+      <div class="doc-card">
+        <div class="doc-icon">📊</div>
+        <div class="doc-name">Financial / Procurement Docs</div>
+        <div class="doc-desc">Purchase orders, invoices. The system has a dedicated financial module with receipt embeddings.</div>
+        <div class="doc-pages">1 – 10 pages</div>
+      </div>
+      <div class="doc-card">
+        <div class="doc-icon">📄</div>
+        <div class="doc-name">Simple Test (quick start)</div>
+        <div class="doc-desc">Any text-rich PDF you have locally. Use a Wikipedia article exported as PDF for a no-effort demo.</div>
+        <div class="doc-pages">2 – 5 pages</div>
+      </div>
+    </div>
+
+    <div style="margin-top:1rem; background:var(--surface2); border-radius:8px; padding:0.9rem 1.1rem;">
+      <h3>Sweet-spot parameters for this system</h3>
+      <div class="info-row" style="margin-top:0.5rem;">
+        <div class="info-pill"><strong>Pages:</strong> 5 – 50 (ideal)</div>
+        <div class="info-pill"><strong>Format:</strong> text-based PDF (not scanned)</div>
+        <div class="info-pill"><strong>Language:</strong> any (Jina is multilingual)</div>
+        <div class="info-pill"><strong>Chunk size:</strong> 800 tokens · 150 overlap</div>
+        <div class="info-pill"><strong>Max chunks:</strong> ~250 per 50-page doc</div>
+      </div>
+      <p style="margin-top:0.7rem; color:var(--muted); font-size:0.78rem;">
+        <strong style="color:var(--red);">Avoid:</strong> scanned-image PDFs (MinerU won't extract text),
+        purely graphical content, or files larger than ~200 pages without splitting first.
+      </p>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 3. INTERACTIVE TEST HARNESS                                  -->
+  <!-- ============================================================ -->
+  <div class="test-section">
+    <h2 style="margin-bottom:1rem;">Interactive Test Harness</h2>
+
+    <!-- Global config -->
+    <div class="config-bar">
+      <div class="cfg-field">
+        <label>API Base URL</label>
+        <input type="text" id="cfg-base-url" value="http://localhost:8000" placeholder="http://localhost:8000" />
+      </div>
+      <div class="cfg-field">
+        <label>Bearer Token (auto-filled on login)</label>
+        <input type="text" id="cfg-token" placeholder="Paste token or use Step 1 Login" />
+      </div>
+      <div>
+        <button class="btn btn-primary" onclick="checkHealth()">Ping API</button>
+      </div>
+    </div>
+    <div id="health-resp" class="response-box"></div>
+
+    <div class="notice">
+      <strong>CORS note:</strong> All fetch calls go from your browser directly to the API.
+      Make sure the backend has <code>http://localhost:PORT</code> (this file's origin) in
+      <code>cors_allow_origins</code> in <code>settings.py</code>, or open this file via the
+      same origin as the API, or use the Swagger UI at <code>/docs</code> for token-gated calls.
+    </div>
+
+    <!-- ── STEP 1: Login ── -->
+    <div class="test-block">
+      <div class="test-header" onclick="toggleBlock(this)">
+        <span class="step-badge">Step 1</span>
+        <span class="badge post">POST</span>
+        <span class="test-title">/auth/token — Login &amp; get JWT</span>
+        <span class="chevron">▶</span>
+      </div>
+      <div class="test-body">
+        <p style="color:var(--muted); font-size:0.8rem;">
+          Sends <code>application/x-www-form-urlencoded</code> with <code>username</code> and
+          <code>password</code>. The returned <code>access_token</code> is automatically stored.
+        </p>
+        <label>Username</label>
+        <input type="text" id="login-user" placeholder="admin (default)" />
+        <label>Password</label>
+        <input type="password" id="login-pass" placeholder="••••••••" />
+        <button class="btn btn-primary" onclick="doLogin()">Login</button>
+        <div id="login-resp" class="response-box"></div>
+      </div>
+    </div>
+
+    <!-- ── STEP 2: List Documents ── -->
+    <div class="test-block">
+      <div class="test-header" onclick="toggleBlock(this)">
+        <span class="step-badge">Step 2</span>
+        <span class="badge get">GET</span>
+        <span class="test-title">/documents — List your documents</span>
+        <span class="chevron">▶</span>
+      </div>
+      <div class="test-body">
+        <p style="color:var(--muted); font-size:0.8rem;">
+          Returns all documents accessible to the current user. Note the <code>id</code> and
+          <code>status</code> fields — only <code>done</code> docs have chunks ready for search.
+        </p>
+        <button class="btn btn-primary" onclick="listDocs()">List Documents</button>
+        <div id="list-resp" class="response-box"></div>
+      </div>
+    </div>
+
+    <!-- ── STEP 3: Search ── -->
+    <div class="test-block">
+      <div class="test-header" onclick="toggleBlock(this)">
+        <span class="step-badge">Step 3</span>
+        <span class="badge post">POST</span>
+        <span class="test-title">/documents/search — Keyword / Semantic / Hybrid</span>
+        <span class="chevron">▶</span>
+      </div>
+      <div class="test-body">
+        <p style="color:var(--muted); font-size:0.8rem;">
+          Choose a search mode. <strong>keyword</strong> matches text via PostgreSQL full-text.
+          <strong>semantic</strong> embeds the query and finds cosine-nearest chunks.
+          <strong>hybrid</strong> does both.
+        </p>
+
+        <div class="tabs" id="search-tabs">
+          <div class="tab active" onclick="setTab('search-tabs', this, 'semantic')">Semantic</div>
+          <div class="tab" onclick="setTab('search-tabs', this, 'keyword')">Keyword</div>
+          <div class="tab" onclick="setTab('search-tabs', this, 'hybrid')">Hybrid</div>
+        </div>
+        <input type="hidden" id="search-mode" value="semantic" />
+
+        <label>Query</label>
+        <input type="text" id="search-query" placeholder="e.g. oil pump maintenance procedure" />
+
+        <label>Document IDs to restrict (comma-separated, leave empty for all)</label>
+        <input type="text" id="search-ids" placeholder="e.g. 1,2,5" />
+
+        <label>Limit (max results)</label>
+        <input type="number" id="search-limit" value="10" min="1" max="200" />
+
+        <button class="btn btn-primary" onclick="doSearch()">Search</button>
+        <div id="search-resp" class="response-box"></div>
+      </div>
+    </div>
+
+    <!-- ── STEP 4: Ask ── -->
+    <div class="test-block">
+      <div class="test-header" onclick="toggleBlock(this)">
+        <span class="step-badge">Step 4</span>
+        <span class="badge post">POST</span>
+        <span class="test-title">/documents/ask — RAG Q&amp;A (single-shot)</span>
+        <span class="chevron">▶</span>
+      </div>
+      <div class="test-body">
+        <p style="color:var(--muted); font-size:0.8rem;">
+          Retrieves the top-6 chunks semantically relevant to the question, builds a grounded
+          prompt, and returns an LLM answer with <code>[chunk:N]</code> citations.
+        </p>
+        <label>Question</label>
+        <textarea id="ask-question" placeholder="What is the maintenance schedule for the oil pump?"></textarea>
+
+        <label>Scope</label>
+        <select id="ask-scope">
+          <option value="docs">docs — search only document chunks</option>
+          <option value="comments">comments — search only comments</option>
+          <option value="both" selected>both — chunks + comments</option>
+        </select>
+
+        <label>Document IDs to restrict (comma-separated, leave empty for all)</label>
+        <input type="text" id="ask-ids" placeholder="e.g. 3" />
+
+        <button class="btn btn-green" onclick="doAsk()">Ask</button>
+        <div id="ask-resp" class="response-box"></div>
+      </div>
+    </div>
+
+    <!-- ── STEP 5: Chat ── -->
+    <div class="test-block">
+      <div class="test-header" onclick="toggleBlock(this)">
+        <span class="step-badge">Step 5</span>
+        <span class="badge post">POST</span>
+        <span class="test-title">/chat — Stateful agent chat (multi-turn)</span>
+        <span class="chevron">▶</span>
+      </div>
+      <div class="test-body">
+        <p style="color:var(--muted); font-size:0.8rem;">
+          Like /ask but maintains conversation history and supports multi-source retrieval
+          (docs + comments + financial receipts). Leave Chat ID blank for a new conversation.
+        </p>
+
+        <label>Chat ID (blank = new chat)</label>
+        <input type="number" id="chat-id" placeholder="Leave blank to start a new chat" />
+
+        <label>Message</label>
+        <textarea id="chat-msg" placeholder="Tell me about the pump specifications"></textarea>
+
+        <label>Rewrite query with LLM before searching?</label>
+        <select id="chat-rewrite">
+          <option value="false" selected>No (faster)</option>
+          <option value="true">Yes (improves recall)</option>
+        </select>
+
+        <button class="btn btn-orange" onclick="doChat()">Send</button>
+        <div id="chat-resp" class="response-box"></div>
+      </div>
+    </div>
+
+    <!-- ── STEP 6: Browse Chunks ── -->
+    <div class="test-block">
+      <div class="test-header" onclick="toggleBlock(this)">
+        <span class="step-badge">Extra</span>
+        <span class="badge get">GET</span>
+        <span class="test-title">/documents/{doc_id}/chunks — Browse parsed chunks</span>
+        <span class="chevron">▶</span>
+      </div>
+      <div class="test-body">
+        <p style="color:var(--muted); font-size:0.8rem;">
+          Inspect exactly what the system extracted and stored for a specific page range.
+          Useful for verifying ingestion quality.
+        </p>
+        <label>Document ID</label>
+        <input type="number" id="chunks-doc-id" placeholder="1" />
+        <label>Start Page (1-indexed)</label>
+        <input type="number" id="chunks-start" value="1" min="1" />
+        <label>End Page</label>
+        <input type="number" id="chunks-end" value="1" min="1" />
+        <button class="btn btn-primary" onclick="browseChunks()">Browse Chunks</button>
+        <div id="chunks-resp" class="response-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- ============================================================ -->
+  <!-- 4. TESTING TIPS                                              -->
+  <!-- ============================================================ -->
+  <div class="card orange-left">
+    <h2>Testing Checklist &amp; Tips</h2>
+    <ol style="color:var(--muted); font-size:0.82rem; padding-left:1.2rem; line-height:2;">
+      <li>Start Docker Compose: <code>docker compose up</code>. Backend on <code>:8000</code>, Celery worker for PDF processing.</li>
+      <li>Login (Step 1). Default credentials are in your <code>.env</code> (<code>default_username</code> / <code>default_password</code>).</li>
+      <li>Upload a text-based PDF via Swagger <code>/docs</code> or use <code>/documents/import-processed-zip</code> with a pre-processed zip for instant ingestion.</li>
+      <li>List documents (Step 2) — wait until <code>"status": "done"</code> before searching.</li>
+      <li>Run a <strong>semantic search</strong> (Step 3) with a conceptual question first to confirm embeddings exist.</li>
+      <li>Run <strong>Ask</strong> (Step 4) and check the <code>citations</code> array — if empty, no relevant chunks were found.</li>
+      <li>Use <strong>Browse Chunks</strong> (Extra) to verify what text was extracted from each page.</li>
+      <li>If chunks exist but Ask returns no citations: check the LLM is reachable (<code>llm_model</code> setting) and the Jina API key is valid.</li>
+    </ol>
+
+    <div style="margin-top:0.9rem;">
+      <h3>Quick curl reference</h3>
+      <pre># 1. Login
+curl -s -X POST http://localhost:8000/auth/token \
+  -d "username=admin&password=yourpass" | jq .access_token
+
+# 2. Search
+curl -s -X POST http://localhost:8000/documents/search \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"pump seal replacement","mode":"semantic","limit":5}' | jq .
+
+# 3. Ask
+curl -s -X POST http://localhost:8000/documents/ask \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What causes pump cavitation?","scope":"both"}' | jq .answer</pre>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<script>
+  // ── Utilities ──────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+
+  function baseUrl()  { return ($('cfg-base-url').value || 'http://localhost:8000').replace(/\/$/, ''); }
+  function getToken() { return $('cfg-token').value.trim(); }
+
+  function authHeaders(extra = {}) {
+    const tok = getToken();
+    const h = { ...extra };
+    if (tok) h['Authorization'] = 'Bearer ' + tok;
+    return h;
+  }
+
+  function showResp(elId, data, isOk) {
+    const el = $(elId);
+    el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    el.className = 'response-box visible ' + (isOk ? 'ok' : 'err');
+  }
+
+  async function apiFetch(path, opts = {}) {
+    try {
+      const res = await fetch(baseUrl() + path, opts);
+      const ct = res.headers.get('content-type') || '';
+      const body = ct.includes('json') ? await res.json() : await res.text();
+      return { ok: res.ok, status: res.status, body };
+    } catch (e) {
+      return { ok: false, status: 0, body: 'Network error: ' + e.message };
+    }
+  }
+
+  // ── Toggle accordion ───────────────────────────────────────────────────────
+  function toggleBlock(header) {
+    header.classList.toggle('open');
+    header.nextElementSibling.classList.toggle('open');
+  }
+
+  // ── Tab switcher ───────────────────────────────────────────────────────────
+  function setTab(tabGroupId, el, value) {
+    document.querySelectorAll('#' + tabGroupId + ' .tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    // derive hidden input id from group id prefix
+    const prefix = tabGroupId.split('-')[0]; // e.g. "search"
+    $(prefix + '-mode').value = value;
+  }
+
+  // ── Health check ───────────────────────────────────────────────────────────
+  async function checkHealth() {
+    const el = $('health-resp');
+    el.textContent = 'Pinging…';
+    el.className = 'response-box visible';
+    const r = await apiFetch('/docs');
+    if (r.status === 200 || r.status === 404) {
+      showResp('health-resp', `✅ API is reachable at ${baseUrl()} (HTTP ${r.status})`, true);
+    } else if (r.status === 0) {
+      showResp('health-resp', `❌ Could not reach ${baseUrl()} — is Docker running? Check CORS.`, false);
+    } else {
+      showResp('health-resp', `⚠️ HTTP ${r.status} — ${JSON.stringify(r.body)}`, r.ok);
+    }
+  }
+
+  // ── Login ──────────────────────────────────────────────────────────────────
+  async function doLogin() {
+    const body = new URLSearchParams();
+    body.append('username', $('login-user').value);
+    body.append('password', $('login-pass').value);
+
+    const r = await apiFetch('/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+
+    if (r.ok && r.body.access_token) {
+      $('cfg-token').value = r.body.access_token;
+      showResp('login-resp', { message: '✅ Token stored in config bar.', ...r.body }, true);
+    } else {
+      showResp('login-resp', r.body, false);
+    }
+  }
+
+  // ── List documents ─────────────────────────────────────────────────────────
+  async function listDocs() {
+    const r = await apiFetch('/documents', { headers: authHeaders() });
+    showResp('list-resp', r.body, r.ok);
+  }
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+  async function doSearch() {
+    const rawIds = $('search-ids').value.trim();
+    const ids = rawIds ? rawIds.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : undefined;
+    const payload = {
+      query: $('search-query').value,
+      mode: $('search-mode').value,
+      limit: parseInt($('search-limit').value) || 10,
+    };
+    if (ids && ids.length) payload.ids = ids;
+
+    const r = await apiFetch('/documents/search', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    showResp('search-resp', r.body, r.ok);
+  }
+
+  // ── Ask ────────────────────────────────────────────────────────────────────
+  async function doAsk() {
+    const rawIds = $('ask-ids').value.trim();
+    const ids = rawIds ? rawIds.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : undefined;
+    const payload = {
+      question: $('ask-question').value,
+      scope: $('ask-scope').value,
+    };
+    if (ids && ids.length) payload.doc_ids = ids;
+
+    const r = await apiFetch('/documents/ask', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    showResp('ask-resp', r.body, r.ok);
+  }
+
+  // ── Chat ───────────────────────────────────────────────────────────────────
+  async function doChat() {
+    const chatId = parseInt($('chat-id').value);
+    const payload = {
+      query: $('chat-msg').value,
+      rewrite_query: $('chat-rewrite').value === 'true',
+    };
+    if (!isNaN(chatId)) payload.chat_id = chatId;
+
+    const r = await apiFetch('/chat', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+
+    if (r.ok && r.body.chat_id) {
+      $('chat-id').value = r.body.chat_id;
+    }
+    showResp('chat-resp', r.body, r.ok);
+  }
+
+  // ── Browse Chunks ──────────────────────────────────────────────────────────
+  async function browseChunks() {
+    const docId   = $('chunks-doc-id').value;
+    const startPg = $('chunks-start').value;
+    const endPg   = $('chunks-end').value;
+
+    if (!docId) { showResp('chunks-resp', 'Please enter a Document ID', false); return; }
+
+    const r = await apiFetch(
+      `/documents/${docId}/chunks?start_page=${startPg}&end_page=${endPg}`,
+      { headers: authHeaders() }
+    );
+    showResp('chunks-resp', r.body, r.ok);
+  }
+</script>
+
+</body>
+</html>
