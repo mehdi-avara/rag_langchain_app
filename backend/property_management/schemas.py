@@ -8,6 +8,10 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+PROPERTY_AMOUNT_MAX_DIGITS = 24
+PROPERTY_AMOUNT_DECIMAL_PLACES = 2
+
+
 class PropertyCategory(str, enum.Enum):
     HOUSE = "house"
     CAR = "car"
@@ -22,10 +26,14 @@ class OwnedPropertyBase(BaseModel):
     purchase_cost: Optional[Decimal] = Field(
         default=None,
         ge=Decimal("0"),
+        max_digits=PROPERTY_AMOUNT_MAX_DIGITS,
+        decimal_places=PROPERTY_AMOUNT_DECIMAL_PLACES,
     )
     current_estimated_value: Optional[Decimal] = Field(
         default=None,
         ge=Decimal("0"),
+        max_digits=PROPERTY_AMOUNT_MAX_DIGITS,
+        decimal_places=PROPERTY_AMOUNT_DECIMAL_PLACES,
     )
     description: Optional[str] = None
 
@@ -40,10 +48,14 @@ class OwnedPropertyUpdate(BaseModel):
     purchase_cost: Optional[Decimal] = Field(
         default=None,
         ge=Decimal("0"),
+        max_digits=PROPERTY_AMOUNT_MAX_DIGITS,
+        decimal_places=PROPERTY_AMOUNT_DECIMAL_PLACES,
     )
     current_estimated_value: Optional[Decimal] = Field(
         default=None,
         ge=Decimal("0"),
+        max_digits=PROPERTY_AMOUNT_MAX_DIGITS,
+        decimal_places=PROPERTY_AMOUNT_DECIMAL_PLACES,
     )
     description: Optional[str] = None
 

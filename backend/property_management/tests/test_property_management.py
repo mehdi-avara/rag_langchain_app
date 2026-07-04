@@ -7,6 +7,9 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
 os.environ.setdefault("POSTGRES_DB", "test")
 os.environ.setdefault("POSTGRES_USER", "test")
 os.environ.setdefault("POSTGRES_PASSWORD", "test")
@@ -91,6 +94,42 @@ def test_create_property_sets_company_and_owner():
     assert db.added[0].company_id == 3
     assert db.added[0].owner_id == 7
     assert created.title == "Company Car"
+
+
+def test_create_property_accepts_trillion_value():
+    db = DummyDB()
+
+    created = property_routes.create_property(
+        payload=OwnedPropertyCreate(
+            category="house",
+            title="Large Property",
+            purchase_cost=Decimal("1000000000000.00"),
+            current_estimated_value=Decimal("1000000000000.00"),
+        ),
+        db=db,
+        current_user=current_user(),
+    )
+
+    assert created.purchase_cost == Decimal("1000000000000.00")
+    assert created.current_estimated_value == Decimal("1000000000000.00")
+
+
+def test_property_schema_rejects_value_beyond_supported_precision():
+    with pytest.raises(ValidationError) as exc:
+        OwnedPropertyCreate(
+            category="house",
+            title="Too Large Property",
+            current_estimated_value=Decimal("10000000000000000000000.01"),
+        )
+
+    assert any(error["type"] == "decimal_max_digits" for error in exc.value.errors())
+
+
+def test_property_model_uses_wide_numeric_columns():
+    assert OwnedProperty.__table__.c.purchase_cost.type.precision == 24
+    assert OwnedProperty.__table__.c.purchase_cost.type.scale == 2
+    assert OwnedProperty.__table__.c.current_estimated_value.type.precision == 24
+    assert OwnedProperty.__table__.c.current_estimated_value.type.scale == 2
 
 
 def test_net_worth_summary_uses_inventory_and_cash_balance(monkeypatch):

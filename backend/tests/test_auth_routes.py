@@ -56,6 +56,9 @@ class FakeQuery:
 
         return None
 
+    def all(self):
+        return []
+
 
 class FakeDB:
     def __init__(self, users=None, companies=None, roles=None, company_slug_exists=False):
@@ -86,6 +89,10 @@ class FakeDB:
         for index, company in enumerate(self.companies, start=1):
             if company.id is None:
                 company.id = index
+
+        for index, user in enumerate(self.users, start=1):
+            if user.id is None:
+                user.id = index
 
     def commit(self):
         self.committed = True

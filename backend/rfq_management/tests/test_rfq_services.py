@@ -2,6 +2,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 import rfq_management.services as rfq_services
@@ -151,3 +152,186 @@ def test_quote_response_is_attached_to_loaded_rfq_collections(monkeypatch):
     assert len(response.items) == 1
     assert response.items[0].rfq_item_id == 3
     assert rfq_supplier.response_status == "responded"
+
+
+
+def _make_transition_rfq(status, items=None, suppliers=None):
+    return SimpleNamespace(
+        id=77,
+        status=status,
+        items=[] if items is None else items,
+        suppliers=[] if suppliers is None else suppliers,
+    )
+
+
+def _patch_rfq_lookup(monkeypatch, rfq):
+    monkeypatch.setattr(
+        rfq_services,
+        "get_rfq_or_404",
+        lambda *args, **kwargs: rfq,
+    )
+
+
+def test_rfq_transition_target_allows_draft_cancellation():
+    assert (
+        get_rfq_transition_target(RFQStatus.DRAFT.value, "cancel")
+        == RFQStatus.CANCELLED.value
+    )
+
+
+@pytest.mark.parametrize(
+    ("current_status", "action"),
+    [
+        (RFQStatus.DRAFT.value, "close"),
+        (RFQStatus.SENT.value, "send"),
+        (RFQStatus.CLOSED.value, "send"),
+        (RFQStatus.CLOSED.value, "close"),
+        (RFQStatus.CLOSED.value, "cancel"),
+        (RFQStatus.CANCELLED.value, "send"),
+        (RFQStatus.CANCELLED.value, "close"),
+        (RFQStatus.CANCELLED.value, "cancel"),
+    ],
+)
+def test_rfq_transition_target_rejects_invalid_workflow_paths(
+    current_status,
+    action,
+):
+    assert get_rfq_transition_target(current_status, action) is None
+
+
+def test_transition_rfq_send_marks_suppliers_and_commits(monkeypatch):
+    supplier = SimpleNamespace(
+        sent_at=None,
+        response_status="pending",
+    )
+    rfq = _make_transition_rfq(
+        status=RFQStatus.DRAFT.value,
+        items=[SimpleNamespace(id=1)],
+        suppliers=[supplier],
+    )
+    db = _RecordingSession()
+
+    _patch_rfq_lookup(monkeypatch, rfq)
+
+    result = rfq_services.transition_rfq(
+        db=db,
+        current_user=SimpleNamespace(),
+        rfq_id=rfq.id,
+        action=" send ",
+    )
+
+    assert result is rfq
+    assert rfq.status == RFQStatus.SENT.value
+    assert supplier.sent_at is not None
+    assert supplier.response_status == "pending"
+    assert db.commits == 1
+
+
+@pytest.mark.parametrize(
+    ("items", "suppliers", "expected_code"),
+    [
+        ([], [SimpleNamespace()], "RFQ_HAS_NO_ITEMS"),
+        ([SimpleNamespace(id=1)], [], "RFQ_HAS_NO_SUPPLIERS"),
+    ],
+)
+def test_transition_rfq_send_requires_items_and_suppliers(
+    monkeypatch,
+    items,
+    suppliers,
+    expected_code,
+):
+    rfq = _make_transition_rfq(
+        status=RFQStatus.DRAFT.value,
+        items=items,
+        suppliers=suppliers,
+    )
+    db = _RecordingSession()
+
+    _patch_rfq_lookup(monkeypatch, rfq)
+
+    with pytest.raises(HTTPException) as exc_info:
+        rfq_services.transition_rfq(
+            db=db,
+            current_user=SimpleNamespace(),
+            rfq_id=rfq.id,
+            action="send",
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == expected_code
+    assert rfq.status == RFQStatus.DRAFT.value
+    assert db.commits == 0
+
+
+@pytest.mark.parametrize(
+    ("start_status", "action", "expected_status"),
+    [
+        (
+            RFQStatus.SENT.value,
+            "close",
+            RFQStatus.CLOSED.value,
+        ),
+        (
+            RFQStatus.DRAFT.value,
+            "cancel",
+            RFQStatus.CANCELLED.value,
+        ),
+        (
+            RFQStatus.SENT.value,
+            "cancel",
+            RFQStatus.CANCELLED.value,
+        ),
+    ],
+)
+def test_transition_rfq_applies_valid_non_send_actions(
+    monkeypatch,
+    start_status,
+    action,
+    expected_status,
+):
+    rfq = _make_transition_rfq(status=start_status)
+    db = _RecordingSession()
+
+    _patch_rfq_lookup(monkeypatch, rfq)
+
+    result = rfq_services.transition_rfq(
+        db=db,
+        current_user=SimpleNamespace(),
+        rfq_id=rfq.id,
+        action=action,
+    )
+
+    assert result is rfq
+    assert rfq.status == expected_status
+    assert db.commits == 1
+
+
+@pytest.mark.parametrize(
+    ("start_status", "action"),
+    [
+        (RFQStatus.CLOSED.value, "cancel"),
+        (RFQStatus.CANCELLED.value, "close"),
+    ],
+)
+def test_transition_rfq_rejects_terminal_state_actions(
+    monkeypatch,
+    start_status,
+    action,
+):
+    rfq = _make_transition_rfq(status=start_status)
+    db = _RecordingSession()
+
+    _patch_rfq_lookup(monkeypatch, rfq)
+
+    with pytest.raises(HTTPException) as exc_info:
+        rfq_services.transition_rfq(
+            db=db,
+            current_user=SimpleNamespace(),
+            rfq_id=rfq.id,
+            action=action,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "RFQ_INVALID_STATUS_TRANSITION"
+    assert rfq.status == start_status
+    assert db.commits == 0

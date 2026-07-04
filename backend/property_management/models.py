@@ -26,8 +26,8 @@ class OwnedProperty(Base):
     )
     category = Column(String, nullable=False, index=True)
     title = Column(String, nullable=False, index=True)
-    purchase_cost = Column(Numeric(14, 2), nullable=True)
-    current_estimated_value = Column(Numeric(14, 2), nullable=True)
+    purchase_cost = Column(Numeric(24, 2), nullable=True)
+    current_estimated_value = Column(Numeric(24, 2), nullable=True)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(

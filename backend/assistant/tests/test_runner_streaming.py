@@ -18,7 +18,7 @@ import financial_management.assistant_tools  # noqa: F401
 _MESSAGES: list = []
 
 
-def _install_fake_routs_chat():
+def _install_fake_routs_chat(monkeypatch):
     _MESSAGES.clear()
     mod = ModuleType("routs.chat")
 
@@ -35,10 +35,7 @@ def _install_fake_routs_chat():
 
     mod.get_or_create_chat = get_or_create_chat
     mod.add_message = add_message
-    sys.modules["routs.chat"] = mod
-
-
-_install_fake_routs_chat()
+    monkeypatch.setitem(sys.modules, "routs.chat", mod)
 
 from assistant import router as router_mod  # noqa: E402
 from assistant import runner as runner_mod  # noqa: E402
@@ -62,7 +59,7 @@ def _parse_events(chunks):
 
 
 def _collect(db, user, request, monkeypatch, *, intent, slots=None, clarify=None):
-    _install_fake_routs_chat()
+    _install_fake_routs_chat(monkeypatch)
     db.set_all("AgentRun", [])
 
     async def fake_classify(**kwargs):

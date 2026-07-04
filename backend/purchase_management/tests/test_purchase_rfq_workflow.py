@@ -242,3 +242,188 @@ def test_create_purchase_order_from_rfq_rejects_duplicate_link(monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "PURCHASE_ORDER_RFQ_ALREADY_LINKED"
+
+
+
+def _purchase_order(
+    status=PurchaseOrderStatus.DRAFT.value,
+    approval_status=PurchaseApprovalStatus.DRAFT.value,
+    phases=None,
+):
+    return SimpleNamespace(
+        status=status,
+        approval_status=approval_status,
+        approved_by_user_id=None,
+        phases=[] if phases is None else phases,
+    )
+
+
+def _patch_purchase_order_lookup(monkeypatch, purchase_order):
+    monkeypatch.setattr(
+        purchase_services,
+        "get_po_or_404",
+        lambda db, po_id, user: purchase_order,
+    )
+
+
+def test_submit_moves_purchase_order_to_pending(monkeypatch):
+    purchase_order = _purchase_order()
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(monkeypatch, purchase_order)
+
+    result = purchase_services.process_approval(
+        db=db,
+        user=user,
+        po_id=7,
+        action="submit",
+        note="Submit for approval",
+    )
+
+    assert result is purchase_order
+    assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
+    assert purchase_order.approval_status == PurchaseApprovalStatus.PENDING.value
+    assert purchase_order.approved_by_user_id is None
+    assert db.commits == 1
+
+
+def test_reject_moves_pending_purchase_order_to_rejected(monkeypatch):
+    purchase_order = _purchase_order(
+        approval_status=PurchaseApprovalStatus.PENDING.value,
+    )
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(monkeypatch, purchase_order)
+
+    result = purchase_services.process_approval(
+        db=db,
+        user=user,
+        po_id=7,
+        action="reject",
+        note="Rejected in workflow test",
+    )
+
+    assert result is purchase_order
+    assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
+    assert purchase_order.approval_status == PurchaseApprovalStatus.REJECTED.value
+    assert purchase_order.approved_by_user_id is None
+    assert db.commits == 1
+
+
+@pytest.mark.parametrize(
+    ("approval_status", "action", "expected_message"),
+    [
+        (
+            PurchaseApprovalStatus.DRAFT.value,
+            "approve",
+            "Only pending orders can be approved",
+        ),
+        (
+            PurchaseApprovalStatus.DRAFT.value,
+            "reject",
+            "Only pending orders can be rejected",
+        ),
+        (
+            PurchaseApprovalStatus.PENDING.value,
+            "submit",
+            "Only draft orders can be submitted for approval",
+        ),
+        (
+            PurchaseApprovalStatus.REJECTED.value,
+            "approve",
+            "Only pending orders can be approved",
+        ),
+    ],
+)
+def test_invalid_purchase_order_approval_transitions_are_rejected(
+    monkeypatch,
+    approval_status,
+    action,
+    expected_message,
+):
+    purchase_order = _purchase_order(approval_status=approval_status)
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(monkeypatch, purchase_order)
+
+    with pytest.raises(HTTPException) as exc_info:
+        purchase_services.process_approval(
+            db=db,
+            user=user,
+            po_id=7,
+            action=action,
+            note=None,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == expected_message
+    assert purchase_order.approval_status == approval_status
+    assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
+    assert db.commits == 0
+
+
+def test_unknown_purchase_order_approval_action_is_rejected(monkeypatch):
+    purchase_order = _purchase_order()
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(monkeypatch, purchase_order)
+
+    with pytest.raises(HTTPException) as exc_info:
+        purchase_services.process_approval(
+            db=db,
+            user=user,
+            po_id=7,
+            action="ordered",
+            note=None,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Unknown approval action: ordered"
+    assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
+    assert purchase_order.approval_status == PurchaseApprovalStatus.DRAFT.value
+    assert db.commits == 0
+
+
+def test_cancel_purchase_order_marks_status_cancelled(monkeypatch):
+    purchase_order = _purchase_order()
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(monkeypatch, purchase_order)
+
+    result = purchase_services.cancel_purchase_order(
+        db=db,
+        user=user,
+        po_id=7,
+    )
+
+    assert result is purchase_order
+    assert purchase_order.status == PurchaseOrderStatus.CANCELLED.value
+    assert purchase_order.approval_status == PurchaseApprovalStatus.DRAFT.value
+    assert db.commits == 1
+
+
+def test_cancelled_purchase_order_cannot_be_updated(monkeypatch):
+    purchase_order = _purchase_order(
+        status=PurchaseOrderStatus.CANCELLED.value,
+    )
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(monkeypatch, purchase_order)
+
+    with pytest.raises(HTTPException) as exc_info:
+        purchase_services.update_purchase_order(
+            db=db,
+            user=user,
+            po_id=7,
+            description="Must not be saved",
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Cannot edit a cancelled purchase order"
+    assert db.commits == 0
