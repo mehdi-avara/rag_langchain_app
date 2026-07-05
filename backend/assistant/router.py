@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import List, Optional
 
 from components.llm import llm_client, raise_llm_exception
@@ -74,6 +75,21 @@ def _user_message(question: str, image_blocks: Optional[List[dict]]) -> dict:
     return {"role": "user", "content": question}
 
 
+def _looks_like_capability_question(question: str) -> bool:
+    text = re.sub(r"\s+", " ", question.strip().lower())
+    if not text:
+        return False
+    patterns = (
+        r"\bwhat can you do\b",
+        r"\bhow can you help\b",
+        r"\bwhat do you do\b",
+        r"\bwhat are your capabilities\b",
+        r"\bavailable (actions|commands|tools)\b",
+        r"\bhelp me use\b",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
 async def classify(
     *,
     question: str,
@@ -96,6 +112,15 @@ async def classify(
     has_images = bool(image_blocks)
     client = client or llm_client.async_openai_client
     model = model or settings.openai_model
+
+    if "assistant_help" in permitted_names and not has_attachments and not has_images:
+        if _looks_like_capability_question(question):
+            return {
+                "intent": "assistant_help",
+                "language": "en",
+                "slots": {},
+                "clarify_question": None,
+            }
 
     from .intake import LLM_TIMEOUT
 

@@ -55,6 +55,27 @@ def test_router_picks_permitted_intent(monkeypatch):
     assert result["slots"]["query"] == "ACME"
 
 
+def test_capability_question_routes_without_llm(monkeypatch):
+    class _ExplodingClient:
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(*args, **kwargs):  # pragma: no cover - must not run
+                    raise AssertionError("capability questions should not call the LLM router")
+
+    user = make_user(ALL_FINANCIAL_PERMS)
+    intents = registry.assemble_intents(user)
+    result = asyncio.run(
+        router.classify(
+            question="what can you do?",
+            intents=intents,
+            client=_ExplodingClient(),
+        )
+    )
+    assert result["intent"] == "assistant_help"
+    assert result["slots"] == {}
+
+
 def test_router_rejects_unpermitted_intent_falls_back_to_clarify(monkeypatch):
     # Model tries to route to add_receipt but the user lacks the permission, so
     # that intent isn't in the catalog -> fall back to clarify.

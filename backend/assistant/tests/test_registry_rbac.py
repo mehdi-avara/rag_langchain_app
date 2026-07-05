@@ -15,6 +15,7 @@ def test_full_permissions_expose_all_intents():
     names = _names(user)
     assert "add_receipt" in names
     assert "search_receipts" in names
+    assert "assistant_help" in names
     assert "general" in names
     assert "clarify" in names
 
@@ -32,7 +33,7 @@ def test_missing_create_permission_drops_add_receipt():
 def test_no_module_permissions_falls_back_to_general_clarify():
     user = make_user(["assistant:chat"])
     names = _names(user)
-    assert names == {"general", "clarify"}
+    assert names == {"assistant_help", "general", "clarify"}
 
 
 def test_find_intent_respects_rbac():

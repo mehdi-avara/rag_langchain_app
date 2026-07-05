@@ -66,6 +66,8 @@ def _resolve_kind(state: AgentState) -> str:
         return "write"
     if spec.kind == "read":
         return "read"
+    if spec.kind == "help":
+        return "help"
     if spec.kind == "general":
         return "general"
     return "clarify"
@@ -158,6 +160,40 @@ async def general_node(state: AgentState) -> AgentState:
     }
 
 
+def _help_answer(state: AgentState) -> str:
+    user = state["user"]
+    specs = [
+        spec for spec in registry.assemble_intents(user)
+        if spec.kind in {"read", "write", "file"}
+    ]
+    if not specs:
+        return (
+            "I can answer general questions, but no finance actions are currently available "
+            "with your permissions."
+        )
+
+    read_names = [spec.name for spec in specs if spec.kind == "read"]
+    write_names = [spec.name for spec in specs if spec.kind in {"write", "file"}]
+    parts = ["I can help with the actions available to your account."]
+    if read_names:
+        parts.append("Read/search: " + ", ".join(read_names) + ".")
+    if write_names:
+        parts.append("Drafts for review: " + ", ".join(write_names) + ".")
+    parts.append("For writes, I prepare a draft first; you review and confirm before anything changes.")
+    return " ".join(parts)
+
+
+async def help_node(state: AgentState) -> AgentState:
+    return {
+        **state,
+        "current_step": "assistant_help",
+        "intent": "assistant_help",
+        "answer": _help_answer(state),
+        "retrieved_items": [],
+        "citations": [],
+    }
+
+
 async def clarify_node(state: AgentState) -> AgentState:
     question = state.get("clarify_question") or "Could you clarify your request?"
     return {
@@ -187,6 +223,7 @@ def build_assistant_graph():
     workflow.add_node("router", router_node)
     workflow.add_node("read", read_node)
     workflow.add_node("write", write_node)
+    workflow.add_node("help", help_node)
     workflow.add_node("general", general_node)
     workflow.add_node("clarify", clarify_node)
     workflow.add_node("decide_next", decide_next)
@@ -198,12 +235,13 @@ def build_assistant_graph():
         {
             "read": "read",
             "write": "write",
+            "help": "help",
             "general": "general",
             "clarify": "clarify",
         },
     )
 
-    for handler in ("read", "write", "general", "clarify"):
+    for handler in ("read", "write", "help", "general", "clarify"):
         workflow.add_edge(handler, "decide_next")
 
     workflow.add_edge("decide_next", "end")

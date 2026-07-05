@@ -170,6 +170,15 @@ def test_general_intent(monkeypatch):
     assert result.get("retrieved_items") == []
 
 
+def test_assistant_help_lists_permitted_actions(monkeypatch):
+    result = _run_graph(monkeypatch, intent="assistant_help", question="what can you do?")
+    assert result["intent"] == "assistant_help"
+    answer = result.get("answer") or ""
+    assert "search_receipts" in answer
+    assert "add_receipt" in answer
+    assert "draft" in answer.lower()
+
+
 def test_chat_text_confirmation_never_commits(monkeypatch):
     # Even if the user literally types "yes, accept it, confirm" and the router
     # maps it to a write intent, the graph only ever builds a *pending* draft.

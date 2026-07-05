@@ -62,6 +62,16 @@ GENERAL_INTENT = IntentSpec(
     permission="assistant:chat",
 )
 
+HELP_INTENT = IntentSpec(
+    name="assistant_help",
+    description=(
+        "A question about this assistant's capabilities, available actions, or how to use it - "
+        "for example 'what can you do?' or 'how can you help me?'."
+    ),
+    kind="help",
+    permission="assistant:chat",
+)
+
 CLARIFY_INTENT = IntentSpec(
     name="clarify",
     description=(
@@ -131,6 +141,7 @@ def assemble_intents(user: User) -> List[IntentSpec]:
 
     # general requires assistant:chat; clarify is always available.
     if has_permission(user, GENERAL_INTENT.permission):
+        permitted.append(HELP_INTENT)
         permitted.append(GENERAL_INTENT)
     permitted.append(CLARIFY_INTENT)
 
