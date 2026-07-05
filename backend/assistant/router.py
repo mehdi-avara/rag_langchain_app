@@ -57,7 +57,11 @@ def _system_prompt(intents: List[IntentSpec], has_attachments: bool, has_images:
         "- Detect the user's language and return it as a BCP-47 code (e.g. 'fa', 'en').\n"
         "- Extract any useful slots: amounts, dates, names, ids, currency, direction, mode, query text "
         "(from BOTH the text and any attached image).\n"
-        "- For a write intent, if required fields are still missing, choose 'clarify' instead of guessing.\n"
+        "- If the user clearly wants to create/update something, choose that write intent even when "
+        "required fields are missing; the draft builder will ask for missing fields.\n"
+        "- Choose 'clarify' only when the user's intended action itself is unclear.\n"
+        "- For receipt slots, use direction exactly 'input' or 'output' (not 'in'/'out'); "
+        "Persian 'پرداخت به' means 'output'. Use currency 'IRT' for تومان and 'IRR' for ریال.\n"
         "- NEVER invent or guess numeric database IDs. If the user refers to a card, customer, or "
         "counterparty by name/nickname/description, put that TEXT into slots: credit_card_query, "
         "customer_query (and/or counterparty for a receipt's counterparty). Only put an id in "
@@ -88,6 +92,20 @@ def _looks_like_capability_question(question: str) -> bool:
         r"\bhelp me use\b",
     )
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _parse_router_json(raw: str) -> dict:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        match = re.search(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("assistant router returned non-JSON: %r", raw)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 async def classify(
@@ -149,11 +167,7 @@ async def classify(
 
     raw = (response.choices[0].message.content or "").strip()
 
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("assistant router returned non-JSON: %r", raw)
-        parsed = {}
+    parsed = _parse_router_json(raw)
 
     intent = parsed.get("intent")
     if intent not in permitted_names:

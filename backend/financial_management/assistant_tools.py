@@ -89,6 +89,35 @@ def _enum_value(enum_cls, value) -> Optional[str]:
     if value is None:
         return None
     raw = str(value).strip()
+    aliases = {
+        FinancialDirection: {
+            "in": FinancialDirection.INPUT.value,
+            "incoming": FinancialDirection.INPUT.value,
+            "income": FinancialDirection.INPUT.value,
+            "received": FinancialDirection.INPUT.value,
+            "دریافت": FinancialDirection.INPUT.value,
+            "دریافتی": FinancialDirection.INPUT.value,
+            "واریز": FinancialDirection.INPUT.value,
+            "out": FinancialDirection.OUTPUT.value,
+            "outgoing": FinancialDirection.OUTPUT.value,
+            "expense": FinancialDirection.OUTPUT.value,
+            "paid": FinancialDirection.OUTPUT.value,
+            "payment": FinancialDirection.OUTPUT.value,
+            "پرداخت": FinancialDirection.OUTPUT.value,
+            "پرداختی": FinancialDirection.OUTPUT.value,
+        },
+        FinancialCurrency: {
+            "toman": FinancialCurrency.TOMAN.value,
+            "tomans": FinancialCurrency.TOMAN.value,
+            "تومان": FinancialCurrency.TOMAN.value,
+            "rial": FinancialCurrency.RIAL.value,
+            "rials": FinancialCurrency.RIAL.value,
+            "ریال": FinancialCurrency.RIAL.value,
+        },
+    }
+    mapped = aliases.get(enum_cls, {}).get(raw.lower()) or aliases.get(enum_cls, {}).get(raw)
+    if mapped:
+        return mapped
     for member in enum_cls:
         if raw.lower() in {member.value.lower(), member.name.lower()}:
             return member.value

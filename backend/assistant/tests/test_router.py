@@ -55,6 +55,35 @@ def test_router_picks_permitted_intent(monkeypatch):
     assert result["slots"]["query"] == "ACME"
 
 
+def test_router_accepts_markdown_fenced_json(monkeypatch):
+    _install(
+        monkeypatch,
+        """```json
+{
+  "intent": "add_receipt",
+  "language": "fa",
+  "slots": {
+    "amount": 1000,
+    "currency": "IRT",
+    "counterparty": "محمد مهدی آورا",
+    "description": "خرید قطعه پمپ",
+    "credit_card_query": "کارت ملت شرکت",
+    "date": "1405/04/14",
+    "direction": "out"
+  },
+  "clarify_question": null
+}
+```""",
+    )
+    user = make_user(ALL_FINANCIAL_PERMS)
+    intents = registry.assemble_intents(user)
+    result = asyncio.run(router.classify(question="یک رسید ثبت کن", intents=intents))
+    assert result["intent"] == "add_receipt"
+    assert result["language"] == "fa"
+    assert result["slots"]["amount"] == 1000
+    assert result["slots"]["direction"] == "out"
+
+
 def test_capability_question_routes_without_llm(monkeypatch):
     class _ExplodingClient:
         class chat:

@@ -71,6 +71,35 @@ def test_add_receipt_missing_fields_returns_partial_object_and_noun_missing():
     assert "description" not in missing  # already provided
 
 
+def test_add_receipt_normalizes_router_aliases():
+    user = make_user(ALL_FINANCIAL_PERMS)
+    slots = {
+        "description": "خرید قطعه پمپ",
+        "amount": "1000",
+        "currency": "تومان",
+        "direction": "out",
+        "credit_card_id": 3,
+        "receipt_date": "1405/04/14",
+        "counterparty": "محمد مهدی آورا",
+    }
+    saved = get_resource("financial_customer")
+    register_resource(ResourceSpec(
+        key="financial_customer", read_permission=saved.read_permission,
+        provider=FakeProvider([]), create_permission=saved.create_permission,
+        create_endpoint=saved.create_endpoint, create_method=saved.create_method,
+        suggestion_from=saved.suggestion_from,
+    ))
+    try:
+        draft = toolset.build_draft(intent="add_receipt", db=None, user=user, slots=slots, attachments=[])
+    finally:
+        register_resource(saved)
+
+    assert draft.valid is True
+    assert draft.payload["currency"] == "IRT"
+    assert draft.payload["direction"] == "output"
+    assert draft.payload["counterparty_name"] == "محمد مهدی آورا"
+
+
 def test_update_receipt_uses_patch_with_entity_id():
     user = make_user(ALL_FINANCIAL_PERMS)
     draft = toolset.build_draft(
