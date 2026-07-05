@@ -881,6 +881,116 @@ def list_stock_items(
     ).all()
 
 
+def list_stock_item_details(
+    db: Session,
+    current_user: User,
+    item_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
+    storage_location_id: Optional[int] = None,
+    low_stock_only: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    from material_management.services import get_item_references
+
+    company_id = tenant_id(current_user)
+
+    query = (
+        db.query(
+            StockItem,
+            StorageLocation,
+            Zone,
+            Warehouse,
+        )
+        .join(
+            StorageLocation,
+            StockItem.storage_location_id == StorageLocation.id,
+        )
+        .join(Zone, StorageLocation.zone_id == Zone.id)
+        .join(Warehouse, Zone.warehouse_id == Warehouse.id)
+        .filter(StockItem.company_id == company_id)
+    )
+
+    if item_id is not None:
+        query = query.filter(StockItem.item_id == item_id)
+
+    if warehouse_id is not None:
+        query = query.filter(Warehouse.id == warehouse_id)
+
+    if storage_location_id is not None:
+        query = query.filter(
+            StockItem.storage_location_id == storage_location_id
+        )
+
+    if low_stock_only:
+        query = query.filter(
+            StockItem.reorder_point.isnot(None),
+            StockItem.quantity_available <= StockItem.reorder_point,
+        )
+
+    rows = (
+        query.order_by(
+            Warehouse.code.asc(),
+            Zone.code.asc(),
+            StorageLocation.code.asc(),
+            StockItem.item_id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    references = get_item_references(
+        db=db,
+        current_user=current_user,
+        item_ids=[stock_item.item_id for stock_item, _, _, _ in rows],
+    )
+
+    result: list[dict[str, Any]] = []
+
+    for stock_item, location, zone, warehouse in rows:
+        item = references.get(stock_item.item_id)
+
+        if item is None:
+            continue
+
+        result.append(
+            {
+                "id": stock_item.id,
+                "company_id": stock_item.company_id,
+                "item_id": stock_item.item_id,
+                "item_code": item.get("item_code") or "",
+                "item_name": item.get("name") or "",
+                "unit_code": item.get("unit_code") or "",
+                "storage_location_id": stock_item.storage_location_id,
+                "storage_location_code": location.code,
+                "storage_location_name": location.name,
+                "zone_id": zone.id,
+                "zone_code": zone.code,
+                "warehouse_id": warehouse.id,
+                "warehouse_code": warehouse.code,
+                "warehouse_name": warehouse.name,
+                "quantity_on_hand": stock_item.quantity_on_hand,
+                "quantity_reserved": stock_item.quantity_reserved,
+                "quantity_available": stock_item.quantity_available,
+                "min_level": stock_item.min_level,
+                "max_level": stock_item.max_level,
+                "reorder_point": stock_item.reorder_point,
+                "unit_cost": stock_item.unit_cost,
+                "unit_cost_currency_id": stock_item.unit_cost_currency_id,
+                "unit_cost_base": stock_item.unit_cost_base,
+                "inventory_value_base": (
+                    decimal_value(stock_item.quantity_on_hand)
+                    * decimal_value(stock_item.unit_cost_base)
+                ),
+                "created_at": stock_item.created_at,
+                "updated_at": stock_item.updated_at,
+            }
+        )
+
+    return result
+
+
 def update_stock_thresholds(
     db: Session,
     current_user: User,

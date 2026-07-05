@@ -39,11 +39,11 @@ from ..services import (
     create_storage_location,
     create_warehouse,
     create_zone,
-    get_low_stock_items,
     get_stock_count_or_404,
     get_warehouse_or_404,
     list_stock_count_lines,
     list_stock_counts,
+    list_stock_item_details,
     list_stock_items,
     list_stock_movements,
     list_storage_locations,
@@ -241,24 +241,28 @@ def update_storage_location_endpoint(
     )
 
 
-@router.get("/stock", response_model=list[StockItemRead])
+@router.get("/stock", response_model=list[StockItemSearchRead])
 def list_stock_items_endpoint(
     item_id: Optional[int] = Query(None, gt=0),
     warehouse_id: Optional[int] = Query(None, gt=0),
     storage_location_id: Optional[int] = Query(None, gt=0),
     low_stock_only: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(
         require_permission("warehouse_management:stock:read")
     ),
 ):
-    return list_stock_items(
+    return list_stock_item_details(
         db=db,
         current_user=current_user,
         item_id=item_id,
         warehouse_id=warehouse_id,
         storage_location_id=storage_location_id,
         low_stock_only=low_stock_only,
+        limit=page_size,
+        offset=(page - 1) * page_size,
     )
 
 
@@ -282,16 +286,17 @@ def update_stock_thresholds_endpoint(
     )
 
 
-@router.get("/stock/low", response_model=list[StockItemRead])
+@router.get("/stock/low", response_model=list[StockItemSearchRead])
 def get_low_stock_items_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(
         require_permission("warehouse_management:stock:read")
     ),
 ):
-    return get_low_stock_items(
+    return list_stock_item_details(
         db=db,
         current_user=current_user,
+        low_stock_only=True,
     )
 
 

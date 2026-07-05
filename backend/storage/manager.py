@@ -209,7 +209,6 @@ class StorageManager:
             )
 
         expires = expires_seconds or settings.S3_DOWNLOAD_EXPIRES_SECONDS
-        filename = _clean_filename(asset.original_filename).replace('"', "")
 
         download_url = self.presign_client.generate_presigned_url(
             ClientMethod="get_object",
@@ -217,9 +216,6 @@ class StorageManager:
                 "Bucket": asset.bucket,
                 "Key": asset.storage_key,
                 "ResponseContentType": asset.content_type,
-                "ResponseContentDisposition": (
-                    f'{disposition}; filename="{filename}"'
-                ),
             },
             ExpiresIn=expires,
         )
