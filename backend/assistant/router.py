@@ -72,6 +72,19 @@ def _system_prompt(intents: List[IntentSpec], has_attachments: bool, has_images:
     )
 
 
+def _normalise_history(history: Optional[List[dict]]) -> List[dict]:
+    messages: List[dict] = []
+    for item in history or []:
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"}:
+            continue
+        if not isinstance(content, str) or not content.strip():
+            continue
+        messages.append({"role": role, "content": content.strip()})
+    return messages
+
+
 def _user_message(question: str, image_blocks: Optional[List[dict]]) -> dict:
     """Multimodal user message: image block(s) first, then the text instruction (§7)."""
     if image_blocks:
@@ -114,6 +127,7 @@ async def classify(
     intents: List[IntentSpec],
     has_attachments: bool = False,
     image_blocks: Optional[List[dict]] = None,
+    history: Optional[List[dict]] = None,
     client=None,
     model: Optional[str] = None,
 ) -> dict:
@@ -153,6 +167,7 @@ async def classify(
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _system_prompt(intents, has_attachments, has_images)},
+                *_normalise_history(history),
                 _user_message(question, image_blocks),
             ],
             timeout=LLM_TIMEOUT,

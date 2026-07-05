@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
 
     # --- the current turn's input ---
     question: str
+    history: List[dict]             # recent prior chat messages as {role, content}
     rewritten_query: Optional[str]
     attachments: List[int]          # FileAsset ids attached to this message (§6)
     model_is_vlm: bool              # active chat model supports vision (§7)

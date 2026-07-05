@@ -16,12 +16,13 @@ import json
 import logging
 from typing import AsyncGenerator, Optional
 
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from components.llm import llm_client
 from core.exceptions import AppException
 from core.exceptions.error_codes import INTERNAL_SERVER_ERROR
-from Models import User
+from Models import ChatMessage, User
 from Models.chat import ChatRole
 from settings import get_settings
 
@@ -36,6 +37,8 @@ from .state import AgentState, snapshot_state
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+HISTORY_MESSAGE_LIMIT = 12
+HISTORY_CONTENT_LIMIT = 4000
 
 
 def sse_event(event: str, data: dict) -> str:
@@ -45,6 +48,39 @@ def sse_event(event: str, data: dict) -> str:
 def _chunk_text(text: str, size: int = 24):
     for i in range(0, len(text), size):
         yield text[i : i + size]
+
+
+def _load_recent_history(db: Session, *, chat_id: int, limit: int = HISTORY_MESSAGE_LIMIT) -> list[dict]:
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.chat_id == chat_id)
+        .order_by(desc(ChatMessage.id))
+        .limit(limit)
+        .all()
+    )
+    history: list[dict] = []
+    for message in reversed(messages):
+        role = getattr(message.role, "value", str(message.role))
+        if role not in {"user", "assistant"}:
+            continue
+        content = (message.content or "").strip()
+        if not content:
+            continue
+        history.append({"role": role, "content": content[:HISTORY_CONTENT_LIMIT]})
+    return history
+
+
+def _history_messages(state: AgentState) -> list[dict]:
+    messages: list[dict] = []
+    for item in state.get("history") or []:
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"}:
+            continue
+        if not isinstance(content, str) or not content.strip():
+            continue
+        messages.append({"role": role, "content": content.strip()[:HISTORY_CONTENT_LIMIT]})
+    return messages
 
 
 def _build_context(state: AgentState) -> str:
@@ -115,6 +151,7 @@ def _answer_messages(state: AgentState) -> list[dict]:
 
     return [
         {"role": "system", "content": system},
+        *_history_messages(state),
         {"role": "user", "content": user_content},
     ]
 
@@ -163,6 +200,7 @@ async def run_turn_stream(
     check_and_consume(user)
 
     chat_obj, is_new_chat = get_or_create_chat(db, chat_id=request.chat_id, user=user)
+    history = _load_recent_history(db, chat_id=chat_obj.id)
     add_message(db, chat_id=chat_obj.id, role=ChatRole.user, content=request.query)
 
     if is_new_chat:
@@ -209,6 +247,7 @@ async def run_turn_stream(
                     "company_id": user.company_id,
                     "db": db,
                     "question": request.query,
+                    "history": history,
                     "attachments": list(request.attachments or []),
                     "model_is_vlm": model_is_vlm,
                     "model_client": model_cfg.client,

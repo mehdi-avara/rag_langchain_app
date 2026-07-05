@@ -151,3 +151,18 @@ def test_midstream_failure_leaves_run_resumable(monkeypatch):
     runs = [o for o in db.added if isinstance(o, AgentRun)]
     # Suspended = resumable; not completed/failed-terminal mid-stream.
     assert runs and runs[0].status == AgentRunStatus.SUSPENDED.value
+
+
+def test_answer_messages_include_history():
+    messages = runner_mod._answer_messages({
+        "intent": "general",
+        "language": "en",
+        "question": "what about yesterday?",
+        "history": [
+            {"role": "user", "content": "We were discussing receipt 42."},
+            {"role": "assistant", "content": "Receipt 42 was for pump repair."},
+        ],
+    })
+    assert messages[1] == {"role": "user", "content": "We were discussing receipt 42."}
+    assert messages[2] == {"role": "assistant", "content": "Receipt 42 was for pump repair."}
+    assert messages[3] == {"role": "user", "content": "what about yesterday?"}

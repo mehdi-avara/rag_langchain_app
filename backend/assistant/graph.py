@@ -37,6 +37,7 @@ async def router_node(state: AgentState) -> AgentState:
         intents=intents,
         has_attachments=bool(attachments),
         image_blocks=state.get("image_blocks") or [],
+        history=state.get("history") or [],
         client=state.get("model_client"),
         model=state.get("model_name"),
     )

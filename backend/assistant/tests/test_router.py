@@ -55,6 +55,29 @@ def test_router_picks_permitted_intent(monkeypatch):
     assert result["slots"]["query"] == "ACME"
 
 
+def test_router_sends_history_before_current_message(monkeypatch):
+    client = _install(
+        monkeypatch,
+        json.dumps({"intent": "add_receipt", "language": "en", "slots": {}, "clarify_question": None}),
+    )
+    user = make_user(ALL_FINANCIAL_PERMS)
+    intents = registry.assemble_intents(user)
+    asyncio.run(
+        router.classify(
+            question="from Mellat card yesterday",
+            intents=intents,
+            history=[
+                {"role": "user", "content": "I want to add a receipt for ACME"},
+                {"role": "assistant", "content": "I still need: receipt date, credit card."},
+            ],
+        )
+    )
+    messages = client.captured["messages"]
+    assert messages[1] == {"role": "user", "content": "I want to add a receipt for ACME"}
+    assert messages[2] == {"role": "assistant", "content": "I still need: receipt date, credit card."}
+    assert messages[3] == {"role": "user", "content": "from Mellat card yesterday"}
+
+
 def test_router_accepts_markdown_fenced_json(monkeypatch):
     _install(
         monkeypatch,
