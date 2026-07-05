@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from components.llm import llm_client
 from core.exceptions import AppException
 from core.exceptions.error_codes import INTERNAL_SERVER_ERROR
-from Models import ChatMessage, User
+from Models import AgentRun, ChatMessage, User
 from Models.chat import ChatRole
 from settings import get_settings
 
@@ -68,6 +68,28 @@ def _load_recent_history(db: Session, *, chat_id: int, limit: int = HISTORY_MESS
             continue
         history.append({"role": role, "content": content[:HISTORY_CONTENT_LIMIT]})
     return history
+
+
+def _load_latest_partial_draft(db: Session, *, chat_id: int, user: User) -> Optional[dict]:
+    runs = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.chat_id == chat_id,
+            AgentRun.company_id == user.company_id,
+            AgentRun.created_by_user_id == user.id,
+        )
+        .order_by(desc(AgentRun.id))
+        .limit(8)
+        .all()
+    )
+    for run in runs:
+        state = run.state if isinstance(run.state, dict) else {}
+        partial = state.get("partial_draft") if isinstance(state, dict) else None
+        if isinstance(partial, dict) and partial.get("target_action") and isinstance(partial.get("payload"), dict):
+            return partial
+        if state.get("pending_draft"):
+            return None
+    return None
 
 
 def _history_messages(state: AgentState) -> list[dict]:
@@ -201,6 +223,7 @@ async def run_turn_stream(
 
     chat_obj, is_new_chat = get_or_create_chat(db, chat_id=request.chat_id, user=user)
     history = _load_recent_history(db, chat_id=chat_obj.id)
+    active_partial_draft = _load_latest_partial_draft(db, chat_id=chat_obj.id, user=user)
     add_message(db, chat_id=chat_obj.id, role=ChatRole.user, content=request.query)
 
     if is_new_chat:
@@ -256,6 +279,7 @@ async def run_turn_stream(
                     "extracted_text": intake.extracted_text,
                     "intake_mode": intake.intake_mode,
                     "slots": {},
+                    "active_partial_draft": active_partial_draft,
                     "plan": [],
                     "step_count": 0,
                     "retrieved_items": [],

@@ -114,6 +114,16 @@ def _enum_value(enum_cls, value) -> Optional[str]:
             "rials": FinancialCurrency.RIAL.value,
             "ریال": FinancialCurrency.RIAL.value,
         },
+        FinancialAccessMethod: {
+            "whatsapp": FinancialAccessMethod.WHATSAPP.value,
+            "واتساپ": FinancialAccessMethod.WHATSAPP.value,
+            "تلگرام": FinancialAccessMethod.TELEGRAM.value,
+            "telegram": FinancialAccessMethod.TELEGRAM.value,
+            "ایمیل": FinancialAccessMethod.EMAIL.value,
+            "email": FinancialAccessMethod.EMAIL.value,
+            "تلفن": FinancialAccessMethod.PHONE.value,
+            "phone": FinancialAccessMethod.PHONE.value,
+        },
     }
     mapped = aliases.get(enum_cls, {}).get(raw.lower()) or aliases.get(enum_cls, {}).get(raw)
     if mapped:
@@ -700,7 +710,7 @@ class FinancialAssistantToolSet(ModuleToolSet):
     def _build_create_customer(self, db, user, slots, attachments) -> DraftData:
         ensure_permission(user, P_CUSTOMER_CREATE)
         name = _str(slots, "name")
-        phone = _str(slots, "phone_number1", "phone")
+        phone = _str(slots, "phone_number1", "phone", "phone_number", "mobile", "mobile_number")
         access_method = _enum_value(FinancialAccessMethod, slots.get("access_method"))
         payload: dict = {}
         if name:

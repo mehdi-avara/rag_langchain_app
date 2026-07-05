@@ -34,7 +34,17 @@ def _empty_resolution_providers():
             register_resource(orig)
 
 
-def _run_graph(monkeypatch, *, intent, slots=None, language="en", clarify=None, extracted_text=None, question="hi"):
+def _run_graph(
+    monkeypatch,
+    *,
+    intent,
+    slots=None,
+    language="en",
+    clarify=None,
+    extracted_text=None,
+    question="hi",
+    active_partial_draft=None,
+):
     async def fake_classify(**kwargs):
         return {"intent": intent, "language": language, "slots": slots or {}, "clarify_question": clarify}
 
@@ -50,6 +60,7 @@ def _run_graph(monkeypatch, *, intent, slots=None, language="en", clarify=None, 
         "slots": {},
         "step_count": 0,
         "extracted_text": extracted_text,
+        "active_partial_draft": active_partial_draft,
     }
     return asyncio.run(graph.ainvoke(state))
 
@@ -177,6 +188,32 @@ def test_assistant_help_lists_permitted_actions(monkeypatch):
     assert "search_receipts" in answer
     assert "add_receipt" in answer
     assert "draft" in answer.lower()
+
+
+def test_followup_merges_previous_partial_customer_draft(monkeypatch):
+    previous = {
+        "target_module": "financial_management",
+        "target_action": "create_customer",
+        "payload": {"name": "محمد مهدی آورا"},
+        "missing": ["phone number", "access method"],
+        "validation": {"valid": False, "missing": ["phone number", "access method"], "errors": {}},
+    }
+    result = _run_graph(
+        monkeypatch,
+        intent="add_customer",
+        slots={"phone_number": "09395991023", "access_method": "واتساپ"},
+        active_partial_draft=previous,
+        question="شمارش ۰۹۳۹۵۹۹۱۰۲۳ هست و تو واتساپ باهاش ارتباط دارم",
+    )
+    assert result["intent"] == "add_customer"
+    draft = result.get("pending_draft")
+    assert draft is not None
+    assert draft["target_action"] == "create_customer"
+    assert draft["payload"] == {
+        "name": "محمد مهدی آورا",
+        "phone_number1": "09395991023",
+        "access_method": "whatsapp",
+    }
 
 
 def test_chat_text_confirmation_never_commits(monkeypatch):

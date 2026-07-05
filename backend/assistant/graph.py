@@ -99,12 +99,18 @@ async def write_node(state: AgentState) -> AgentState:
     intent = state["intent"]
     spec = registry.find_intent(user, intent)
     toolset = registry.get_toolset(spec.module)
+    slots = dict(state.get("slots") or {})
+    active_partial = state.get("active_partial_draft") or {}
+    if active_partial.get("target_action") == spec.target_action:
+        merged_slots = dict(active_partial.get("payload") or {})
+        merged_slots.update(slots)
+        slots = merged_slots
 
     draft_data = toolset.build_draft(
         intent=intent,
         db=db,
         user=user,
-        slots=state.get("slots") or {},
+        slots=slots,
         attachments=state.get("attachments") or [],
     )
 

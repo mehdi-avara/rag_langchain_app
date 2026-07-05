@@ -166,3 +166,22 @@ def test_answer_messages_include_history():
     assert messages[1] == {"role": "user", "content": "We were discussing receipt 42."}
     assert messages[2] == {"role": "assistant", "content": "Receipt 42 was for pump repair."}
     assert messages[3] == {"role": "user", "content": "what about yesterday?"}
+
+
+def test_load_latest_partial_draft_from_prior_run():
+    db = FakeDB()
+    user = make_user(ALL_FINANCIAL_PERMS)
+    partial = {
+        "target_module": "financial_management",
+        "target_action": "create_customer",
+        "payload": {"name": "محمد مهدی آورا"},
+    }
+    db.set_all("AgentRun", [
+        SimpleNamespace(
+            chat_id=1,
+            company_id=user.company_id,
+            created_by_user_id=user.id,
+            state={"partial_draft": partial},
+        )
+    ])
+    assert runner_mod._load_latest_partial_draft(db, chat_id=1, user=user) == partial

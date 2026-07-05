@@ -50,6 +50,7 @@ class AgentState(TypedDict, total=False):
     summary: Optional[dict]
     pending_draft: Optional[dict]   # built but NOT committed
     partial_draft: Optional[dict]   # incomplete write: object-so-far + missing field nouns
+    active_partial_draft: Optional[dict]  # latest incomplete draft from prior turn
     answer: str
     citations: List[Any]
 
