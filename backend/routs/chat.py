@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
@@ -579,6 +579,8 @@ async def delete_chat(
 
 @router.get("/list", response_model=ChatListResponse)
 async def list_user_chats(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
     current_user: User = Depends(require_permission("chat:read")),
     db: Session = Depends(get_db),
 ):
@@ -589,6 +591,8 @@ async def list_user_chats(
             Chat.user_id == current_user.id,
         )
         .order_by(desc(Chat.id))
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 

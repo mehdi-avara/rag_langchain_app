@@ -28,6 +28,8 @@ class FakeQuery:
         self.target = target
         self.filters = []
         self.ordered = False
+        self.offset_value = None
+        self.limit_value = None
         self.deleted = False
 
     def filter(self, *args, **kwargs):
@@ -39,6 +41,14 @@ class FakeQuery:
         return self
 
     def join(self, *args, **kwargs):
+        return self
+
+    def offset(self, value):
+        self.offset_value = value
+        return self
+
+    def limit(self, value):
+        self.limit_value = value
         return self
 
     def first(self):
@@ -243,6 +253,25 @@ async def test_list_user_chats_returns_current_user_chats_only():
 
     assert [item.chat_id for item in result.chats] == [1, 2]
     assert db.queries[0].ordered is True
+    assert db.queries[0].offset_value == 0
+    assert db.queries[0].limit_value == 50
+
+
+@pytest.mark.asyncio
+async def test_list_user_chats_accepts_pagination():
+    db = FakeDB(chat_rows=[make_chat(3)])
+    current_user = make_user(user_id=7, company_id=4)
+
+    result = await chat_routes.list_user_chats(
+        limit=25,
+        offset=50,
+        current_user=current_user,
+        db=db,
+    )
+
+    assert [item.chat_id for item in result.chats] == [3]
+    assert db.queries[0].offset_value == 50
+    assert db.queries[0].limit_value == 25
 
 
 @pytest.mark.asyncio
