@@ -48,9 +48,14 @@ This project is a Retrieval-Augmented Generation (RAG) system built with LangCha
 
 ## Testing
 
-Run the tests using pytest:
+Run all project and backend module tests:
 ```bash
-pytest tests/
+python run_all_tests.py
+```
+
+Forward pytest flags after the script options:
+```bash
+python run_all_tests.py -q -x --tb=short
 ```
 
 ## Deployment
