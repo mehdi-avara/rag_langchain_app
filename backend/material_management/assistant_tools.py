@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
 from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, SearchSpec, WriteSpec
 
@@ -14,6 +15,49 @@ P_SEARCH = "material_management:search"
 P_ASK = "material_management:ask"
 P_CREATE = "material_management:create"
 P_UPDATE = "material_management:update"
+
+
+def _search_items_for_resolution(db, current_user, query_text, ids=None, limit=10):
+    return search_item_hits(
+        db=db,
+        current_user=current_user,
+        query_text=query_text,
+        mode="hybrid",
+        item_ids=ids,
+        limit=limit,
+    )
+
+
+def _item_to_candidate(item) -> Candidate:
+    code = getattr(item, "item_code", None)
+    name = getattr(item, "name", None)
+    item_type = getattr(item, "item_type", None)
+    label = " - ".join(part for part in (code, name, item_type) if part)
+    return Candidate(
+        id=item.item_id,
+        match_text=name or code or "",
+        label=label or f"Item #{item.item_id}",
+        data=item.model_dump(mode="json") if hasattr(item, "model_dump") else {
+            "item_id": item.item_id,
+            "item_code": code,
+            "name": name,
+            "item_type": item_type,
+        },
+    )
+
+
+def register_material_resources() -> None:
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission=P_SEARCH,
+        provider=FunctionSearchProvider(_search_items_for_resolution, _item_to_candidate),
+        create_permission=P_CREATE,
+        create_endpoint=API_PREFIX,
+        suggestion_from=lambda raw, slots: {
+            "name": raw,
+            "item_code": slots.get("item_code") or raw,
+        },
+    ))
 
 
 class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
@@ -95,6 +139,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> MaterialAssistantToolSet:
     toolset = MaterialAssistantToolSet()
     register_toolset(toolset)
+    register_material_resources()
     return toolset
 
 

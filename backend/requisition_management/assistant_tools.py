@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
 from shared.commerce_assistant import (
     ConfiguredCommerceToolSet,
     PayloadField,
+    ReferenceFieldSpec,
     SearchSpec,
     WriteSpec,
     requisition_items_from_slots,
@@ -20,6 +22,46 @@ P_SEARCH = "requisition_management:search"
 P_ASK = "requisition_management:ask"
 P_CREATE = "requisition_management:create"
 P_UPDATE = "requisition_management:update"
+
+
+def _search_requisitions_for_resolution(db, current_user, query_text, ids=None, limit=10):
+    return search_requisition_hits(
+        db=db,
+        current_user=current_user,
+        query_text=query_text,
+        mode="hybrid",
+        requisition_ids=ids,
+        limit=limit,
+    )
+
+
+def _requisition_to_candidate(requisition) -> Candidate:
+    number = getattr(requisition, "mr_number", None)
+    reason = getattr(requisition, "reason", None)
+    status = getattr(requisition, "status", None)
+    label = " - ".join(part for part in (number, status, reason) if part)
+    return Candidate(
+        id=requisition.requisition_id,
+        match_text=number or reason or "",
+        label=label or f"MR #{requisition.requisition_id}",
+        data=requisition.model_dump(mode="json") if hasattr(requisition, "model_dump") else {
+            "requisition_id": requisition.requisition_id,
+            "mr_number": number,
+            "reason": reason,
+            "status": status,
+        },
+    )
+
+
+def register_requisition_resources() -> None:
+    register_resource(ResourceSpec(
+        key="material_requisition",
+        read_permission=P_SEARCH,
+        provider=FunctionSearchProvider(_search_requisitions_for_resolution, _requisition_to_candidate),
+        create_permission=P_CREATE,
+        create_endpoint=API_PREFIX,
+        suggestion_from=lambda raw, slots: {"reason": raw},
+    ))
 
 
 class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
@@ -51,6 +93,16 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
             endpoint=API_PREFIX,
             required=("needed_by_date", "reason"),
             item_builder=requisition_items_from_slots,
+            reference_fields=(
+                ReferenceFieldSpec(
+                    field="item_id",
+                    resource_key="material_item",
+                    raw_aliases=("item_query", "item_name", "item", "material_item", "part", "part_name"),
+                    explicit_aliases=("item_id", "material_item_id"),
+                    missing_label="item",
+                    collection="items",
+                ),
+            ),
             fields=(
                 PayloadField("department_id", aliases=("department",), kind="int"),
                 PayloadField("needed_by_date", aliases=("needed_date", "date")),
@@ -81,6 +133,7 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> RequisitionAssistantToolSet:
     toolset = RequisitionAssistantToolSet()
     register_toolset(toolset)
+    register_requisition_resources()
     return toolset
 
 

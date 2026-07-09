@@ -71,6 +71,9 @@ def _system_prompt(intents: List[IntentSpec], has_attachments: bool, has_images:
         "counterparty by name/nickname/description, put that TEXT into slots: credit_card_query, "
         "customer_query (and/or counterparty for a receipt's counterparty). Only put an id in "
         "credit_card_id / customer_id if the user literally gave a number.\n"
+        "- For commerce requests, also NEVER invent item ids. If the user names an item/material/part "
+        "(English or Persian) instead of giving a numeric id, put that text in item_query or item_name; "
+        "only put item_id when the user literally gave a numeric id.\n"
         "- Respond ONLY with JSON of the form:\n"
         '{"intent": "<one of: ' + names + '>", "language": "<bcp47>", '
         '"slots": { ... }, "clarify_question": "<question in the user\'s language or null>"}'

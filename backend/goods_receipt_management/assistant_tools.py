@@ -4,8 +4,10 @@ from assistant.registry import register_toolset
 from shared.commerce_assistant import (
     ConfiguredCommerceToolSet,
     PayloadField,
+    ReferenceFieldSpec,
     SearchSpec,
     WriteSpec,
+    goods_receipt_required,
     goods_receipt_items_from_slots,
 )
 
@@ -50,6 +52,47 @@ class GoodsReceiptAssistantToolSet(ConfiguredCommerceToolSet):
             endpoint=API_PREFIX,
             required=("purchase_phase_id", "receipt_date"),
             item_builder=goods_receipt_items_from_slots,
+            validate=goods_receipt_required,
+            reference_fields=(
+                ReferenceFieldSpec(
+                    field="purchase_phase_id",
+                    resource_key="purchase_phase",
+                    raw_aliases=("purchase_phase_query", "phase_query", "phase", "purchase_order", "po"),
+                    explicit_aliases=("purchase_phase_id", "phase_id"),
+                    missing_label="purchase phase",
+                ),
+                ReferenceFieldSpec(
+                    field="warehouse_id",
+                    resource_key="warehouse",
+                    raw_aliases=("warehouse_query", "warehouse_name", "warehouse"),
+                    explicit_aliases=("warehouse_id",),
+                    missing_label="warehouse",
+                ),
+                ReferenceFieldSpec(
+                    field="purchase_phase_item_id",
+                    resource_key="purchase_phase_item",
+                    raw_aliases=("purchase_phase_item_query", "phase_item_query", "po_item", "purchase_item", "item_query", "item_name", "item"),
+                    explicit_aliases=("purchase_phase_item_id", "phase_item_id"),
+                    missing_label="purchase phase item",
+                    collection="items",
+                ),
+                ReferenceFieldSpec(
+                    field="item_id",
+                    resource_key="material_item",
+                    raw_aliases=("item_query", "item_name", "item", "material_item", "part", "part_name"),
+                    explicit_aliases=("item_id", "material_item_id"),
+                    missing_label="item",
+                    collection="items",
+                ),
+                ReferenceFieldSpec(
+                    field="storage_location_id",
+                    resource_key="storage_location",
+                    raw_aliases=("location_query", "storage_location_query", "location", "storage_location"),
+                    explicit_aliases=("storage_location_id", "location_id"),
+                    missing_label="storage location",
+                    collection="items",
+                ),
+            ),
             fields=(
                 PayloadField("purchase_phase_id", aliases=("phase_id",), kind="int"),
                 PayloadField("receipt_date", aliases=("date",)),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
 from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, SearchSpec, WriteSpec
 
@@ -14,6 +15,46 @@ P_SEARCH = "supplier_management:search"
 P_ASK = "supplier_management:ask"
 P_CREATE = "supplier_management:create"
 P_UPDATE = "supplier_management:update"
+
+
+def _search_suppliers_for_resolution(db, current_user, query_text, ids=None, limit=10):
+    return search_supplier_hits(
+        db=db,
+        current_user=current_user,
+        query_text=query_text,
+        mode="hybrid",
+        supplier_ids=ids,
+        limit=limit,
+    )
+
+
+def _supplier_to_candidate(supplier) -> Candidate:
+    code = getattr(supplier, "code", None)
+    name = getattr(supplier, "name", None)
+    status = getattr(supplier, "status", None)
+    label = " - ".join(part for part in (code, name, status) if part)
+    return Candidate(
+        id=supplier.supplier_id,
+        match_text=name or code or "",
+        label=label or f"Supplier #{supplier.supplier_id}",
+        data=supplier.model_dump(mode="json") if hasattr(supplier, "model_dump") else {
+            "supplier_id": supplier.supplier_id,
+            "code": code,
+            "name": name,
+            "status": status,
+        },
+    )
+
+
+def register_supplier_resources() -> None:
+    register_resource(ResourceSpec(
+        key="supplier",
+        read_permission=P_SEARCH,
+        provider=FunctionSearchProvider(_search_suppliers_for_resolution, _supplier_to_candidate),
+        create_permission=P_CREATE,
+        create_endpoint=f"{API_PREFIX}/suppliers",
+        suggestion_from=lambda raw, slots: {"name": raw},
+    ))
 
 
 class SupplierAssistantToolSet(ConfiguredCommerceToolSet):
@@ -86,6 +127,7 @@ class SupplierAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> SupplierAssistantToolSet:
     toolset = SupplierAssistantToolSet()
     register_toolset(toolset)
+    register_supplier_resources()
     return toolset
 
 

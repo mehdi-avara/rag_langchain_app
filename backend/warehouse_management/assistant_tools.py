@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
-from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, SearchSpec, WriteSpec
+from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, ReferenceFieldSpec, SearchSpec, WriteSpec
 
 from .models import StockMovementType
 from .search.service import search_warehouse_hits
+from .services import list_storage_locations, list_warehouses
 
 MODULE = "warehouse_management"
 API_PREFIX = "/warehouse"
@@ -14,6 +16,65 @@ P_MOVEMENT_READ = "warehouse_management:movements:read"
 P_SEARCH = "warehouse_management:search"
 P_ASK = "warehouse_management:ask"
 P_STOCK_ADJUST = "warehouse_management:movements:create"
+
+
+def _search_warehouses_for_resolution(db, current_user, query_text, ids=None, limit=10):
+    query = (query_text or "").strip().lower()
+    rows = list_warehouses(db=db, current_user=current_user, active_only=True)
+    if ids is not None:
+        wanted = set(ids)
+        rows = [row for row in rows if row.id in wanted]
+    if query:
+        rows = [
+            row for row in rows
+            if query in (row.code or "").lower() or query in (row.name or "").lower()
+        ]
+    return rows[:limit]
+
+
+def _warehouse_to_candidate(warehouse) -> Candidate:
+    return Candidate(
+        id=warehouse.id,
+        match_text=warehouse.name or warehouse.code or "",
+        label=" - ".join(part for part in (warehouse.code, warehouse.name) if part) or f"Warehouse #{warehouse.id}",
+        data={"id": warehouse.id, "code": warehouse.code, "name": warehouse.name},
+    )
+
+
+def _search_locations_for_resolution(db, current_user, query_text, ids=None, limit=10):
+    query = (query_text or "").strip().lower()
+    rows = list_storage_locations(db=db, current_user=current_user, active_only=True)
+    if ids is not None:
+        wanted = set(ids)
+        rows = [row for row in rows if row.id in wanted]
+    if query:
+        rows = [
+            row for row in rows
+            if query in (row.code or "").lower() or query in (row.name or "").lower()
+        ]
+    return rows[:limit]
+
+
+def _location_to_candidate(location) -> Candidate:
+    return Candidate(
+        id=location.id,
+        match_text=location.name or location.code or "",
+        label=" - ".join(part for part in (location.code, location.name) if part) or f"Location #{location.id}",
+        data={"id": location.id, "code": location.code, "name": location.name, "zone_id": location.zone_id},
+    )
+
+
+def register_warehouse_resources() -> None:
+    register_resource(ResourceSpec(
+        key="warehouse",
+        read_permission=P_STOCK_READ,
+        provider=FunctionSearchProvider(_search_warehouses_for_resolution, _warehouse_to_candidate),
+    ))
+    register_resource(ResourceSpec(
+        key="storage_location",
+        read_permission=P_STOCK_READ,
+        provider=FunctionSearchProvider(_search_locations_for_resolution, _location_to_candidate),
+    ))
 
 
 class WarehouseAssistantToolSet(ConfiguredCommerceToolSet):
@@ -56,9 +117,26 @@ class WarehouseAssistantToolSet(ConfiguredCommerceToolSet):
                 "base_currency_id",
                 "exchange_rate_used",
             ),
+            reference_fields=(
+                ReferenceFieldSpec(
+                    field="item_id",
+                    resource_key="material_item",
+                    raw_aliases=("item_query", "item_name", "item", "material_item", "part", "part_name"),
+                    explicit_aliases=("item_id", "material_item_id"),
+                    missing_label="item",
+                ),
+                ReferenceFieldSpec(
+                    field="to_location_id",
+                    resource_key="storage_location",
+                    raw_aliases=("location_query", "storage_location_query", "location", "storage_location"),
+                    explicit_aliases=("to_location_id", "storage_location_id", "location_id"),
+                    missing_label="storage location",
+                ),
+            ),
             fields=(
                 PayloadField("movement_type", kind="enum", enum_values=tuple(item.value for item in StockMovementType), default=StockMovementType.ADJUSTMENT.value),
                 PayloadField("item_id", aliases=("material_item_id",), kind="int"),
+                PayloadField("item_query", aliases=("item_name", "item", "material_item", "part", "part_name")),
                 PayloadField("from_location_id", aliases=("from_location",), kind="int"),
                 PayloadField("to_location_id", aliases=("to_location", "storage_location_id", "location_id"), kind="int"),
                 PayloadField("quantity", aliases=("qty",), kind="decimal"),
@@ -76,6 +154,7 @@ class WarehouseAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> WarehouseAssistantToolSet:
     toolset = WarehouseAssistantToolSet()
     register_toolset(toolset)
+    register_warehouse_resources()
     return toolset
 
 

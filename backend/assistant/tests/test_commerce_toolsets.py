@@ -6,17 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from assistant.tests.fakes import ALL_COMMERCE_PERMS, make_user
+from assistant.tests.fakes import ALL_COMMERCE_PERMS, FakeProvider, make_user
 
 import goods_receipt_management.assistant_tools  # noqa: F401
 import material_management.assistant_tools as material_tools
-import purchase_management.assistant_tools  # noqa: F401
-import requisition_management.assistant_tools  # noqa: F401
-import rfq_management.assistant_tools  # noqa: F401
+import purchase_management.assistant_tools as purchase_tools
+import requisition_management.assistant_tools as requisition_tools
+import rfq_management.assistant_tools as rfq_tools
 import supplier_management.assistant_tools as supplier_tools
 import warehouse_management.assistant_tools  # noqa: F401
 from assistant import registry, router as router_mod
 from assistant.graph import build_assistant_graph
+from assistant.module_interface import Candidate, ResourceSpec, get_resource, register_resource
 from core.exceptions.app_exception import AppException
 from core.exceptions.error_codes import PERMISSION_DENIED
 from shared import commerce_assistant as commerce_tools
@@ -169,6 +170,177 @@ def test_complete_commerce_write_returns_pending_draft_commit_target():
         "permission": "supplier_management:create",
     }
     assert draft.payload["name"] == "ACME"
+
+
+def test_material_requisition_resolves_item_name_to_item_id():
+    saved = get_resource("material_item")
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission="material_management:search",
+        provider=FakeProvider([
+            Candidate(
+                id=99,
+                match_text="Pump seal",
+                label="PUMP-SEAL - Pump seal",
+                data={"item_id": 99, "item_code": "PUMP-SEAL", "name": "Pump seal"},
+            )
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials",
+        suggestion_from=lambda raw, slots: {"name": raw, "item_code": raw},
+    ))
+    try:
+        draft = requisition_tools.RequisitionAssistantToolSet().build_draft(
+            intent="add_material_requisition",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "needed_by_date": "2026-08-01",
+                "reason": "pump repair",
+                "item_name": "Pump seal",
+                "quantity": "2",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved is not None:
+            register_resource(saved)
+
+    assert draft.valid is True
+    assert draft.target_action == "create_material_requisition"
+    assert draft.payload["items"] == [{"quantity": "2", "item_id": 99}]
+    assert draft.commit_target == {
+        "method": "POST",
+        "endpoint": "/requisitions",
+        "permission": "requisition_management:create",
+    }
+    assert draft.validation["references"][0]["chosen"]["label"] == "PUMP-SEAL - Pump seal"
+
+
+def test_material_requisition_missing_item_returns_partial_with_create_suggestion():
+    saved = get_resource("material_item")
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission="material_management:search",
+        provider=FakeProvider([]),
+        create_permission="material_management:create",
+        create_endpoint="/materials",
+        suggestion_from=lambda raw, slots: {"name": raw, "item_code": raw},
+    ))
+    try:
+        draft = requisition_tools.RequisitionAssistantToolSet().build_draft(
+            intent="add_material_requisition",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "needed_by_date": "2026-08-01",
+                "reason": "pump repair",
+                "item_name": "Persian pump seal",
+                "quantity": "2",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved is not None:
+            register_resource(saved)
+
+    assert draft.valid is False
+    assert draft.commit_target == {}
+    assert draft.payload["items"] == [{"item_query": "Persian pump seal", "quantity": "2"}]
+    assert "item" in draft.validation["missing"]
+    reference = draft.validation["references"][0]
+    assert reference["status"] == "missing"
+    assert reference["create_suggestion"]["endpoint"] == "/materials"
+    assert "create it" in draft.clarify_question
+
+
+def test_purchase_order_from_rfq_uses_rfq_conversion_endpoint():
+    saved = get_resource("rfq")
+    register_resource(ResourceSpec(
+        key="rfq",
+        read_permission="rfq_management:search",
+        provider=FakeProvider([
+            Candidate(
+                id=17,
+                match_text="RFQ-17",
+                label="RFQ-17 - Pump parts",
+                data={"rfq_id": 17, "rfq_number": "RFQ-17", "title": "Pump parts"},
+            )
+        ]),
+    ))
+    try:
+        draft = purchase_tools.PurchaseAssistantToolSet().build_draft(
+            intent="add_purchase_order",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={"rfq_query": "RFQ-17"},
+            attachments=[],
+        )
+    finally:
+        if saved is not None:
+            register_resource(saved)
+
+    assert draft.valid is True
+    assert draft.payload == {}
+    assert draft.commit_target == {
+        "method": "POST",
+        "endpoint": "/purchase/orders/from-rfq/17",
+        "permission": "purchase_management:orders:create",
+        "additional_permissions": ["rfq_management:read"],
+        "entity_id": 17,
+    }
+
+
+def test_rfq_from_mr_and_supplier_names_resolve_to_ids():
+    saved_mr = get_resource("material_requisition")
+    saved_supplier = get_resource("supplier")
+    register_resource(ResourceSpec(
+        key="material_requisition",
+        read_permission="requisition_management:search",
+        provider=FakeProvider([
+            Candidate(
+                id=31,
+                match_text="MR-31",
+                label="MR-31 - approved",
+                data={"requisition_id": 31, "mr_number": "MR-31"},
+            )
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="supplier",
+        read_permission="supplier_management:search",
+        provider=FakeProvider([
+            Candidate(
+                id=44,
+                match_text="ACME",
+                label="SUP-44 - ACME",
+                data={"supplier_id": 44, "name": "ACME"},
+            )
+        ]),
+    ))
+    try:
+        draft = rfq_tools.RFQAssistantToolSet().build_draft(
+            intent="add_rfq",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "title": "Pump parts RFQ",
+                "deadline_date": "2026-08-10",
+                "mr_query": "MR-31",
+                "supplier_name": "ACME",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_mr is not None:
+            register_resource(saved_mr)
+        if saved_supplier is not None:
+            register_resource(saved_supplier)
+
+    assert draft.valid is True
+    assert draft.payload["mr_id"] == 31
+    assert draft.payload["supplier_ids"] == [44]
+    assert "items" not in draft.payload
 
 
 def test_update_commerce_write_uses_entity_id():

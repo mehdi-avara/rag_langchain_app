@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from Models import User
 from assistant.registry import DraftData, IntentSpec, ModuleToolSet
 from assistant.rbac import ensure_permission
+from assistant.resolve import resolve_field
 from shared.phase1_ask import answer_from_references, parse_citations
 
 
@@ -57,6 +58,18 @@ class WriteSpec:
     id_aliases: tuple[str, ...] = ("id",)
     item_builder: Optional[Callable[[dict], Optional[list[dict]]]] = None
     validate: Optional[Callable[[dict, dict], list[str]]] = None
+    reference_fields: tuple["ReferenceFieldSpec", ...] = ()
+
+
+@dataclass(frozen=True)
+class ReferenceFieldSpec:
+    field: str
+    resource_key: str
+    raw_aliases: tuple[str, ...]
+    explicit_aliases: tuple[str, ...]
+    missing_label: str
+    collection: Optional[str] = None
+    as_list: bool = False
 
 
 def _slot(slots: dict, *keys: str) -> Any:
@@ -211,6 +224,7 @@ def _build_items(slots: dict, fields: tuple[tuple[str, str, tuple[str, ...]], ..
 def requisition_items_from_slots(slots: dict) -> Optional[list[dict]]:
     return _build_items(slots, (
         ("item_id", "int", ("material_item_id",)),
+        ("item_query", "str", ("item_name", "item", "material_item", "part", "part_name")),
         ("quantity", "decimal", ("qty",)),
         ("estimated_unit_cost", "decimal", ()),
         ("currency_id", "int", ()),
@@ -224,6 +238,7 @@ def requisition_items_from_slots(slots: dict) -> Optional[list[dict]]:
 def rfq_items_from_slots(slots: dict) -> Optional[list[dict]]:
     return _build_items(slots, (
         ("item_id", "int", ("material_item_id",)),
+        ("item_query", "str", ("item_name", "item", "material_item", "part", "part_name")),
         ("quantity", "decimal", ("qty",)),
         ("specifications", "str", ("specs",)),
     ))
@@ -232,7 +247,9 @@ def rfq_items_from_slots(slots: dict) -> Optional[list[dict]]:
 def goods_receipt_items_from_slots(slots: dict) -> Optional[list[dict]]:
     return _build_items(slots, (
         ("purchase_phase_item_id", "int", ("phase_item_id",)),
+        ("purchase_phase_item_query", "str", ("phase_item_query", "po_item", "purchase_item")),
         ("item_id", "int", ("material_item_id",)),
+        ("item_query", "str", ("item_name", "item", "material_item", "part", "part_name")),
         ("received_quantity", "decimal", ("received_qty", "quantity", "qty")),
         ("accepted_quantity", "decimal", ("accepted_qty",)),
         ("rejected_quantity", "decimal", ("rejected_qty",)),
@@ -246,6 +263,19 @@ def rfq_required(payload: dict, slots: dict) -> list[str]:
     if payload.get("mr_id") is None and not payload.get("items"):
         return ["mr_id or items"]
     return []
+
+
+def goods_receipt_required(payload: dict, slots: dict) -> list[str]:
+    missing: list[str] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("purchase_phase_item_id") and not item.get("purchase_phase_item_query"):
+            missing.append("purchase phase item")
+        for field in ("received_quantity", "accepted_quantity", "rejected_quantity"):
+            if item.get(field) in (None, ""):
+                missing.append(field)
+    return missing
 
 
 class ConfiguredCommerceToolSet(ModuleToolSet):
@@ -293,7 +323,7 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
     def build_draft(self, *, intent: str, db: Session, user: User, slots: dict, attachments: list) -> DraftData:
         for spec in self.write_specs:
             if spec.intent == intent:
-                return self._build_write(spec, user, slots, attachments or [])
+                return self._build_write(spec, db, user, slots, attachments or [])
         raise ValueError(f"Unsupported write intent: {intent}")
 
     def _search(self, spec: SearchSpec, db: Session, user: User, slots: dict) -> dict:
@@ -374,7 +404,66 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
             "data": data,
         }
 
-    def _build_write(self, spec: WriteSpec, user: User, slots: dict, attachments: list) -> DraftData:
+    def _resolve_references(
+        self,
+        spec: WriteSpec,
+        db: Session,
+        user: User,
+        slots: dict,
+        payload: dict,
+    ) -> list[dict]:
+        references: list[dict] = []
+        for ref_spec in spec.reference_fields:
+            if ref_spec.collection:
+                rows = payload.get(ref_spec.collection)
+                if not isinstance(rows, list):
+                    continue
+                for index, row in enumerate(rows):
+                    if not isinstance(row, dict):
+                        continue
+                    explicit = _slot(row, *ref_spec.explicit_aliases) or _slot(slots, *ref_spec.explicit_aliases)
+                    raw = _str(row, *ref_spec.raw_aliases) or _str(slots, *ref_spec.raw_aliases)
+                    if explicit is None and raw is None:
+                        continue
+                    field_name = f"{ref_spec.collection}.{index}.{ref_spec.field}"
+                    resolution = resolve_field(
+                        db,
+                        user,
+                        field=field_name,
+                        resource_key=ref_spec.resource_key,
+                        raw_text=raw or "",
+                        slots=slots,
+                        explicit_id=explicit,
+                    )
+                    references.append(resolution.as_dict())
+                    if resolution.status == "resolved":
+                        row[ref_spec.field] = resolution.chosen["id"]
+                        for key in ref_spec.raw_aliases:
+                            row.pop(key, None)
+                continue
+
+            explicit = _slot(payload, *ref_spec.explicit_aliases) or _slot(slots, *ref_spec.explicit_aliases)
+            raw = _str(payload, *ref_spec.raw_aliases) or _str(slots, *ref_spec.raw_aliases)
+            if explicit is None and raw is None:
+                continue
+            resolution = resolve_field(
+                db,
+                user,
+                field=ref_spec.field,
+                resource_key=ref_spec.resource_key,
+                raw_text=raw or "",
+                slots=slots,
+                explicit_id=explicit,
+            )
+            references.append(resolution.as_dict())
+            if resolution.status == "resolved":
+                resolved_id = resolution.chosen["id"]
+                payload[ref_spec.field] = [resolved_id] if ref_spec.as_list else resolved_id
+                for key in ref_spec.raw_aliases:
+                    payload.pop(key, None)
+        return references
+
+    def _build_write(self, spec: WriteSpec, db: Session, user: User, slots: dict, attachments: list) -> DraftData:
         ensure_permission(user, spec.permission)
         payload: dict[str, Any] = {}
         for field_spec in spec.fields:
@@ -386,9 +475,27 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
             if items is not None:
                 payload["items"] = items
 
-        missing = [name for name in spec.required if payload.get(name) in (None, "", [])]
+        references = self._resolve_references(spec, db, user, slots, payload)
+        pending_references = [
+            ref for ref in references
+            if ref.get("status") in {"ambiguous", "missing"}
+        ]
+
+        pending_reference_fields = {
+            str(ref.get("field", "")).split(".")[-1]
+            for ref in pending_references
+        }
+        missing = [
+            name for name in spec.required
+            if payload.get(name) in (None, "", []) and name not in pending_reference_fields
+        ]
         if spec.validate:
             missing.extend(spec.validate(payload, slots))
+        for ref in pending_references:
+            for ref_spec in spec.reference_fields:
+                if ref.get("field") == ref_spec.field or str(ref.get("field", "")).endswith(f".{ref_spec.field}"):
+                    missing.append(ref_spec.missing_label)
+                    break
 
         entity_id = None
         if "{" in spec.endpoint:
@@ -397,14 +504,19 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
                 missing.insert(0, spec.id_aliases[0])
 
         if missing:
+            validation = {"valid": False, "missing": missing, "errors": {}}
+            if references:
+                validation["references"] = references
+                validation["references_pending"] = [ref["field"] for ref in pending_references]
             return DraftData(
                 target_module=self.module,
                 target_action=spec.target_action,
                 payload=payload,
                 commit_target={},
-                validation={"valid": False, "missing": missing, "errors": {}},
+                validation=validation,
                 valid=False,
-                clarify_question="I still need: " + ", ".join(missing) + ".",
+                clarify_question=self._clarify_question(missing, pending_references),
+                references=references,
             )
 
         if "{" in spec.endpoint and not payload:
@@ -433,5 +545,17 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
             payload=payload,
             commit_target=commit_target,
             attachments=list(attachments),
-            validation={"valid": True},
+            validation={"valid": True, "references": references, "references_pending": []},
+            references=references,
         )
+
+    @staticmethod
+    def _clarify_question(missing: list[str], pending_references: list[dict]) -> str:
+        if pending_references:
+            first = pending_references[0]
+            if first.get("status") == "ambiguous":
+                return "I found multiple possible matches. Please choose the correct item from the references."
+            if first.get("create_suggestion"):
+                return "I could not find that item. Do you want to create it, or should I search again with different text?"
+            return "I could not resolve the referenced item. Please provide an item id or a clearer item name."
+        return "I still need: " + ", ".join(missing) + "."
