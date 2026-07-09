@@ -97,3 +97,15 @@ def test_get_developer_doc_blocks_path_traversal():
         app.dependency_overrides.clear()
 
     assert response.status_code == 404
+
+
+def test_get_developer_doc_blocks_hidden_files():
+    app = create_app()
+    client = client_for(app, make_user(permissions=["developer_docs:read"]))
+
+    try:
+        response = client.get("/developer-docs/.DS_Store")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404

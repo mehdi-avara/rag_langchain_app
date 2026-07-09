@@ -10,7 +10,7 @@ from deps import require_permission
 
 router = APIRouter()
 
-DOCS_ROOT = "docs"
+DOCS_ROOT = Path(__file__).resolve().parents[1] / "docs"
 
 
 class DeveloperDocOut(BaseModel):
@@ -20,6 +20,12 @@ class DeveloperDocOut(BaseModel):
 
 
 def _resolve_doc_path(doc_path: str) -> Path:
+    if any(part.startswith(".") for part in Path(doc_path).parts):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Documentation file not found",
+        )
+
     requested_path = (DOCS_ROOT / doc_path).resolve()
 
     if (
