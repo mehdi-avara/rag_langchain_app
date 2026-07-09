@@ -254,6 +254,51 @@ def test_material_requisition_missing_item_returns_partial_with_create_suggestio
     assert "create it" in draft.clarify_question
 
 
+def test_material_requisition_weak_item_hits_are_missing_not_ambiguous():
+    saved = get_resource("material_item")
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission="material_management:search",
+        provider=FakeProvider([
+            Candidate(
+                id=7,
+                match_text="Legacy tewtwe tetw",
+                label="LEGACY-WI-1 - Legacy tewtwe tetw #C77700 - material",
+                data={"item_id": 7, "item_code": "LEGACY-WI-1", "name": "Legacy tewtwe tetw"},
+            ),
+            Candidate(
+                id=11,
+                match_text="test",
+                label="32412312 - test - material",
+                data={"item_id": 11, "item_code": "32412312", "name": "test"},
+            ),
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials",
+        suggestion_from=lambda raw, slots: {"name": raw, "item_code": raw},
+    ))
+    try:
+        draft = requisition_tools.RequisitionAssistantToolSet().build_draft(
+            intent="add_material_requisition",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "item_name": "چسب belzona مدل m22",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved is not None:
+            register_resource(saved)
+
+    reference = draft.validation["references"][0]
+    assert draft.valid is False
+    assert reference["status"] == "missing"
+    assert reference["alternatives"] == []
+    assert reference["create_suggestion"]["endpoint"] == "/materials"
+    assert "create it" in draft.clarify_question
+
+
 def test_purchase_order_from_rfq_uses_rfq_conversion_endpoint():
     saved = get_resource("rfq")
     register_resource(ResourceSpec(

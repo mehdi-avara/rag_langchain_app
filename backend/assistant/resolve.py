@@ -18,6 +18,7 @@ server-side Python that calls the module's registered :class:`SearchProvider`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Dict, List, Optional
 
 from Models import User
@@ -28,6 +29,11 @@ from .rbac import has_permission
 RESOLVED = "resolved"
 AMBIGUOUS = "ambiguous"
 MISSING = "missing"
+_TOKEN_RE = re.compile(r"[\w\u0600-\u06ff]+", flags=re.UNICODE)
+_STOPWORDS = {
+    "a", "an", "and", "for", "from", "in", "model", "of", "the", "to",
+    "از", "برای", "در", "مدل", "و",
+}
 
 
 @dataclass
@@ -52,6 +58,39 @@ def _slim(c: Candidate) -> Dict[str, Any]:
     return {"id": c.id, "label": c.label}
 
 
+def _tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _TOKEN_RE.findall((text or "").lower())
+        if len(token) >= 2 and token not in _STOPWORDS
+    }
+
+
+def _candidate_text(candidate: Candidate) -> str:
+    data_text = " ".join(str(value) for value in (candidate.data or {}).values() if value is not None)
+    return " ".join(part for part in (candidate.match_text, candidate.label, data_text) if part)
+
+
+def _plausible_candidates(raw: str, candidates: List[Candidate]) -> List[Candidate]:
+    raw_tokens = _tokens(raw)
+    if not raw_tokens:
+        return candidates
+
+    plausible: List[Candidate] = []
+    for candidate in candidates:
+        text = _candidate_text(candidate).lower()
+        candidate_tokens = _tokens(text)
+        if raw.strip().lower() in text:
+            plausible.append(candidate)
+            continue
+        if raw_tokens & candidate_tokens:
+            plausible.append(candidate)
+            continue
+        if any(token in text for token in raw_tokens):
+            plausible.append(candidate)
+    return plausible
+
+
 def resolve_reference(field: str, raw_text: str, candidates: List[Candidate]) -> ReferenceResolution:
     """Pure ranking. ILIKE gives no scores, so rank by exact-name match then provider order.
     (A future scored matcher can replace this body without changing callers.)"""
@@ -62,17 +101,23 @@ def resolve_reference(field: str, raw_text: str, candidates: List[Candidate]) ->
     norm = raw.lower()
     exact = [c for c in candidates if (c.match_text or "").strip().lower() == norm]
 
-    if len(candidates) == 1:
-        chosen = candidates[0]
-        return ReferenceResolution(field, raw, RESOLVED, chosen=_slim(chosen))
     if len(exact) == 1:
         chosen = exact[0]
         others = [c for c in candidates if c.id != chosen.id][:5]
         return ReferenceResolution(field, raw, RESOLVED, chosen=_slim(chosen),
                                    alternatives=[_slim(c) for c in others])
+
+    plausible = _plausible_candidates(raw, candidates)
+    if not plausible:
+        return ReferenceResolution(field, raw, MISSING)
+
+    if len(plausible) == 1:
+        chosen = plausible[0]
+        return ReferenceResolution(field, raw, RESOLVED, chosen=_slim(chosen))
+
     # ambiguous: default to first, return up to 5 alternatives
-    chosen = candidates[0]
-    alts = [c for c in candidates if c.id != chosen.id][:5]
+    chosen = plausible[0]
+    alts = [c for c in plausible if c.id != chosen.id][:5]
     return ReferenceResolution(field, raw, AMBIGUOUS, chosen=_slim(chosen),
                                alternatives=[_slim(c) for c in alts])
 

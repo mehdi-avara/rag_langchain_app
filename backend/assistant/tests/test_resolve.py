@@ -30,9 +30,20 @@ def test_zero_candidates_is_missing():
 
 
 def test_single_candidate_is_resolved():
-    res = resolve_reference("credit_card_id", "anything", [_c(12, "Mellat", "Mellat — •••• 4821")])
+    res = resolve_reference("credit_card_id", "Mellat", [_c(12, "Mellat", "Mellat — •••• 4821")])
     assert res.status == RESOLVED
     assert res.chosen == {"id": 12, "label": "Mellat — •••• 4821"}
+    assert res.alternatives == []
+
+
+def test_unrelated_candidates_are_missing_not_ambiguous():
+    cands = [
+        _c(7, "Legacy tewtwe", "LEGACY-WI-1 - Legacy tewtwe #C77700 - material"),
+        _c(8, "test", "32412312 - test - material"),
+    ]
+    res = resolve_reference("item_id", "چسب belzona مدل m22", cands)
+    assert res.status == MISSING
+    assert res.chosen is None
     assert res.alternatives == []
 
 
@@ -59,7 +70,7 @@ def test_multiple_exact_matches_is_ambiguous():
     res = resolve_reference("customer_id", "ACME", cands)
     assert res.status == AMBIGUOUS
     assert res.chosen["id"] == 1
-    assert len(res.alternatives) == 2
+    assert [item["id"] for item in res.alternatives] == [2]
 
 
 # ---------------------------------------------------------------------------
