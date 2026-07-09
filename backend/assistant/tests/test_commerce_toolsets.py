@@ -386,6 +386,84 @@ def test_graph_routes_commerce_write_to_draft_not_commit(monkeypatch):
     assert "committed_entity_ref" not in draft
 
 
+def test_vlm_extracted_commerce_slots_build_material_requisition_draft(monkeypatch):
+    captured_router_call = {}
+    saved = get_resource("material_item")
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission="material_management:search",
+        provider=FakeProvider([
+            Candidate(
+                id=99,
+                match_text="Pump seal",
+                label="PUMP-SEAL - Pump seal",
+                data={"item_id": 99, "item_code": "PUMP-SEAL", "name": "Pump seal"},
+            )
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials",
+        suggestion_from=lambda raw, slots: {"name": raw, "item_code": raw},
+    ))
+
+    async def fake_classify(**kwargs):
+        captured_router_call.update(kwargs)
+        return {
+            "intent": "add_material_requisition",
+            "language": "fa",
+            "slots": {
+                "needed_by_date": "2026-08-01",
+                "reason": "پمپ تعمیر شود",
+                "item_name": "Pump seal",
+                "quantity": "2",
+            },
+            "clarify_question": None,
+        }
+
+    monkeypatch.setattr(router_mod, "classify", fake_classify)
+    image_blocks = [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,AAAA",
+                "detail": "low",
+            },
+        }
+    ]
+    try:
+        result = asyncio.run(
+            build_assistant_graph().ainvoke(
+                {
+                    "user": make_user(ALL_COMMERCE_PERMS),
+                    "db": None,
+                    "question": "از روی عکس یک درخواست کالا بساز",
+                    "attachments": [123],
+                    "image_blocks": image_blocks,
+                    "slots": {},
+                    "step_count": 0,
+                }
+            )
+        )
+    finally:
+        if saved is not None:
+            register_resource(saved)
+
+    assert captured_router_call["has_attachments"] is True
+    assert captured_router_call["image_blocks"] == image_blocks
+    draft = result.get("pending_draft")
+    assert draft is not None
+    assert draft["target_module"] == "requisition_management"
+    assert draft["target_action"] == "create_material_requisition"
+    assert draft["payload"]["needed_by_date"] == "2026-08-01"
+    assert draft["payload"]["reason"] == "پمپ تعمیر شود"
+    assert draft["payload"]["items"] == [{"quantity": "2", "item_id": 99}]
+    assert draft["commit_target"] == {
+        "method": "POST",
+        "endpoint": "/requisitions",
+        "permission": "requisition_management:create",
+    }
+    assert "committed_entity_ref" not in draft
+
+
 def test_followup_merges_previous_commerce_partial_draft(monkeypatch):
     async def fake_classify(**kwargs):
         return {
