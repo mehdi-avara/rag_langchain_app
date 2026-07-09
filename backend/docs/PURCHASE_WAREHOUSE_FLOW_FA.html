@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>جریان خرید و انبار — مستند مبتنی بر کد</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e9ef; --muted:#9aa3b2;
+    --line:#2a2f3a; --req:#c084fc; --core:#34d399; --opt:#fbbf24; --ref:#60a5fa;
+    --add:#f472b6; --seam:#f87171; --code:#8be9fd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 Vazirmatn,Tahoma,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:32px 28px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:21px;margin:46px 0 6px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:17px;margin:28px 0 6px;color:#cbd5e1}
+  p{color:var(--muted);max-width:1000px}
+  code,.cite{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;direction:ltr;unicode-bidi:embed}
+  .cite{color:var(--code);white-space:nowrap;display:inline-block}
+  .lead{max-width:1000px;color:#c7cdd8}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 8px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .legend span{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:#cdd3de}
+  .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;vertical-align:middle}
+  .pill.req{background:rgba(248,113,113,.16);color:#fca5a5;border:1px solid #7f3a3a}
+  .pill.opt{background:rgba(251,191,36,.14);color:#fcd34d;border:1px solid #7a5a18}
+  .pill.ref{background:rgba(96,165,250,.14);color:#93c5fd;border:1px solid #2f4d7a}
+  .pill.add{background:rgba(244,114,182,.14);color:#f9a8d4;border:1px solid #7a3a5c}
+  .pill.core{background:rgba(52,211,153,.14);color:#6ee7b7;border:1px solid #1f6e54}
+  table{border-collapse:collapse;width:100%;margin:10px 0 6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  caption{caption-side:top;text-align:right;color:#cbd5e1;font-weight:600;padding:8px 4px;font-size:14.5px}
+  th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:#aeb6c4;font-size:12px}
+  tr:last-child td{border-bottom:none}
+  td.f{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#e9edf4;white-space:nowrap;direction:ltr;text-align:left}
+  td.t{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2;white-space:nowrap;direction:ltr;text-align:left}
+  td.c{direction:ltr;text-align:left}
+  .req-yes{color:#fca5a5;font-weight:600}
+  .req-no{color:#8b94a3}
+  .note{background:var(--panel);border-right:3px solid var(--ref);padding:10px 14px;border-radius:6px;margin:12px 0;max-width:1000px;color:#c7cdd8}
+  .note.warn{border-right-color:var(--seam)}
+  .note.ok{border-right-color:var(--core)}
+  .intro-list{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 22px 8px 8px;margin:8px 0;max-width:1000px}
+  .intro-list li{margin:5px 0;color:#cdd3de}
+  .intro-list code{color:#e9edf4}
+  .diagram{width:100%;overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 6px;margin:14px 0}
+  svg{display:block;margin:0 auto}
+  .box-title{font:600 14px Vazirmatn,Tahoma,sans-serif}
+  .box-sub{font:11px ui-monospace,Menlo,monospace;direction:ltr}
+  .box-fa{font:12px Vazirmatn,Tahoma,sans-serif}
+  .edge-lbl{font:11px ui-monospace,Menlo,monospace;direction:ltr}
+  .bypass-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;margin:14px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px}
+  .card .verdict{font-size:12px;font-weight:700}
+  .card.skip{border-top:3px solid var(--opt)}
+  .card.cant{border-top:3px solid var(--core)}
+  .card p{color:#bcc4d2;font-size:13.5px;margin:6px 0}
+  .ev{font-size:12px;color:#93a0b4;margin-top:6px}
+  .toc a{color:#93c5fd;text-decoration:none;margin-left:16px;font-size:13px}
+  footer{margin-top:50px;color:#6b7384;font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+
+<h1>جریان خرید و جریان انبار</h1>
+<p class="lead">هر ادعای این سند مستقیماً از روی مدل‌های SQLAlchemy و کد سرویس‌ها استخراج شده و با
+<span class="cite">file:line</span> ارجاع داده شده است. هرجا رفتاری توسط اسکیمای پایگاه‌داده یا گاردِ سرویس
+تضمین <em>نشده</em> باشد، صریحاً با عبارت <strong>«در کد اعمال نشده»</strong> مشخص شده است. اتصال مراحل با کلید خارجی/ارجاع
+است؛ هر مرحله فقط دادهٔ <em>جدید خودش</em> را اضافه می‌کند و رکوردهای مرحلهٔ قبل را کپی نمی‌کند.</p>
+
+<div class="legend">
+  <span><span class="dot" style="background:var(--core)"></span> مرحلهٔ هسته — قابل حذف نیست</span>
+  <span><span class="dot" style="background:var(--opt)"></span> مرحلهٔ اختیاری — قابل حذف</span>
+  <span><span class="pill req">اجباری</span> یعنی NOT NULL در اسکیما</span>
+  <span><span class="pill ref">منتقل‌شده</span> ارجاع/کلید خارجی به مرحلهٔ قبل</span>
+  <span><span class="pill add">جدید</span> داده‌ای که همین‌جا اضافه می‌شود</span>
+  <span><span class="dot" style="background:var(--seam)"></span> درز رویدادی بین ماژول‌ها</span>
+</div>
+
+<div class="toc">
+  <a href="#pflow">۱ · نمودار جریان خرید</a>
+  <a href="#ptables">۲ · جدول‌های دادهٔ خرید</a>
+  <a href="#wflow">۳ · نمودار جریان انبار</a>
+  <a href="#wtables">۴ · جدول‌های دادهٔ انبار</a>
+  <a href="#bypass">۵ · چه مراحلی قابل حذف‌اند</a>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="pflow">۱ · جریان خرید — کل مسیر</h2>
+<p>مالک/کنشگرِ هر مرحله زیر هر جعبه آمده است. زنجیره، توالی‌ای از ارجاع‌های کلید خارجی است؛ تنها جایی که داده به‌صورت
+ناهم‌زمان از مرز یک ماژول عبور می‌کند، مسیر <span class="cite">goods_receipt → warehouse</span> از طریق تسک Celery به نام
+<code>on_grn_posted</code> است.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 680 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="نمودار جریان خرید">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#7f8aa0"/></marker>
+    <marker id="arrSeam" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#f87171"/></marker>
+  </defs>
+
+  <!-- 1 MR -->
+  <rect x="150" y="18" width="380" height="64" rx="10" fill="#1d212b" stroke="#5b3f7a" stroke-width="1.5"/>
+  <text x="340" y="40" class="box-title" fill="#e6e9ef" text-anchor="middle">۱) درخواست کالا — اختیاری</text>
+  <text x="510" y="62" class="box-sub" fill="#c084fc" text-anchor="end">material_requisitions</text>
+  <text x="170" y="62" class="box-fa" fill="#fbbf24" text-anchor="start">مالک: درخواست‌دهنده / واحد</text>
+
+  <line x1="340" y1="82" x2="340" y2="102" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="350" y="97" class="edge-lbl" fill="#9aa3b2" text-anchor="start">mr_id</text>
+
+  <!-- 2 RFQ -->
+  <rect x="150" y="102" width="380" height="64" rx="10" fill="#1d212b" stroke="#2f4d7a" stroke-width="1.5"/>
+  <text x="340" y="124" class="box-title" fill="#e6e9ef" text-anchor="middle">۲) استعلام بها + قیمت تأمین‌کننده — اختیاری</text>
+  <text x="510" y="146" class="box-sub" fill="#60a5fa" text-anchor="end">rfqs / quotation_responses</text>
+  <text x="170" y="146" class="box-fa" fill="#fbbf24" text-anchor="start">مالک: تدارکات</text>
+
+  <line x1="340" y1="166" x2="340" y2="186" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="350" y="181" class="edge-lbl" fill="#9aa3b2" text-anchor="start">rfq_id</text>
+
+  <!-- 3 PO -->
+  <rect x="150" y="186" width="380" height="70" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="340" y="210" class="box-title" fill="#e6e9ef" text-anchor="middle">۳) سفارش خرید + فازها + اقلام — هسته</text>
+  <text x="510" y="232" class="box-sub" fill="#34d399" text-anchor="end">purchase_orders / phases / items</text>
+  <text x="170" y="232" class="box-fa" fill="#6ee7b7" text-anchor="start">تعداد + قیمت واحد · مالک: خریدار</text>
+
+  <line x1="340" y1="256" x2="340" y2="276" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- approval -->
+  <rect x="190" y="276" width="300" height="42" rx="8" fill="#171a21" stroke="#2a2f3a" stroke-dasharray="4 3"/>
+  <text x="340" y="296" class="box-fa" fill="#cbd5e1" text-anchor="middle">تأیید سفارش → وضعیت ordered</text>
+  <text x="340" y="312" class="box-sub" fill="#9aa3b2" text-anchor="middle">(پیش‌نیاز هر دریافت کالا)</text>
+
+  <line x1="340" y1="318" x2="340" y2="338" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- 4 GRN -->
+  <rect x="150" y="338" width="380" height="70" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="340" y="362" class="box-title" fill="#e6e9ef" text-anchor="middle">۴) رسید کالا (پذیرش/مرجوع) — هسته</text>
+  <text x="510" y="384" class="box-sub" fill="#34d399" text-anchor="end">goods_receipt_notes / items</text>
+  <text x="170" y="384" class="box-fa" fill="#6ee7b7" text-anchor="start">به ازای هر فاز · مالک: مسئول دریافت</text>
+
+  <line x1="340" y1="408" x2="340" y2="428" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- post -->
+  <rect x="190" y="428" width="300" height="46" rx="8" fill="#171a21" stroke="#2a2f3a" stroke-dasharray="4 3"/>
+  <text x="340" y="448" class="box-fa" fill="#cbd5e1" text-anchor="middle">ثبت نهایی → apply_goods_receipt</text>
+  <text x="340" y="464" class="box-sub" fill="#9aa3b2" text-anchor="middle">+= received_quantity · بروزرسانی وضعیت · گارد دریافت مازاد</text>
+
+  <line x1="340" y1="474" x2="340" y2="496" stroke="#f87171" stroke-width="2.2" marker-end="url(#arrSeam)"/>
+  <text x="350" y="489" class="edge-lbl" fill="#f87171" text-anchor="start">on_grn_posted.delay() — Celery</text>
+
+  <!-- 5 warehouse pointer -->
+  <rect x="150" y="496" width="380" height="64" rx="10" fill="#241a1a" stroke="#7f3a3a" stroke-width="2"/>
+  <text x="340" y="520" class="box-title" fill="#e6e9ef" text-anchor="middle">۵) انبار — گردش موجودی + مانده موجودی — هسته</text>
+  <text x="510" y="542" class="box-sub" fill="#f87171" text-anchor="end">stock_movements / stock_items</text>
+  <text x="170" y="542" class="box-fa" fill="#6ee7b7" text-anchor="start">مالک: سیستم (کارگر Celery)</text>
+
+  <!-- skip arrow -->
+  <path d="M150,50 C70,120 70,200 150,221" fill="none" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <text x="60" y="140" class="box-fa" fill="#fbbf24" text-anchor="middle" transform="rotate(-90 60 140)">حذف مراحل ۱ و ۲ → ساخت دستی سفارش</text>
+</svg>
+</div>
+
+<div class="note">
+  <strong>جزئیات درز.</strong> تابع <code>post_goods_receipt</code> ابتدا
+  <code>purchase_management.apply_goods_receipt</code> را <em>درون‌فرایندی</em> صدا می‌زند، وضعیت رسید را
+  <code>POSTED</code> می‌کند، commit می‌کند، و سپس رویداد <code>on_grn_posted.delay(grn.id)</code> را شلیک می‌کند.
+  سمت انبار در تراکنش/کارگر جداگانه اجرا می‌شود.
+  <span class="cite">goods_receipt_management/services.py:819–839</span>،
+  <span class="cite">warehouse_management/tasks.py:28–35</span>.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="ptables">۲ · جریان خرید — جدول‌های داده به تفکیک مرحله</h2>
+
+<h3>مرحلهٔ ۱ — درخواست کالا <span class="pill opt">اختیاری</span>
+  <span class="cite">requisition_management/models.py</span></h3>
+<table>
+  <caption><code>material_requisitions</code> (سرفصل) — وضعیت‌ها <span class="cite">:29–36</span> (draft→submitted→under_review→approved→rejected→ordered→closed)</caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span></td><td class="cite">:57–61</td></tr>
+  <tr><td class="f">mr_number</td><td class="t">String(50)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:62</td></tr>
+  <tr><td class="f">needed_by_date</td><td class="t">Date</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:69</td></tr>
+  <tr><td class="f">reason</td><td class="t">Text</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:70</td></tr>
+  <tr><td class="f">priority</td><td class="t">String(20)</td><td class="req-yes">بله (پیش‌فرض normal)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:71–75</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">بله (پیش‌فرض draft)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:76–80</td></tr>
+  <tr><td class="f">requested_by_user_id / department_id / notes</td><td class="t">FK / Integer / Text</td><td class="req-no">خیر</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:63–81</td></tr>
+</table>
+<table>
+  <caption><code>material_requisition_items</code> (اقلام)</caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">material_requisition_id</td><td class="t">FK material_requisitions</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> والد</td><td class="cite">:127–131</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (SET NULL)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> کاتالوگ</td><td class="cite">:132–136</td></tr>
+  <tr><td class="f">item_name</td><td class="t">String(255)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:138</td></tr>
+  <tr><td class="f">quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:145</td></tr>
+  <tr><td class="f">estimated_unit_cost (+ ارز/پایه/نرخ)</td><td class="t">Numeric / FK currencies</td><td class="req-no">خیر (همه nullable)</td><td class="c"><span class="pill add">جدید</span> برآورد</td><td class="cite">:146–158</td></tr>
+</table>
+
+<h3>مرحلهٔ ۲ — استعلام بها، تأمین‌کنندگان، پیشنهادها <span class="pill opt">اختیاری</span>
+  <span class="cite">rfq_management/models.py</span></h3>
+<table>
+  <caption><code>rfqs</code> (سرفصل) — وضعیت‌ها <span class="cite">:24–28</span>؛ یکتایی <code>(company_id, mr_id)</code> <span class="cite">:41</span></caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">mr_id</td><td class="t">FK material_requisitions (SET NULL)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> ← مرحلهٔ ۱</td><td class="cite">:57–61</td></tr>
+  <tr><td class="f">rfq_number / title / deadline_date / status</td><td class="t">String / Date</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:56–65</td></tr>
+</table>
+<table>
+  <caption>تأمین‌کنندگان، اقلام و پیشنهادها (فیلدهای کلیدی)</caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">rfq_suppliers.supplier_id</td><td class="t">FK suppliers (SET NULL)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span></td><td class="cite">:119–123</td></tr>
+  <tr><td class="f">rfq_suppliers.supplier_name</td><td class="t">String(255)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> جایگزین متنی</td><td class="cite">:125</td></tr>
+  <tr><td class="f">rfq_items.item_id / quantity</td><td class="t">FK / Numeric</td><td class="req-no">خیر / <span class="req-yes">بله</span></td><td class="c"><span class="pill ref">منتقل‌شده</span> + <span class="pill add">جدید</span></td><td class="cite">:154–168</td></tr>
+  <tr><td class="f">quotation_responses.is_winner</td><td class="t">Boolean</td><td class="req-yes">بله (پیش‌فرض false)</td><td class="c"><span class="pill add">جدید</span> انتخاب برنده</td><td class="cite">:210</td></tr>
+  <tr><td class="f">quotation_response_items.unit_price (+ ارز/پایه/نرخ)</td><td class="t">Numeric(28,10) / FK</td><td class="req-yes">بله (همه NOT NULL)</td><td class="c"><span class="pill add">جدید</span> قیمت تأمین‌کننده</td><td class="cite">:261–273</td></tr>
+  <tr><td class="f">quotation_response_items.rfq_item_id</td><td class="t">FK rfq_items</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> اتصال قیمت↔قلم</td><td class="cite">:256–260</td></tr>
+</table>
+<div class="note"><strong>برای اولین بار اینجا اضافه می‌شود:</strong> بُعد <em>تأمین‌کننده</em> و <em>قیمت واحد پیشنهادی</em>
+هر قلم (<code>quotation_response_items.unit_price</code>، اجباری، مدل ۴-فیلدی پول) به‌علاوهٔ پرچم برنده. همین قیمت به سفارش خرید جریان می‌یابد.</div>
+
+<h3>مرحلهٔ ۳ — سفارش خرید + فازها + اقلام <span class="pill core">هسته</span>
+  <span class="cite">purchase_management/models.py</span></h3>
+<table>
+  <caption><code>purchase_orders</code> (سرفصل) — وضعیت <span class="cite">:32–39</span>؛ تأیید <span class="cite">:42–46</span>؛ یکتایی <code>(company_id, rfq_id)</code> <span class="cite">:75</span></caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">reference_number</td><td class="t">String(50)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> PO-YYYY-NNNN</td><td class="cite">:84</td></tr>
+  <tr><td class="f">rfq_id</td><td class="t">FK rfqs (RESTRICT)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> ← مرحلهٔ ۲</td><td class="cite">:86–91</td></tr>
+  <tr><td class="f">winning_quotation_response_id</td><td class="t">FK quotation_responses</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> ← مرحلهٔ ۲</td><td class="cite">:92–97</td></tr>
+  <tr><td class="f">supplier_id</td><td class="t">FK suppliers (SET NULL)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span></td><td class="cite">:100</td></tr>
+  <tr><td class="f">supplier_name</td><td class="t">String(255)</td><td class="req-no">خیر</td><td class="c"><span class="pill add">جدید</span> جایگزین متنی</td><td class="cite">:101</td></tr>
+  <tr><td class="f">currency_id / base_currency_id / exchange_rate_used</td><td class="t">FK currencies / Numeric</td><td class="req-yes">بله (NOT NULL)</td><td class="c"><span class="pill add">جدید</span> پولِ سرفصل</td><td class="cite">:104–106</td></tr>
+  <tr><td class="f">status / approval_status</td><td class="t">String(20)</td><td class="req-yes">بله (پیش‌فرض draft)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:110–111</td></tr>
+</table>
+<table>
+  <caption><code>purchase_phases</code> = محموله/مرحلهٔ تحویل فیزیکی — وضعیت <span class="cite">:49–54</span></caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">purchase_order_id</td><td class="t">FK purchase_orders</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> والد</td><td class="cite">:158</td></tr>
+  <tr><td class="f">phase_number</td><td class="t">Integer</td><td class="req-yes">بله (پیش‌فرض ۱)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:159</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">بله (پیش‌فرض draft)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:163</td></tr>
+  <tr><td class="f">currency_id / exchange_rate_used</td><td class="t">FK / Numeric</td><td class="req-no">خیر (از PO ارث‌بری)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:166–167</td></tr>
+  <tr><td class="f">expected_/actual_delivery_date</td><td class="t">DateTime</td><td class="req-no">خیر</td><td class="c"><span class="pill add">جدید</span> (واقعی هنگام رسید)</td><td class="cite">:169–170</td></tr>
+</table>
+<table>
+  <caption><code>purchase_phase_items</code> — تعداد و قیمت تعهدشدهٔ هر قلم</caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">phase_id</td><td class="t">FK purchase_phases</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> والد</td><td class="cite">:192</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (SET NULL)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> کاتالوگ</td><td class="cite">:193</td></tr>
+  <tr><td class="f">item_name</td><td class="t">String(255)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:196</td></tr>
+  <tr><td class="f">quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> تعداد تعهدشده</td><td class="cite">:199</td></tr>
+  <tr><td class="f">received_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله (پیش‌فرض ۰)</td><td class="c"><span class="pill add">جدید</span> — با ثبت رسید تغییر می‌کند</td><td class="cite">:200</td></tr>
+  <tr><td class="f">unit_price (+ ارز/پایه/نرخ)</td><td class="t">Numeric(28,10) / FK</td><td class="req-yes">بله (NOT NULL)</td><td class="c"><span class="pill add">جدید</span> ۴-فیلدی پول</td><td class="cite">:204–208</td></tr>
+  <tr><td class="f">line_total / line_total_base</td><td class="t">Numeric(28,10)</td><td class="req-yes">بله (پیش‌فرض ۰)</td><td class="c"><span class="pill add">جدید</span> تعداد×قیمت</td><td class="cite">:210–211</td></tr>
+</table>
+<div class="intro-list"><ul>
+  <li><strong>برای اولین بار اینجا اضافه می‌شود:</strong> <code>quantity</code> + <code>unit_price</code> (تعهد قراردادی)،
+  <code>received_quantity</code> (شمارندهٔ تحقق)، و فازبندی محموله‌ها. هزینه‌های جانبی
+  (<code>purchase_order_costs</code> — حمل/گمرک/مالیات/بیمه، <span class="cite">:222–246</span>) و
+  لینک رسید مالی (<code>purchase_order_receipt_links.financial_receipt_id</code> — عدد ساده، بدون FK، <span class="cite">:264</span>)
+  هم در سطح سفارش معرفی می‌شوند.</li>
+</ul></div>
+
+<h3>مرحلهٔ ۴ — رسید کالا <span class="pill core">هسته</span>
+  <span class="cite">goods_receipt_management/models.py</span></h3>
+<table>
+  <caption><code>goods_receipt_notes</code> (سرفصل) — وضعیت <span class="cite">:23–25</span> (draft/posted)</caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">grn_number</td><td class="t">String(50)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> GRN-YYYY-NNNN</td><td class="cite">:52</td></tr>
+  <tr><td class="f">purchase_order_id</td><td class="t">FK purchase_orders (RESTRICT)</td><td class="req-yes"><strong>بله</strong></td><td class="c"><span class="pill ref">منتقل‌شده</span> ← مرحلهٔ ۳</td><td class="cite">:53–57</td></tr>
+  <tr><td class="f">purchase_phase_id</td><td class="t">FK purchase_phases (RESTRICT)</td><td class="req-yes"><strong>بله</strong></td><td class="c"><span class="pill ref">منتقل‌شده</span> ← مرحلهٔ ۳</td><td class="cite">:58–62</td></tr>
+  <tr><td class="f">receipt_date</td><td class="t">Date</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:68</td></tr>
+  <tr><td class="f">warehouse_id</td><td class="t">FK warehouses (RESTRICT)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> → مقصد مرحلهٔ ۵</td><td class="cite">:70–74</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">بله (پیش‌فرض draft)</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:75–79</td></tr>
+</table>
+<table>
+  <caption><code>goods_receipt_items</code> — تفکیک پذیرش/مرجوع؛ یکتایی <code>(grn_id, purchase_phase_item_id)</code> <span class="cite">:101–105</span></caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">purchase_phase_item_id</td><td class="t">FK purchase_phase_items (RESTRICT)</td><td class="req-yes"><strong>بله</strong></td><td class="c"><span class="pill ref">منتقل‌شده</span> ← قلمِ فاز در حال دریافت</td><td class="cite">:120–124</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (SET NULL)</td><td class="req-no">خیر*</td><td class="c"><span class="pill ref">منتقل‌شده</span> *برای پذیرش الزامی (سرویس)</td><td class="cite">:125–129</td></tr>
+  <tr><td class="f">received_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:133</td></tr>
+  <tr><td class="f">accepted_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> → محرک ورود موجودی</td><td class="cite">:134</td></tr>
+  <tr><td class="f">rejected_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span></td><td class="cite">:135</td></tr>
+  <tr><td class="f">rejection_reason</td><td class="t">Text</td><td class="req-no">خیر*</td><td class="c"><span class="pill add">جدید</span> *اگر مرجوع&gt;۰ الزامی (سرویس)</td><td class="cite">:136</td></tr>
+  <tr><td class="f">storage_location_id</td><td class="t">FK storage_locations (RESTRICT)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> → مقصد مرحلهٔ ۵</td><td class="cite">:137–141</td></tr>
+  <tr><td class="f">unit_cost (+ ارز/پایه/نرخ)</td><td class="t">Numeric / FK currencies</td><td class="req-yes">بله (NOT NULL)</td><td class="c"><span class="pill ref">منتقل‌شده</span> از قیمت قلمِ سفارش کپی می‌شود</td><td class="cite">:142–154</td></tr>
+</table>
+<div class="intro-list"><ul>
+  <li><strong>برای اولین بار اینجا اضافه می‌شود:</strong> <code>received_quantity</code> / <code>accepted_quantity</code> /
+  <code>rejected_quantity</code> (تفکیک کنترل کیفیت) و محل نگهداری دریافت (<code>storage_location_id</code>).
+  فیلدهای هزینه <em>منتقل</em> می‌شوند نه وارد: تابع <code>build_goods_receipt_item</code> مقدار <code>unit_price → unit_cost</code>
+  را از قلمِ فاز کپی می‌کند <span class="cite">goods_receipt_management/services.py:297–315</span>.</li>
+</ul></div>
+
+<div class="note ok"><strong>«ثبت نهایی» چه چیزی را الزام و چه چیزی را تغییر می‌دهد</strong> —
+<code>post_goods_receipt</code> <span class="cite">goods_receipt_management/services.py:774–845</span>:
+باید <code>draft</code> باشد (:784)، باید قلم داشته باشد (:786–791)، مالکیت انبار/محل بررسی می‌شود (:793)،
+تفکیک تعداد هر قلم دوباره اعتبارسنجی می‌شود (:799–807)، و برای هر قلمِ پذیرفته‌شده <code>item_id</code> الزامی است (:809–817).
+سپس <code>apply_goods_receipt</code> <span class="cite">purchase_management/services.py:721</span> فراخوانی می‌شود که سفارش را قفل می‌کند
+(:729–737)، <strong>اگر سفارش قابل دریافت نباشد</strong> — غیر از draft/cancelled/closed (:745–754) و فاز غیر از draft/closed (:772–780) —
+دریافت را مسدود می‌کند، گاردِ <strong>دریافت مازاد</strong> را اعمال می‌کند (تعداد جدید &gt; تعداد سفارش → خطا، :819–824)،
+<code>received_quantity</code> را افزایش می‌دهد (:826–833)، و وضعیت فاز را به <code>received</code>/<code>shipped</code>
+(:841–855) و سفارش را به <code>received</code>/<code>partially_received</code> (:867–877) به‌روز می‌کند. در پایان وضعیت رسید →
+<code>POSTED</code> (:836) و رویداد انبار شلیک می‌شود (:839).</div>
+
+<!-- ============================================================= -->
+<h2 id="wflow">۳ · جریان انبار — کل مسیر</h2>
+<p>ماژول انبار هرگز مدل‌های خرید/رسید را مستقیم نمی‌خواند. تسک Celery یک دیکشنری ساده را با
+<code>get_posted_goods_receipt_for_warehouse</code> دریافت می‌کند و دو چیز می‌نویسد: یک ردیف تغییرناپذیر در
+<code>stock_movements</code> (دلتا) و مانده جاری <code>stock_items</code> (بهای میانگین موزون).</p>
+
+<div class="diagram">
+<svg viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="نمودار جریان انبار">
+  <defs>
+    <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#7f8aa0"/></marker>
+    <marker id="arrSeam2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#f87171"/></marker>
+  </defs>
+
+  <rect x="150" y="18" width="380" height="60" rx="10" fill="#241a1a" stroke="#7f3a3a" stroke-width="1.6"/>
+  <text x="340" y="42" class="box-title" fill="#e6e9ef" text-anchor="middle">رویداد: GRN POSTED</text>
+  <text x="340" y="64" class="box-sub" fill="#f87171" text-anchor="middle">on_grn_posted.delay()</text>
+
+  <line x1="340" y1="78" x2="340" y2="98" stroke="#f87171" stroke-width="2.2" marker-end="url(#arrSeam2)"/>
+
+  <rect x="150" y="98" width="380" height="62" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="340" y="122" class="box-title" fill="#e6e9ef" text-anchor="middle">process_grn_receipt — کارگر Celery</text>
+  <text x="340" y="144" class="box-sub" fill="#34d399" text-anchor="middle">خواندن دیکشنری رسیدِ POSTED</text>
+
+  <line x1="340" y1="160" x2="340" y2="180" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr2)"/>
+
+  <rect x="150" y="180" width="380" height="62" rx="10" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="340" y="204" class="box-title" fill="#e6e9ef" text-anchor="middle">resolve_receipt_destination</text>
+  <text x="340" y="226" class="box-sub" fill="#9aa3b2" text-anchor="middle">محل → انبار → SYSTEM (ساخت خودکار محل دریافت)</text>
+
+  <line x1="340" y1="242" x2="340" y2="262" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr2)"/>
+  <text x="350" y="257" class="edge-lbl" fill="#9aa3b2" text-anchor="start">به ازای هر قلمِ پذیرفته‌شده</text>
+
+  <rect x="150" y="262" width="380" height="66" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="340" y="286" class="box-title" fill="#e6e9ef" text-anchor="middle">stock_movements (ورود) — دفتر کل تغییرناپذیر</text>
+  <text x="340" y="308" class="box-sub" fill="#34d399" text-anchor="middle">type=receipt · qty&gt;0 · idempotent بر (grn, line)</text>
+
+  <line x1="340" y1="328" x2="340" y2="348" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr2)"/>
+  <text x="350" y="343" class="edge-lbl" fill="#9aa3b2" text-anchor="start">apply_incoming_balance</text>
+
+  <rect x="150" y="348" width="380" height="66" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="340" y="372" class="box-title" fill="#e6e9ef" text-anchor="middle">stock_items — مانده موجودی</text>
+  <text x="340" y="394" class="box-sub" fill="#34d399" text-anchor="middle">on_hand += accepted · بهای میانگین موزون</text>
+
+  <!-- manual alt -->
+  <rect x="150" y="446" width="380" height="74" rx="10" fill="#1d211b" stroke="#7a5a18" stroke-dasharray="5 4"/>
+  <text x="340" y="470" class="box-title" fill="#fcd34d" text-anchor="middle">مسیر جایگزین: حرکت دستی (بدون GRN)</text>
+  <text x="340" y="491" class="box-sub" fill="#9aa3b2" text-anchor="middle">POST /movements → create_manual_stock_movement</text>
+  <text x="340" y="508" class="box-sub" fill="#9aa3b2" text-anchor="middle">reference_type=manual · reference_id=0</text>
+  <path d="M340,446 C340,432 340,428 340,420" fill="none" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arr2)"/>
+</svg>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="wtables">۴ · جریان انبار — جدول‌های داده به تفکیک مرحله</h2>
+
+<h3>موجودیت‌های پایه — انبار / زون / محل نگهداری
+  <span class="cite">warehouse_management/models.py</span></h3>
+<table>
+  <caption>سلسله‌مراتب مکان (دادهٔ پایه، پیش از دریافت ساخته می‌شود)</caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">warehouses.company_id / code / name</td><td class="t">FK / String</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> (یکتایی company+code)</td><td class="cite">:77–83</td></tr>
+  <tr><td class="f">warehouses.is_default</td><td class="t">Boolean</td><td class="req-yes">بله (پیش‌فرض false)</td><td class="c"><span class="pill add">جدید</span> ایندکس یکتای تک‌پیش‌فرض</td><td class="cite">:97, :68–73</td></tr>
+  <tr><td class="f">warehouse_zones.warehouse_id / code / name</td><td class="t">FK / String</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> + <span class="pill add">جدید</span></td><td class="cite">:119–125</td></tr>
+  <tr><td class="f">storage_locations.zone_id / code / name</td><td class="t">FK / String</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> + <span class="pill add">جدید</span></td><td class="cite">:150–156</td></tr>
+  <tr><td class="f">storage_locations.is_receiving</td><td class="t">Boolean</td><td class="req-yes">بله (پیش‌فرض false)</td><td class="c"><span class="pill add">جدید</span> انتخاب محل دریافت خودکار</td><td class="cite">:160</td></tr>
+</table>
+
+<h3>مرحلهٔ ۵-الف — گردش موجودی (دلتای تغییرناپذیر) <span class="pill core">هسته</span></h3>
+<table>
+  <caption><code>stock_movements</code> — نوع <span class="cite">:31–38</span>، نوع‌مرجع <span class="cite">:41–46</span>؛ چک <code>quantity &gt; 0</code> <span class="cite">:263–266</span>؛ ایندکس یکتای جزئیِ idempotency برای GRN روی <code>(company_id, reference_type, reference_id, reference_line_id)</code> <span class="cite">:254–262</span></caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">movement_number</td><td class="t">String(50)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> MOV-YYYY-NNNNN (seq)</td><td class="cite">:282</td></tr>
+  <tr><td class="f">movement_type</td><td class="t">String(30)</td><td class="req-yes">بله</td><td class="c"><span class="pill add">جدید</span> =receipt برای GRN</td><td class="cite">:283</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (RESTRICT)</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> ← GRN item.item_id</td><td class="cite">:284–288</td></tr>
+  <tr><td class="f">to_location_id</td><td class="t">FK storage_locations</td><td class="req-no">خیر (هنگام ورود ست می‌شود)</td><td class="c"><span class="pill ref">منتقل‌شده</span> مقصد تعیین‌شده</td><td class="cite">:294–298</td></tr>
+  <tr><td class="f">quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> = accepted_quantity</td><td class="cite">:299</td></tr>
+  <tr><td class="f">unit_cost (+ ارز/پایه/نرخ)</td><td class="t">Numeric / FK</td><td class="req-yes">بله (NOT NULL)</td><td class="c"><span class="pill ref">منتقل‌شده</span> ← هزینهٔ قلمِ GRN</td><td class="cite">:300–312</td></tr>
+  <tr><td class="f">reference_type / reference_id</td><td class="t">String(30) / Integer</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> = grn / grn.id</td><td class="cite">:313–314</td></tr>
+  <tr><td class="f">reference_line_id</td><td class="t">Integer (soft)</td><td class="req-no">خیر</td><td class="c"><span class="pill ref">منتقل‌شده</span> = grn_item.id (کلید idempotency)</td><td class="cite">:315</td></tr>
+  <tr><td class="f">movement_date</td><td class="t">DateTime</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span> ← receipt_date</td><td class="cite">:321</td></tr>
+</table>
+<div class="note"><strong>بدون <code>updated_at</code>.</strong> جدول <code>stock_movements</code> فقط <code>created_at</code> دارد
+<span class="cite">:323</span> — دفتر کل عمداً فقط-افزودنی است. <code>reference_id</code> و <code>reference_line_id</code>
+عدد ساده (ارجاع نرم) هستند، نه FK به GRN، تا جداسازی ماژول حفظ شود.</div>
+
+<h3>مرحلهٔ ۵-ب — مانده موجودی کالا <span class="pill core">هسته</span></h3>
+<table>
+  <caption><code>stock_items</code> — یکتایی <code>(item_id, storage_location_id)</code> <span class="cite">:173–177</span>؛ چک <code>available = on_hand − reserved</code> و نامنفی <span class="cite">:178–189</span></caption>
+  <tr><th>فیلد</th><th>نوع</th><th>اجباری؟</th><th>منتقل‌شده / جدید</th><th>ارجاع</th></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (RESTRICT)</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span></td><td class="cite">:202–206</td></tr>
+  <tr><td class="f">storage_location_id</td><td class="t">FK storage_locations (RESTRICT)</td><td class="req-yes">بله</td><td class="c"><span class="pill ref">منتقل‌شده</span></td><td class="cite">:207–211</td></tr>
+  <tr><td class="f">quantity_on_hand</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله (پیش‌فرض ۰)</td><td class="c"><span class="pill add">جدید</span> += accepted (میانگین موزون)</td><td class="cite">:212–216</td></tr>
+  <tr><td class="f">quantity_reserved / quantity_available</td><td class="t">Numeric(18,4)</td><td class="req-yes">بله (پیش‌فرض ۰)</td><td class="c"><span class="pill add">جدید</span> (available مشتق)</td><td class="cite">:217–226</td></tr>
+  <tr><td class="f">min_level / max_level / reorder_point</td><td class="t">Numeric(18,4)</td><td class="req-no">خیر</td><td class="c"><span class="pill add">جدید</span> آستانه‌ها</td><td class="cite">:227–229</td></tr>
+  <tr><td class="f">unit_cost / unit_cost_currency_id / unit_cost_base</td><td class="t">Numeric / FK</td><td class="req-yes">بله (پیش‌فرض ۰)</td><td class="c"><span class="pill add">جدید</span> بهای میانگین موزون</td><td class="cite">:230–236</td></tr>
+</table>
+<div class="intro-list"><ul>
+  <li><strong>StockMovement معرفی می‌کند:</strong> دلتای تغییرناپذیر و per-line دفتر کل (تعداد، هزینه، نوع، مرجع).
+  این <em>تنها</em> نویسندهٔ مانده‌هاست — <code>record_stock_movement</code>
+  <span class="cite">warehouse_management/services.py:1122–1306</span>.</li>
+  <li><strong>StockItem معرفی/به‌روزرسانی می‌کند:</strong> مانده موجودی از طریق <code>apply_incoming_balance</code>
+  (محاسبهٔ مجدد بهای میانگین موزون، <span class="cite">warehouse_management/services.py:999–1030</span>)؛
+  اگر ردیف نباشد خودکار ساخته می‌شود (<code>get_or_create_stock_item_for_receipt</code>، <span class="cite">:937–968</span>).</li>
+  <li><strong>idempotency:</strong> برای حرکت‌های GRN، تسک یک قفل advisory در pg می‌گیرد و پیش از درج، حرکت مرجع موجود را
+  بررسی می‌کند؛ پس رویداد تکراری بی‌اثر است <span class="cite">warehouse_management/services.py:1149–1167</span>، که با ایندکس
+  یکتای جزئی پشتیبانی می‌شود <span class="cite">warehouse_management/models.py:254–262</span>.</li>
+</ul></div>
+
+<!-- ============================================================= -->
+<h2 id="bypass">۵ · چه مراحلی <em>هم‌اکنون</em> قابل حذف‌اند</h2>
+<p>قابلیت حذف از روی اسکیما (کدام کلید خارجیِ اتصال nullable است / چه جایگزین متنی‌ای وجود دارد) و هر گاردِ سرویس که مسیر را
+مسدود می‌کند خوانده می‌شود. هر کارت شواهد خودش را ذکر می‌کند.</p>
+
+<div class="bypass-grid">
+
+  <div class="card skip">
+    <div class="verdict" style="color:var(--opt)">قابل حذف</div>
+    <h4>① درخواست کالا</h4>
+    <p>هیچ مرحلهٔ بعدی واقعاً به درخواست کالا نیاز سخت ندارد. <code>rfqs.mr_id</code> nullable است و سفارش خرید می‌تواند بدون
+    هیچ درخواست/استعلامی ساخته شود.</p>
+    <div class="ev"><strong>شواهد:</strong> <span class="cite">rfq_management/models.py:57–61</span> (mr_id SET-NULL nullable)؛
+    اندپوینت ساخت دستی سفارش بدون mr_id/rfq_id — <span class="cite">purchase_management/services.py:155–191</span>،
+    متصل در <span class="cite">routes/orders.py:25,55</span>. مسیر from-RFQ فقط <em>اگر</em> mr_id باشد درخواست را «ordered» می‌کند —
+    <span class="cite">purchase_management/services.py:313–319</span>.</p>
+  </div>
+
+  <div class="card skip">
+    <div class="verdict" style="color:var(--opt)">قابل حذف</div>
+    <h4>② استعلام بها + پیشنهاد تأمین‌کننده</h4>
+    <p>هر سه ارجاع از سفارش به استعلام nullable‌اند و تأمین‌کننده با جایگزین متنی هم پذیرفته می‌شود. سفارش را می‌توان مستقیم
+    تنظیم کرد.</p>
+    <div class="ev"><strong>شواهد:</strong> <code>purchase_orders.rfq_id</code> <span class="cite">:86–91</span>،
+    <code>winning_quotation_response_id</code> <span class="cite">:92–97</span>، <code>supplier_id</code> <span class="cite">:100</span>
+    همه nullable؛ <code>supplier_name</code> جایگزین متنی <span class="cite">:101</span>. مسیر ساخت دستی فقط
+    <code>supplier_name</code> می‌گیرد بدون supplier_id — <span class="cite">purchase_management/services.py:135–191</span>.</p>
+  </div>
+
+  <div class="card cant">
+    <div class="verdict" style="color:var(--core)">قابل حذف نیست</div>
+    <h4>③ سفارش خرید + فاز</h4>
+    <p>رسید کالا بدون سفارش <em>و</em> فاز نمی‌تواند وجود داشته باشد — هر دو کلید خارجی NOT NULL با <code>RESTRICT</code>اند.
+    دریافت هم تا تأیید سفارش به <code>ORDERED</code> مسدود است.</p>
+    <div class="ev"><strong>شواهد:</strong> <code>goods_receipt_notes.purchase_order_id</code> و
+    <code>purchase_phase_id</code> NOT NULL — <span class="cite">goods_receipt_management/models.py:53–62</span>؛
+    گاردِ قابلیت دریافت، سفارش draft/cancelled/closed و فاز draft/closed را رد می‌کند —
+    <span class="cite">purchase_management/services.py:745–754, 772–780</span>؛ تأیید، سفارش را ORDERED و فازها را ORDERED می‌کند —
+    <span class="cite">purchase_management/services.py:411–419</span>.</p>
+  </div>
+
+  <div class="card cant">
+    <div class="verdict" style="color:var(--core)">قابل حذف نیست (برای مسیر خرید→موجودی)</div>
+    <h4>④ رسید کالا</h4>
+    <p>در مسیر خرید، موجودی فقط با رسیدِ ثبت‌شده وارد می‌شود: هر ردیف <code>goods_receipt_items</code> به
+    <code>purchase_phase_item_id</code> (NOT NULL) ارجاع سخت دارد و ثبت نهایی، <code>received_quantity</code> و رویداد انبار را راه می‌اندازد.</p>
+    <div class="ev"><strong>شواهد:</strong> <code>goods_receipt_items.purchase_phase_item_id</code> NOT NULL —
+    <span class="cite">goods_receipt_management/models.py:120–124</span>؛ حرکت ورودیِ انبار فقط از رسیدِ POSTED ساخته می‌شود —
+    <span class="cite">warehouse_management/services.py:1402–1458</span>.
+    <em>استثنا:</em> موجودی انبار را <strong>می‌توان</strong> بدون هیچ GRN با حرکت دستی هم ساخت — رجوع به ⑤.</p>
+  </div>
+
+  <div class="card cant">
+    <div class="verdict" style="color:var(--core)">قابل حذف نیست</div>
+    <h4>⑤ گردش موجودی (دفتر کل)</h4>
+    <p>مانده <code>stock_items</code> <em>تنها</em> از طریق <code>record_stock_movement</code> تغییر می‌کند. هیچ مسیر دیگری
+    تعدادِ موجودی را نمی‌نویسد — پس دلتای دفتر کل برای هیچ تغییر مانده‌ای قابل دور زدن نیست (دریافت GRN، ورود دستی، یا اصلاح انبارگردانی همگی از همین عبور می‌کنند).</p>
+    <div class="ev"><strong>شواهد:</strong> تنها نویسنده‌های مانده <code>apply_incoming_balance</code> /
+    <code>apply_outgoing_balance</code> درون <code>record_stock_movement</code> هستند —
+    <span class="cite">warehouse_management/services.py:999–1060, 1122–1306</span>؛ مسیر دستی
+    <code>create_manual_stock_movement</code> (<span class="cite">:1309–1347</span>، روت <span class="cite">routes/warehouse.py:299–310</span>)
+    و ثبت انبارگردانی (<span class="cite">:2003–2030</span>) هر دو همین تابع را صدا می‌زنند.</p>
+  </div>
+
+</div>
+
+<div class="note warn"><strong>در کد اعمال نشده (قابل توجه):</strong>
+رویداد انبار «شلیک‌کن و فراموش کن» است — اگر ارسال Celery شکست بخورد یا ماژول نباشد، رسید همچنان به‌صورت
+<code>POSTED</code> commit می‌شود و حرکت موجودی صرفاً <em>به تعویق</em> می‌افتد (لاگ می‌شود، با
+<code>backfill_posted_goods_receipts</code> قابل بازیابی) — <span class="cite">goods_receipt_management/services.py:697–727</span>،
+<span class="cite">warehouse_management/services.py:2092–2120</span>. پس «رسیدِ POSTED» به‌صورت <em>تراکنشی</em> تضمین نمی‌کند که
+«موجودی به‌روز شد»؛ بلکه نهایتاً تضمین می‌کند. همچنین هیچ قید اسکیمایی، سفارش را به برخاستن از یک RFQ یا RFQ را به یک درخواست
+کالا مجبور نمی‌کند — این‌ها قرارداد کاری‌اند، نه محدودیت پایگاه‌داده.</div>
+
+<footer>
+استخراج‌شده از سورس — مدل‌ها و سرویس‌ها در
+<code>backend/{requisition,rfq,purchase,goods_receipt,warehouse}_management/</code>.
+هر خطِ ارجاع‌شده مستقیماً از مخزن خوانده شده است. موارد علامت‌خوردهٔ «سرویس» در کد سرویس اعمال می‌شوند نه در اسکیمای پایگاه‌داده؛
+موارد «در کد اعمال نشده» هیچ پشتیبانی اسکیمایی یا گاردی ندارند.
+</footer>
+
+</body>
+</html>

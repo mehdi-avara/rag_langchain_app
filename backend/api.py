@@ -16,6 +16,7 @@ from routs.stt import router as stt_router
 from routs.rbac import router as rbac_router
 from routs.company import router as company_router
 from routs.assets import router as asset_router
+from routs.developer_docs import router as developer_docs_router
 from model_management.routes import model_router
 from tag_management.routes import tag_router
 from document_intelligence.routes import router as di_router
@@ -92,6 +93,7 @@ app.include_router(user_router, prefix="/user", tags=["user"])
 app.include_router(rbac_router, prefix="/rbac", tags=["rbac"])
 app.include_router(company_router, prefix="/company", tags=["company"])
 app.include_router(asset_router, prefix="/assets", tags=["assets"])
+app.include_router(developer_docs_router, tags=["developer_docs"])
 app.include_router(chat_ai_models_router, prefix="/llm", tags=["llm"])
 app.include_router(chat_router, prefix="/chat", tags=["chat"])
 app.include_router(stt_router, prefix="/audio", tags=["Audio"])

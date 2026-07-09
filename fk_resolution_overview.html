@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FK Resolution — Visual Overview</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --line:#30363d;
+    --txt:#e6edf3; --mut:#8b949e; --acc:#58a6ff; --grn:#3fb950; --amb:#d29922;
+    --red:#f85149; --pur:#bc8cff; --cyan:#39c5cf;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5;padding:32px}
+  .wrap{max-width:1100px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 28px;font-size:14px}
+  h2{font-size:16px;text-transform:uppercase;letter-spacing:.08em;color:var(--acc);
+    margin:38px 0 14px;border-bottom:1px solid var(--line);padding-bottom:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .grid{display:grid;gap:14px}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;font-weight:600;vertical-align:middle}
+  .p-new{background:rgba(63,185,80,.15);color:var(--grn);border:1px solid rgba(63,185,80,.4)}
+  .p-edit{background:rgba(88,166,255,.15);color:var(--acc);border:1px solid rgba(88,166,255,.4)}
+
+  /* flow */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0}
+  .node{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:12px;text-align:center;position:relative}
+  .node .t{font-weight:700;font-size:13px;margin-bottom:4px}
+  .node .d{font-size:11px;color:var(--mut)}
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:20px;
+    padding:0 6px;min-width:28px}
+  .tag{position:absolute;top:-9px;left:50%;transform:translateX(-50%);font-size:9px;
+    background:var(--bg);padding:0 6px;color:var(--mut);white-space:nowrap}
+  .lockbar{margin-top:10px;font-size:11px;color:var(--mut);text-align:center}
+  .lockbar b{color:var(--red)}
+
+  /* status cards */
+  .stat{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .scard{border-radius:10px;padding:14px;border:1px solid var(--line);background:var(--panel)}
+  .scard h3{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .d-grn{background:var(--grn)} .d-amb{background:var(--amb)} .d-red{background:var(--red)}
+  .scard p{margin:0 0 8px;font-size:12.5px;color:var(--mut)}
+  .scard .ex{font-family:var(--mono);font-size:11.5px;background:var(--bg);border:1px solid var(--line);
+    border-radius:6px;padding:8px;color:var(--txt);white-space:pre-wrap}
+
+  /* file table */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  td.f{font-family:var(--mono);font-size:12px;color:var(--cyan);white-space:nowrap}
+  td.w{color:var(--txt)}
+
+  /* callback loop */
+  .loop{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center}
+  .loopbox{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:14px}
+  .loopbox .t{font-weight:700;font-size:13px;margin-bottom:6px;color:var(--pur)}
+  .loopbox ol{margin:0;padding-left:18px;font-size:12px;color:var(--mut)}
+  .loopbox li{margin-bottom:4px}
+  .vsep{color:var(--acc);font-size:22px;text-align:center}
+
+  .note{font-size:12px;color:var(--mut);margin-top:10px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-bottom:18px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  code{font-family:var(--mono);background:var(--bg);padding:1px 5px;border-radius:4px;font-size:12px;color:var(--pur)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Foreign-Key Resolution &amp; Existence Lookups</h1>
+  <p class="sub">Financial assistant — visual map of the change. The model speaks <b>names</b>, the server resolves <b>ids</b>.</p>
+
+  <div class="legend">
+    <span><span class="pill p-new">NEW</span> new file</span>
+    <span><span class="pill p-edit">EDIT</span> edited file</span>
+    <span><span class="dot d-grn" style="display:inline-block"></span> resolved</span>
+    <span><span class="dot d-amb" style="display:inline-block"></span> ambiguous</span>
+    <span><span class="dot d-red" style="display:inline-block"></span> missing</span>
+  </div>
+
+  <!-- ============ FLOW ============ -->
+  <h2>The turn, end to end</h2>
+  <div class="card">
+    <div class="flow">
+      <div class="node"><span class="tag">free text only</span><div class="t">User</div><div class="d">"add receipt 1.2M to Ali's Mellat card"</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><span class="tag">router.py</span><div class="t">Router (LLM)</div><div class="d">extracts slots + <i>query text</i> — never invents ids</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><span class="tag">assistant_tools.py</span><div class="t">Draft builder</div><div class="d">assembles payload, calls resolver per FK</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><span class="tag">resolve.py + provider</span><div class="t">Resolver</div><div class="d">searches via module interface fn, ranks candidates</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><span class="tag">SSE draft event</span><div class="t">Frontend</div><div class="d">shows labels, holds ids, commits</div></div>
+    </div>
+    <div class="lockbar">🔒 The <b>LLM never touches the DB</b> and <b>never commits</b>. All search runs in deterministic Python through each module's interface functions, RBAC-gated. Frontend is the only writer.</div>
+  </div>
+
+  <!-- ============ PROVIDER SEAM ============ -->
+  <h2>The search seam (function now, HTTP later)</h2>
+  <div class="card grid" style="grid-template-columns:1fr;gap:12px">
+    <div class="mono" style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:14px;overflow:auto">
+<span style="color:var(--mut)"># resolver depends ONLY on this interface — swapping the impl changes no caller</span>
+<span style="color:var(--cyan)">class</span> <span style="color:var(--pur)">SearchProvider</span>(Protocol):
+    <span style="color:var(--cyan)">def</span> <span style="color:var(--grn)">search</span>(self, *, db, user, query, ids=None, limit=10) -> list[Candidate]: ...
+
+<span style="color:var(--grn)">FunctionSearchProvider</span>(search_card_hits, _card_to_candidate)   <span style="color:var(--amb)"># ← TODAY (in-process call)</span>
+<span style="color:var(--mut)">HttpSearchProvider("/financial_management/cards/search")          # ← FUTURE (drop-in, no caller change)</span>
+    </div>
+    <div class="note">Each module exposes <b>interface functions</b> (<code>search_card_hits</code>, <code>search_customer_hits</code>) extracted out of the route handlers. The route calls them; the assistant calls the same ones. To go HTTP, register a different provider for the resource — nothing else moves.</div>
+  </div>
+
+  <!-- ============ STATUS ============ -->
+  <h2>Three outcomes per reference</h2>
+  <div class="stat">
+    <div class="scard">
+      <h3><span class="dot d-grn"></span>resolved</h3>
+      <p>One strong match. The <b>id is auto-filled</b> into the draft payload; the label is shown so the user can override.</p>
+      <div class="ex">"Ali's Mellat card"
+ → 1 match
+ ✓ credit_card_id = 12
+ label: "Mellat — ••••4821
+        — Ali Rezaei"</div>
+    </div>
+    <div class="scard">
+      <h3><span class="dot d-amb"></span>ambiguous</h3>
+      <p>Several plausible matches. <b>No id is filled.</b> Best guess is the default <code>chosen</code>; up to 5 <code>alternatives</code> ride along for the user to pick.</p>
+      <div class="ex">"Ali's card"
+ → 3 matches
+ ⚠ references_pending:
+   ["credit_card_id"]
+ chosen + alternatives[]</div>
+    </div>
+    <div class="scard">
+      <h3><span class="dot d-red"></span>missing</h3>
+      <p>No match. Carries a <code>create_suggestion</code> (endpoint + inferred fields). Frontend creates it, then reports the new id back.</p>
+      <div class="ex">"Sina Trading Co"
+ → 0 matches
+ ✗ create_suggestion:
+   POST /…/customers
+   { name: "Sina Trading Co" }</div>
+    </div>
+  </div>
+  <p class="note">A draft with anything in <code>references_pending</code> is still <b>sent and persisted</b> — the frontend just can't commit until that list is empty.</p>
+
+  <!-- ============ CREATE CALLBACK ============ -->
+  <h2>Missing → create → callback</h2>
+  <div class="loop">
+    <div class="loopbox">
+      <div class="t">Backend (draft)</div>
+      <ol>
+        <li>Reference resolves to <b>missing</b></li>
+        <li>Attaches <code>create_suggestion</code> with the create endpoint + inferred payload</li>
+        <li>Streams draft with <code>references_pending</code></li>
+      </ol>
+    </div>
+    <div class="vsep">⇄</div>
+    <div class="loopbox">
+      <div class="t">Frontend</div>
+      <ol>
+        <li>Offers "create this record"</li>
+        <li>Calls the module's own create endpoint → gets <b>new id</b></li>
+        <li><code>PATCH /assistant/drafts/{id}</code> with <code>resolved_references: { customer_id: { id, label } }</code></li>
+        <li>Server writes id into payload, flips ref to resolved, clears pending → commit</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- ============ FILES ============ -->
+  <h2>What changes, file by file</h2>
+  <div class="card" style="padding:4px 0">
+    <table>
+      <tr><th>File</th><th>Status</th><th>Change</th></tr>
+      <tr><td class="f">assistant/module_interface.py</td><td><span class="pill p-new">NEW</span></td><td class="w">Candidate, SearchProvider, FunctionSearchProvider, ResourceSpec + registry</td></tr>
+      <tr><td class="f">assistant/resolve.py</td><td><span class="pill p-new">NEW</span></td><td class="w">Pure <code>resolve_reference</code> (ranking) + <code>resolve_field</code> (RBAC + search + create-suggestion)</td></tr>
+      <tr><td class="f">financial_management/search/service.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Add <code>search_card_hits</code> / <code>search_customer_hits</code> — the module interface functions</td></tr>
+      <tr><td class="f">financial_management/routes/cards.py · customers.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Route search now calls the extracted functions (behavior unchanged)</td></tr>
+      <tr><td class="f">financial_management/assistant_tools.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Register resources · resolve FKs in receipt builders · add <code>lookup_customer</code>/<code>lookup_card</code></td></tr>
+      <tr><td class="f">assistant/registry.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Add <code>references</code> field to <code>DraftData</code></td></tr>
+      <tr><td class="f">assistant/router.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Prompt: emit query text, never invent numeric ids</td></tr>
+      <tr><td class="f">assistant/schemas.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Add <code>resolved_references</code> to <code>DraftPatchRequest</code></td></tr>
+      <tr><td class="f">assistant/service.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w"><code>patch_draft</code> writes reported ids into payload + updates validation</td></tr>
+      <tr><td class="f">assistant/runner.py</td><td><span class="pill p-edit">EDIT</span></td><td class="w"><code>_build_context</code> renders generic lookup items so the model can answer "do we have X?"</td></tr>
+      <tr><td class="f">assistant/tests/*</td><td><span class="pill p-edit">EDIT</span></td><td class="w">Unit tests: ranking, resolve_field, builders, patch-callback, lookup RBAC</td></tr>
+    </table>
+  </div>
+
+  <!-- ============ GUARANTEES ============ -->
+  <h2>Invariants held</h2>
+  <div class="card grid" style="grid-template-columns:repeat(2,1fr)">
+    <div>🔒 LLM never reads/writes the DB — only emits text</div>
+    <div>🧾 Assistant never commits — frontend is the only writer</div>
+    <div>🛡️ RBAC enforced before every search / build / lookup</div>
+    <div>🗄️ No migration — references live in <code>Draft.validation</code></div>
+    <div>🔁 Provider swap (fn → HTTP) changes zero callers</div>
+    <div>🧩 Generic core, financial-only wiring (other modules later)</div>
+  </div>
+
+  <p class="note" style="margin-top:24px;text-align:center">Out of scope (separate future prompts): pg_trgm/trigram matching · cross-module reads · HTTP provider.</p>
+</div>
+</body>
+</html>

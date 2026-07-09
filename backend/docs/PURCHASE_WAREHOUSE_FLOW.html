@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Purchase Flow &amp; Warehouse Flow — grounded in code</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e6e9ef; --muted:#9aa3b2;
+    --line:#2a2f3a; --req:#c084fc; --core:#34d399; --opt:#fbbf24; --ref:#60a5fa;
+    --add:#f472b6; --seam:#f87171; --code:#8be9fd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:32px 28px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:21px;margin:46px 0 6px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:17px;margin:28px 0 6px;color:#cbd5e1}
+  p{color:var(--muted);max-width:1000px}
+  code,.cite{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+  .cite{color:var(--code);white-space:nowrap}
+  a.cite{color:var(--code);text-decoration:none;border-bottom:1px dotted #3a4456}
+  .lead{max-width:1000px;color:#c7cdd8}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 8px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .legend span{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:#cdd3de}
+  .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;vertical-align:middle}
+  .pill.req{background:rgba(248,113,113,.16);color:#fca5a5;border:1px solid #7f3a3a}
+  .pill.opt{background:rgba(251,191,36,.14);color:#fcd34d;border:1px solid #7a5a18}
+  .pill.ref{background:rgba(96,165,250,.14);color:#93c5fd;border:1px solid #2f4d7a}
+  .pill.add{background:rgba(244,114,182,.14);color:#f9a8d4;border:1px solid #7a3a5c}
+  .pill.core{background:rgba(52,211,153,.14);color:#6ee7b7;border:1px solid #1f6e54}
+  table{border-collapse:collapse;width:100%;margin:10px 0 6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  caption{caption-side:top;text-align:left;color:#cbd5e1;font-weight:600;padding:8px 4px;font-size:14.5px}
+  th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:#aeb6c4;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  tr:last-child td{border-bottom:none}
+  td.f{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#e9edf4;white-space:nowrap}
+  td.t{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#9aa3b2;white-space:nowrap}
+  .req-yes{color:#fca5a5;font-weight:600}
+  .req-no{color:#8b94a3}
+  .note{background:var(--panel);border-left:3px solid var(--ref);padding:10px 14px;border-radius:6px;margin:12px 0;max-width:1000px;color:#c7cdd8}
+  .note.warn{border-left-color:var(--seam)}
+  .note.ok{border-left-color:var(--core)}
+  .intro-list{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 8px 8px 0;margin:8px 0;max-width:1000px}
+  .intro-list li{margin:5px 0;color:#cdd3de}
+  .intro-list code{color:#e9edf4}
+  /* diagram */
+  .diagram{width:100%;overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 6px;margin:14px 0}
+  svg{display:block;min-width:920px}
+  .box-title{font:600 13px -apple-system,Segoe UI,sans-serif}
+  .box-sub{font:11px ui-monospace,Menlo,monospace}
+  .box-actor{font:italic 11px -apple-system,Segoe UI,sans-serif}
+  .edge-lbl{font:11px ui-monospace,Menlo,monospace}
+  .bypass-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;margin:14px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px}
+  .card .verdict{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+  .card.skip{border-top:3px solid var(--opt)}
+  .card.cant{border-top:3px solid var(--core)}
+  .card p{color:#bcc4d2;font-size:13.5px;margin:6px 0}
+  .ev{font-size:12px;color:#93a0b4;margin-top:6px}
+  .toc a{color:#93c5fd;text-decoration:none;margin-right:16px;font-size:13px}
+  footer{margin-top:50px;color:#6b7384;font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+
+<h1>Purchase Flow &amp; Warehouse Flow</h1>
+<p class="lead">Every fact below is grounded in the actual SQLAlchemy models and service code and cited as
+<span class="cite">file:line</span>. Where behaviour is <em>not</em> guaranteed by the schema or a service guard, it is
+explicitly marked <strong>“not enforced in code.”</strong> Cross-step links are by FK / reference — each step adds only
+its own new data; it does not copy the prior step's rows.</p>
+
+<div class="legend">
+  <span><span class="dot" style="background:var(--core)"></span> Core step — cannot be skipped today</span>
+  <span><span class="dot" style="background:var(--opt)"></span> Optional step — skippable today</span>
+  <span><span class="pill req">required</span> NOT NULL in schema</span>
+  <span><span class="pill ref">carried-in</span> FK/reference to a prior step</span>
+  <span><span class="pill add">added-here</span> new data introduced at this step</span>
+  <span><span class="dot" style="background:var(--seam)"></span> cross-module event seam</span>
+</div>
+
+<div class="toc">
+  <a href="#pflow">1 · Purchase flow diagram</a>
+  <a href="#ptables">2 · Purchase data tables</a>
+  <a href="#wflow">3 · Warehouse flow diagram</a>
+  <a href="#wtables">4 · Warehouse data tables</a>
+  <a href="#bypass">5 · What can be bypassed now</a>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="pflow">1 · Purchase flow — whole flow</h2>
+<p>Owner/actor is shown under each box. The chain is a sequence of FK references; the only place data crosses a module
+boundary asynchronously is <span class="cite">goods_receipt → warehouse</span> via the Celery task
+<code>on_grn_posted</code>.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 960 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Purchase flow diagram">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#7f8aa0"/>
+    </marker>
+    <marker id="arrSeam" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <!-- Row 1: MR -> RFQ -> PO -->
+  <!-- MR -->
+  <rect x="14" y="30" width="200" height="92" rx="10" fill="#1d212b" stroke="#5b3f7a" stroke-width="1.5"/>
+  <text x="26" y="54" class="box-title" fill="#e6e9ef">Material Requisition</text>
+  <text x="26" y="73" class="box-sub" fill="#c084fc">material_requisitions</text>
+  <text x="26" y="90" class="box-sub" fill="#9aa3b2">status: draft→…→ordered</text>
+  <text x="26" y="110" class="box-actor" fill="#fbbf24">actor: requester / dept · OPTIONAL</text>
+
+  <!-- RFQ -->
+  <rect x="262" y="30" width="200" height="92" rx="10" fill="#1d212b" stroke="#2f4d7a" stroke-width="1.5"/>
+  <text x="274" y="54" class="box-title" fill="#e6e9ef">RFQ + Quotes</text>
+  <text x="274" y="73" class="box-sub" fill="#60a5fa">rfqs / quotation_responses</text>
+  <text x="274" y="90" class="box-sub" fill="#9aa3b2">supplier prices, pick winner</text>
+  <text x="274" y="110" class="box-actor" fill="#fbbf24">actor: procurement · OPTIONAL</text>
+
+  <!-- PO -->
+  <rect x="510" y="30" width="220" height="92" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="522" y="54" class="box-title" fill="#e6e9ef">Purchase Order + Phases</text>
+  <text x="522" y="73" class="box-sub" fill="#34d399">purchase_orders / phases / items</text>
+  <text x="522" y="90" class="box-sub" fill="#9aa3b2">qty + unit_price per phase item</text>
+  <text x="522" y="110" class="box-actor" fill="#6ee7b7">actor: buyer + approver · CORE</text>
+
+  <!-- approval note -->
+  <rect x="510" y="138" width="220" height="40" rx="8" fill="#171a21" stroke="#2a2f3a" stroke-dasharray="4 3"/>
+  <text x="522" y="156" class="box-sub" fill="#cbd5e1">approve → status ORDERED</text>
+  <text x="522" y="171" class="box-sub" fill="#9aa3b2">(required before any receipt)</text>
+
+  <!-- GRN -->
+  <rect x="510" y="210" width="220" height="96" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="522" y="234" class="box-title" fill="#e6e9ef">Goods Receipt Note</text>
+  <text x="522" y="253" class="box-sub" fill="#34d399">goods_receipt_notes / items</text>
+  <text x="522" y="270" class="box-sub" fill="#9aa3b2">per PO phase · accept/reject split</text>
+  <text x="522" y="287" class="box-actor" fill="#6ee7b7">actor: receiving clerk · CORE</text>
+
+  <!-- post effect on PO -->
+  <rect x="262" y="210" width="200" height="96" rx="10" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="274" y="234" class="box-title" fill="#e6e9ef">post → apply_goods_receipt</text>
+  <text x="274" y="252" class="box-sub" fill="#9aa3b2">+= received_quantity</text>
+  <text x="274" y="268" class="box-sub" fill="#9aa3b2">roll up phase + PO status</text>
+  <text x="274" y="287" class="box-sub" fill="#9aa3b2">over-receipt guard</text>
+
+  <!-- Warehouse (seam target) -->
+  <rect x="510" y="362" width="220" height="92" rx="10" fill="#241a1a" stroke="#7f3a3a" stroke-width="2"/>
+  <text x="522" y="386" class="box-title" fill="#e6e9ef">Warehouse — Stock</text>
+  <text x="522" y="405" class="box-sub" fill="#f87171">stock_movements (IN) / stock_items</text>
+  <text x="522" y="422" class="box-sub" fill="#9aa3b2">immutable ledger + on-hand balance</text>
+  <text x="522" y="439" class="box-actor" fill="#6ee7b7">actor: system (Celery) · CORE</text>
+
+  <!-- edges row1 -->
+  <line x1="214" y1="76" x2="258" y2="76" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="218" y="68" class="edge-lbl" fill="#9aa3b2">mr_id</text>
+  <line x1="462" y1="76" x2="506" y2="76" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="462" y="68" class="edge-lbl" fill="#9aa3b2">rfq_id</text>
+
+  <!-- PO approval down -->
+  <line x1="620" y1="122" x2="620" y2="136" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <!-- approval to GRN -->
+  <line x1="620" y1="178" x2="620" y2="206" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="628" y="197" class="edge-lbl" fill="#9aa3b2">PO/phase ids</text>
+
+  <!-- GRN post -> apply (left) -->
+  <line x1="510" y1="258" x2="466" y2="258" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="350" y="205" class="edge-lbl" fill="#9aa3b2">in-process call</text>
+
+  <!-- GRN -> Warehouse seam -->
+  <line x1="620" y1="306" x2="620" y2="358" stroke="#f87171" stroke-width="2.2" marker-end="url(#arrSeam)"/>
+  <text x="632" y="338" class="edge-lbl" fill="#f87171">on_grn_posted.delay() — Celery</text>
+
+  <!-- dashed skip arrow MR/RFQ bypass -->
+  <path d="M110,122 C110,170 360,150 510,90" fill="none" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <text x="150" y="160" class="edge-lbl" fill="#fbbf24">skip MR &amp; RFQ → PO created manually</text>
+</svg>
+</div>
+
+<div class="note">
+  <strong>Seam detail.</strong> <code>post_goods_receipt</code> calls <code>purchase_management.apply_goods_receipt</code>
+  <em>in-process</em>, sets GRN status <code>POSTED</code>, commits, then fires the Celery event
+  <code>on_grn_posted.delay(grn.id)</code>. The warehouse side runs in a separate transaction/worker.
+  <span class="cite">goods_receipt_management/services.py:819–839</span>,
+  <span class="cite">warehouse_management/tasks.py:28–35</span>.
+</div>
+
+<!-- ============================================================= -->
+<h2 id="ptables">2 · Purchase flow — per-step data tables</h2>
+
+<h3>Step 1 — Material Requisition <span class="pill opt">optional</span>
+  <span class="cite">requisition_management/models.py</span></h3>
+<table>
+  <caption><code>material_requisitions</code> (header) — status enum <span class="cite">:29–36</span> (draft→submitted→under_review→approved→rejected→ordered→closed)</caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">id</td><td class="t">Integer PK</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:56</td></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> tenant</td><td class="cite">:57–61</td></tr>
+  <tr><td class="f">mr_number</td><td class="t">String(50)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> generated</td><td class="cite">:62</td></tr>
+  <tr><td class="f">requested_by_user_id</td><td class="t">FK users</td><td class="req-no">no</td><td><span class="pill add">added</span></td><td class="cite">:63–67</td></tr>
+  <tr><td class="f">department_id</td><td class="t">Integer (soft)</td><td class="req-no">no</td><td><span class="pill add">added</span> no FK</td><td class="cite">:68</td></tr>
+  <tr><td class="f">needed_by_date</td><td class="t">Date</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:69</td></tr>
+  <tr><td class="f">reason</td><td class="t">Text</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:70</td></tr>
+  <tr><td class="f">priority</td><td class="t">String(20)</td><td class="req-yes">yes (dflt normal)</td><td><span class="pill add">added</span></td><td class="cite">:71–75</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">yes (dflt draft)</td><td><span class="pill add">added</span></td><td class="cite">:76–80</td></tr>
+  <tr><td class="f">notes</td><td class="t">Text</td><td class="req-no">no</td><td><span class="pill add">added</span></td><td class="cite">:81</td></tr>
+</table>
+<table>
+  <caption><code>material_requisition_items</code> (lines)</caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">material_requisition_id</td><td class="t">FK material_requisitions</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> parent</td><td class="cite">:127–131</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (SET NULL)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> catalog ref</td><td class="cite">:132–136</td></tr>
+  <tr><td class="f">item_code</td><td class="t">String(100)</td><td class="req-no">no</td><td><span class="pill add">added</span> free-text</td><td class="cite">:137</td></tr>
+  <tr><td class="f">item_name</td><td class="t">String(255)</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:138</td></tr>
+  <tr><td class="f">unit_id / unit_code</td><td class="t">FK units / String(30)</td><td class="req-no">no / <span class="req-yes">yes</span></td><td><span class="pill ref">carried</span>/<span class="pill add">added</span></td><td class="cite">:139–144</td></tr>
+  <tr><td class="f">quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:145</td></tr>
+  <tr><td class="f">estimated_unit_cost (+_base, currency_id, base_currency_id, exchange_rate_used)</td><td class="t">Numeric / FK currencies</td><td class="req-no">no (all nullable)</td><td><span class="pill add">added</span> est. money</td><td class="cite">:146–158</td></tr>
+</table>
+
+<h3>Step 2 — RFQ, suppliers, quotes <span class="pill opt">optional</span>
+  <span class="cite">rfq_management/models.py</span></h3>
+<table>
+  <caption><code>rfqs</code> (header) — status enum <span class="cite">:24–28</span> (draft/sent/closed/cancelled); unique <code>(company_id, mr_id)</code> <span class="cite">:41</span></caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> tenant</td><td class="cite">:51–55</td></tr>
+  <tr><td class="f">rfq_number</td><td class="t">String(50)</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:56</td></tr>
+  <tr><td class="f">mr_id</td><td class="t">FK material_requisitions (SET NULL)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> ← Step 1</td><td class="cite">:57–61</td></tr>
+  <tr><td class="f">title</td><td class="t">String(255)</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:62</td></tr>
+  <tr><td class="f">deadline_date</td><td class="t">Date</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:64</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">yes (dflt draft)</td><td><span class="pill add">added</span></td><td class="cite">:65</td></tr>
+</table>
+<table>
+  <caption><code>rfq_suppliers</code> · <code>rfq_items</code> · <code>quotation_responses</code> · <code>quotation_response_items</code> (key fields)</caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">rfq_suppliers.supplier_id</td><td class="t">FK suppliers (SET NULL)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> catalog ref</td><td class="cite">:119–123</td></tr>
+  <tr><td class="f">rfq_suppliers.supplier_name</td><td class="t">String(255)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> free-text fallback</td><td class="cite">:125</td></tr>
+  <tr><td class="f">rfq_items.rfq_id / item_id / quantity</td><td class="t">FK / FK / Numeric</td><td class="req-yes">yes / <span class="req-no">no</span> / <span class="req-yes">yes</span></td><td><span class="pill ref">carried</span> + <span class="pill add">added</span> qty</td><td class="cite">:154–168</td></tr>
+  <tr><td class="f">quotation_responses.is_winner</td><td class="t">Boolean</td><td class="req-yes">yes (dflt false)</td><td><span class="pill add">added</span> winner pick</td><td class="cite">:210</td></tr>
+  <tr><td class="f">quotation_response_items.unit_price (+_base, currency_id, base_currency_id, exchange_rate_used)</td><td class="t">Numeric(28,10) / FK currencies</td><td class="req-yes">yes (all NOT NULL)</td><td><span class="pill add">added</span> supplier price (4-field money)</td><td class="cite">:261–273</td></tr>
+  <tr><td class="f">quotation_response_items.rfq_item_id</td><td class="t">FK rfq_items</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> ties price↔line</td><td class="cite">:256–260</td></tr>
+</table>
+<div class="note"><strong>Introduced here for the first time:</strong> RFQ introduces the <em>supplier dimension</em> and
+the <em>quoted unit_price</em> per item (<code>quotation_response_items.unit_price</code>, NOT NULL, full 4-field money) plus
+the winner flag. This price is what flows into the PO.</div>
+
+<h3>Step 3 — Purchase Order + Phases + Items <span class="pill core">core</span>
+  <span class="cite">purchase_management/models.py</span></h3>
+<table>
+  <caption><code>purchase_orders</code> (header) — status enum <span class="cite">:32–39</span>; approval enum <span class="cite">:42–46</span>; unique <code>(company_id, rfq_id)</code> <span class="cite">:75</span></caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> tenant</td><td class="cite">:83</td></tr>
+  <tr><td class="f">reference_number</td><td class="t">String(50)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> PO-YYYY-NNNN</td><td class="cite">:84</td></tr>
+  <tr><td class="f">rfq_id</td><td class="t">FK rfqs (RESTRICT)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> ← Step 2</td><td class="cite">:86–91</td></tr>
+  <tr><td class="f">winning_quotation_response_id</td><td class="t">FK quotation_responses (RESTRICT)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> ← Step 2</td><td class="cite">:92–97</td></tr>
+  <tr><td class="f">supplier_id</td><td class="t">FK suppliers (SET NULL)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> catalog ref</td><td class="cite">:100</td></tr>
+  <tr><td class="f">supplier_name</td><td class="t">String(255)</td><td class="req-no">no</td><td><span class="pill add">added</span> free-text fallback</td><td class="cite">:101</td></tr>
+  <tr><td class="f">currency_id / base_currency_id / exchange_rate_used</td><td class="t">FK currencies / Numeric</td><td class="req-yes">yes (NOT NULL)</td><td><span class="pill add">added</span> money header</td><td class="cite">:104–106</td></tr>
+  <tr><td class="f">status / approval_status</td><td class="t">String(20)</td><td class="req-yes">yes (dflt draft)</td><td><span class="pill add">added</span></td><td class="cite">:110–111</td></tr>
+</table>
+<table>
+  <caption><code>purchase_phases</code> = physical delivery batches — status enum <span class="cite">:49–54</span></caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">purchase_order_id</td><td class="t">FK purchase_orders</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> parent</td><td class="cite">:158</td></tr>
+  <tr><td class="f">phase_number</td><td class="t">Integer</td><td class="req-yes">yes (dflt 1)</td><td><span class="pill add">added</span></td><td class="cite">:159</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">yes (dflt draft)</td><td><span class="pill add">added</span></td><td class="cite">:163</td></tr>
+  <tr><td class="f">currency_id / exchange_rate_used</td><td class="t">FK currencies / Numeric</td><td class="req-no">no (inherits PO)</td><td><span class="pill add">added</span></td><td class="cite">:166–167</td></tr>
+  <tr><td class="f">expected_/actual_delivery_date</td><td class="t">DateTime</td><td class="req-no">no</td><td><span class="pill add">added</span> (actual set on receipt)</td><td class="cite">:169–170</td></tr>
+</table>
+<table>
+  <caption><code>purchase_phase_items</code> — carries the contracted qty + price per line</caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">phase_id</td><td class="t">FK purchase_phases</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> parent</td><td class="cite">:192</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (SET NULL)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> catalog ref</td><td class="cite">:193</td></tr>
+  <tr><td class="f">item_name</td><td class="t">String(255)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> (free-text in Phase 0)</td><td class="cite">:196</td></tr>
+  <tr><td class="f">quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> contracted qty</td><td class="cite">:199</td></tr>
+  <tr><td class="f">received_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes (dflt 0)</td><td><span class="pill add">added</span> — mutated by GRN post</td><td class="cite">:200</td></tr>
+  <tr><td class="f">unit / unit_price</td><td class="t">String(30) / Numeric(28,10)</td><td class="req-yes">yes (dflt pcs / 0)</td><td><span class="pill add">added</span> price</td><td class="cite">:201–204</td></tr>
+  <tr><td class="f">currency_id / unit_price_base / base_currency_id / exchange_rate_used</td><td class="t">FK currencies / Numeric</td><td class="req-yes">yes (NOT NULL)</td><td><span class="pill add">added</span> 4-field money</td><td class="cite">:205–208</td></tr>
+  <tr><td class="f">line_total / line_total_base</td><td class="t">Numeric(28,10)</td><td class="req-yes">yes (dflt 0)</td><td><span class="pill add">added</span> qty×price</td><td class="cite">:210–211</td></tr>
+</table>
+<div class="intro-list"><ul>
+  <li><strong>Introduced here:</strong> <code>purchase_phase_items.quantity</code> + <code>unit_price</code> (the contracted commitment),
+  <code>received_quantity</code> (the running fulfilment counter), and phase batching (<code>phase_number</code>).
+  <code>purchase_order_costs</code> (freight/customs/tax/insurance, <span class="cite">:222–246</span>) and
+  <code>purchase_order_receipt_links.financial_receipt_id</code> (plain int, no FK, <span class="cite">:264</span>) are also introduced at the PO level.</li>
+</ul></div>
+
+<h3>Step 4 — Goods Receipt Note <span class="pill core">core</span>
+  <span class="cite">goods_receipt_management/models.py</span></h3>
+<table>
+  <caption><code>goods_receipt_notes</code> (header) — status enum <span class="cite">:23–25</span> (draft/posted)</caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> tenant</td><td class="cite">:47–51</td></tr>
+  <tr><td class="f">grn_number</td><td class="t">String(50)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> GRN-YYYY-NNNN</td><td class="cite">:52</td></tr>
+  <tr><td class="f">purchase_order_id</td><td class="t">FK purchase_orders (RESTRICT)</td><td class="req-yes"><strong>yes</strong></td><td><span class="pill ref">carried</span> ← Step 3</td><td class="cite">:53–57</td></tr>
+  <tr><td class="f">purchase_phase_id</td><td class="t">FK purchase_phases (RESTRICT)</td><td class="req-yes"><strong>yes</strong></td><td><span class="pill ref">carried</span> ← Step 3</td><td class="cite">:58–62</td></tr>
+  <tr><td class="f">receipt_date</td><td class="t">Date</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:68</td></tr>
+  <tr><td class="f">delivery_note_number</td><td class="t">String(100)</td><td class="req-no">no</td><td><span class="pill add">added</span></td><td class="cite">:69</td></tr>
+  <tr><td class="f">warehouse_id</td><td class="t">FK warehouses (RESTRICT)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> → Step 5 dest</td><td class="cite">:70–74</td></tr>
+  <tr><td class="f">status</td><td class="t">String(20)</td><td class="req-yes">yes (dflt draft)</td><td><span class="pill add">added</span></td><td class="cite">:75–79</td></tr>
+</table>
+<table>
+  <caption><code>goods_receipt_items</code> — the accept/reject split; unique <code>(grn_id, purchase_phase_item_id)</code> <span class="cite">:101–105</span></caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">goods_receipt_note_id</td><td class="t">FK goods_receipt_notes</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> parent</td><td class="cite">:115–119</td></tr>
+  <tr><td class="f">purchase_phase_item_id</td><td class="t">FK purchase_phase_items (RESTRICT)</td><td class="req-yes"><strong>yes</strong></td><td><span class="pill ref">carried</span> ← the PO line being received</td><td class="cite">:120–124</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (SET NULL)</td><td class="req-no">no*</td><td><span class="pill ref">carried</span> *required to accept stock (service)</td><td class="cite">:125–129</td></tr>
+  <tr><td class="f">item_code / item_name / unit_code</td><td class="t">String</td><td class="req-no">/ <span class="req-yes">yes</span> / <span class="req-yes">yes</span></td><td><span class="pill ref">carried</span> snapshot from PO line</td><td class="cite">:130–132</td></tr>
+  <tr><td class="f">received_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:133</td></tr>
+  <tr><td class="f">accepted_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> → drives stock IN</td><td class="cite">:134</td></tr>
+  <tr><td class="f">rejected_quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes</td><td><span class="pill add">added</span></td><td class="cite">:135</td></tr>
+  <tr><td class="f">rejection_reason</td><td class="t">Text</td><td class="req-no">no*</td><td><span class="pill add">added</span> *required if rejected&gt;0 (service)</td><td class="cite">:136</td></tr>
+  <tr><td class="f">storage_location_id</td><td class="t">FK storage_locations (RESTRICT)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> → Step 5 dest</td><td class="cite">:137–141</td></tr>
+  <tr><td class="f">unit_cost (+_base, currency_id, base_currency_id, exchange_rate_used)</td><td class="t">Numeric / FK currencies</td><td class="req-yes">yes (NOT NULL)</td><td><span class="pill ref">carried</span> copied from PO line price by service</td><td class="cite">:142–154</td></tr>
+</table>
+<div class="intro-list"><ul>
+  <li><strong>Introduced here:</strong> <code>received_quantity</code> / <code>accepted_quantity</code> / <code>rejected_quantity</code>
+  (the QC split) and the receiving <code>storage_location_id</code>. The cost fields are <em>carried</em>, not entered:
+  <code>build_goods_receipt_item</code> copies <code>unit_price → unit_cost</code> etc. from the referenced phase item
+  <span class="cite">goods_receipt_management/services.py:297–315</span>.</li>
+</ul></div>
+
+<div class="note ok"><strong>What "post" enforces &amp; mutates</strong> — <code>post_goods_receipt</code>
+<span class="cite">goods_receipt_management/services.py:774–845</span>:
+must be <code>draft</code> (:784), must have items (:786–791), validates warehouse/location ownership (:793),
+re-validates each line's qty split (:799–807), and requires <code>item_id</code> for any accepted line (:809–817).
+It then calls <code>apply_goods_receipt</code> <span class="cite">purchase_management/services.py:721</span>, which locks the PO
+(:729–737), <strong>blocks receipt unless the PO is receivable</strong> — not draft/cancelled/closed (:745–754) and phase not
+draft/closed (:772–780), enforces the <strong>over-receipt guard</strong> (new received &gt; ordered qty → error, :819–824),
+increments <code>received_quantity</code> (:826–833), and rolls phase up to <code>received</code>/<code>shipped</code>
+(:841–855) and PO up to <code>received</code>/<code>partially_received</code> (:867–877). Finally GRN status → <code>POSTED</code>
+(:836) and the warehouse event fires (:839).</div>
+
+<!-- ============================================================= -->
+<h2 id="wflow">3 · Warehouse flow — whole flow</h2>
+<p>The warehouse module never reads purchase/GRN models directly. The Celery task pulls a plain dict via
+<code>get_posted_goods_receipt_for_warehouse</code> and writes two things: an immutable
+<code>stock_movements</code> ledger row (the delta) and the running <code>stock_items</code> balance (weighted-average cost).</p>
+
+<div class="diagram">
+<svg viewBox="0 0 960 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Warehouse flow diagram">
+  <defs>
+    <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#7f8aa0"/>
+    </marker>
+    <marker id="arrSeam2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <!-- seam source -->
+  <rect x="14" y="26" width="190" height="78" rx="10" fill="#241a1a" stroke="#7f3a3a" stroke-width="1.6"/>
+  <text x="26" y="50" class="box-title" fill="#e6e9ef">GRN POSTED</text>
+  <text x="26" y="69" class="box-sub" fill="#f87171">on_grn_posted.delay()</text>
+  <text x="26" y="86" class="box-actor" fill="#9aa3b2">trigger from purchase side</text>
+
+  <!-- task -->
+  <rect x="250" y="26" width="210" height="78" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="262" y="50" class="box-title" fill="#e6e9ef">process_grn_receipt</text>
+  <text x="262" y="69" class="box-sub" fill="#34d399">reads posted GRN dict</text>
+  <text x="262" y="86" class="box-actor" fill="#6ee7b7">actor: Celery worker · CORE</text>
+
+  <!-- resolve dest -->
+  <rect x="510" y="26" width="210" height="78" rx="10" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="522" y="50" class="box-title" fill="#e6e9ef">resolve_receipt_destination</text>
+  <text x="522" y="69" class="box-sub" fill="#9aa3b2">location → warehouse → SYSTEM</text>
+  <text x="522" y="86" class="box-sub" fill="#9aa3b2">auto-creates RECEIVING loc</text>
+
+  <!-- record movement -->
+  <rect x="510" y="150" width="210" height="86" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="522" y="174" class="box-title" fill="#e6e9ef">stock_movements (IN)</text>
+  <text x="522" y="193" class="box-sub" fill="#34d399">type=receipt · qty&gt;0</text>
+  <text x="522" y="210" class="box-sub" fill="#9aa3b2">idempotent on (grn, line)</text>
+  <text x="522" y="227" class="box-actor" fill="#6ee7b7">immutable ledger · CORE</text>
+
+  <!-- stock item balance -->
+  <rect x="250" y="150" width="210" height="86" rx="10" fill="#16241d" stroke="#1f6e54" stroke-width="2"/>
+  <text x="262" y="174" class="box-title" fill="#e6e9ef">stock_items balance</text>
+  <text x="262" y="193" class="box-sub" fill="#34d399">on_hand += accepted</text>
+  <text x="262" y="210" class="box-sub" fill="#9aa3b2">weighted-avg unit_cost</text>
+  <text x="262" y="227" class="box-actor" fill="#6ee7b7">on-hand state · CORE</text>
+
+  <!-- manual path -->
+  <rect x="14" y="270" width="446" height="70" rx="10" fill="#1d211b" stroke="#7a5a18" stroke-dasharray="5 4"/>
+  <text x="26" y="294" class="box-title" fill="#fcd34d">Alt: manual movement (no GRN)</text>
+  <text x="26" y="313" class="box-sub" fill="#9aa3b2">POST /movements → create_manual_stock_movement</text>
+  <text x="26" y="330" class="box-sub" fill="#9aa3b2">reference_type=manual, reference_id=0</text>
+
+  <!-- edges -->
+  <line x1="204" y1="65" x2="246" y2="65" stroke="#f87171" stroke-width="2.2" marker-end="url(#arrSeam2)"/>
+  <line x1="460" y1="65" x2="506" y2="65" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr2)"/>
+  <line x1="615" y1="104" x2="615" y2="146" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr2)"/>
+  <text x="623" y="130" class="edge-lbl" fill="#9aa3b2">per accepted line</text>
+  <line x1="510" y1="193" x2="462" y2="193" stroke="#7f8aa0" stroke-width="1.6" marker-end="url(#arr2)"/>
+  <text x="300" y="142" class="edge-lbl" fill="#9aa3b2">apply_incoming_balance</text>
+  <!-- manual into movement -->
+  <path d="M360,270 C360,250 470,250 540,236" fill="none" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arr2)"/>
+</svg>
+</div>
+
+<!-- ============================================================= -->
+<h2 id="wtables">4 · Warehouse flow — per-step data tables</h2>
+
+<h3>Setup entities — Warehouse / Zone / StorageLocation
+  <span class="cite">warehouse_management/models.py</span></h3>
+<table>
+  <caption>Location hierarchy (master data, created before receipts)</caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">warehouses.company_id / code / name</td><td class="t">FK / String / String</td><td class="req-yes">yes</td><td><span class="pill add">added</span> (unique company+code)</td><td class="cite">:77–83</td></tr>
+  <tr><td class="f">warehouses.is_default</td><td class="t">Boolean</td><td class="req-yes">yes (dflt false)</td><td><span class="pill add">added</span> one-default partial unique idx</td><td class="cite">:97, :68–73</td></tr>
+  <tr><td class="f">warehouse_zones.warehouse_id / code / name</td><td class="t">FK / String</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> + <span class="pill add">added</span></td><td class="cite">:119–125</td></tr>
+  <tr><td class="f">storage_locations.zone_id / code / name</td><td class="t">FK / String</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> + <span class="pill add">added</span></td><td class="cite">:150–156</td></tr>
+  <tr><td class="f">storage_locations.is_receiving</td><td class="t">Boolean</td><td class="req-yes">yes (dflt false)</td><td><span class="pill add">added</span> picks auto-receiving loc</td><td class="cite">:160</td></tr>
+</table>
+
+<h3>Step 5a — Stock Movement (the immutable ledger delta) <span class="pill core">core</span></h3>
+<table>
+  <caption><code>stock_movements</code> — type enum <span class="cite">:31–38</span>, ref-type enum <span class="cite">:41–46</span>; <code>quantity &gt; 0</code> check <span class="cite">:263–266</span>; GRN idempotency partial-unique index on <code>(company_id, reference_type, reference_id, reference_line_id)</code> where type='grn' <span class="cite">:254–262</span></caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> ← GRN.company_id</td><td class="cite">:277–281</td></tr>
+  <tr><td class="f">movement_number</td><td class="t">String(50)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> MOV-YYYY-NNNNN (seq)</td><td class="cite">:282</td></tr>
+  <tr><td class="f">movement_type</td><td class="t">String(30)</td><td class="req-yes">yes</td><td><span class="pill add">added</span> =receipt for GRN</td><td class="cite">:283</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (RESTRICT)</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> ← GRN item.item_id</td><td class="cite">:284–288</td></tr>
+  <tr><td class="f">from_location_id</td><td class="t">FK storage_locations</td><td class="req-no">no (null on IN)</td><td><span class="pill add">added</span></td><td class="cite">:289–293</td></tr>
+  <tr><td class="f">to_location_id</td><td class="t">FK storage_locations</td><td class="req-no">no (set on IN)</td><td><span class="pill ref">carried</span> resolved dest</td><td class="cite">:294–298</td></tr>
+  <tr><td class="f">quantity</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> = accepted_quantity</td><td class="cite">:299</td></tr>
+  <tr><td class="f">unit_cost / currency_id / unit_cost_base / base_currency_id / exchange_rate_used</td><td class="t">Numeric / FK currencies</td><td class="req-yes">yes (NOT NULL)</td><td><span class="pill ref">carried</span> ← GRN item cost</td><td class="cite">:300–312</td></tr>
+  <tr><td class="f">reference_type / reference_id</td><td class="t">String(30) / Integer</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> = grn / grn.id</td><td class="cite">:313–314</td></tr>
+  <tr><td class="f">reference_line_id</td><td class="t">Integer (soft)</td><td class="req-no">no</td><td><span class="pill ref">carried</span> = grn_item.id (idempotency key)</td><td class="cite">:315</td></tr>
+  <tr><td class="f">movement_date</td><td class="t">DateTime</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span> ← receipt_date</td><td class="cite">:321</td></tr>
+</table>
+<div class="note"><strong>No <code>updated_at</code>.</strong> <code>stock_movements</code> has only <code>created_at</code>
+<span class="cite">:323</span> — the ledger is append-only by design. <code>reference_id</code> and <code>reference_line_id</code>
+are plain integers (soft references), not ORM FKs to the GRN, preserving module isolation.</div>
+
+<h3>Step 5b — Stock Item (the running on-hand balance) <span class="pill core">core</span></h3>
+<table>
+  <caption><code>stock_items</code> — unique <code>(item_id, storage_location_id)</code> <span class="cite">:173–177</span>; check <code>available = on_hand − reserved</code> &amp; non-negative <span class="cite">:178–189</span></caption>
+  <tr><th>field</th><th>type</th><th>required?</th><th>carried-in / added-here</th><th>cite</th></tr>
+  <tr><td class="f">company_id</td><td class="t">FK companies</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span></td><td class="cite">:197–201</td></tr>
+  <tr><td class="f">item_id</td><td class="t">FK items (RESTRICT)</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span></td><td class="cite">:202–206</td></tr>
+  <tr><td class="f">storage_location_id</td><td class="t">FK storage_locations (RESTRICT)</td><td class="req-yes">yes</td><td><span class="pill ref">carried</span></td><td class="cite">:207–211</td></tr>
+  <tr><td class="f">quantity_on_hand</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes (dflt 0)</td><td><span class="pill add">added</span> += accepted (weighted avg)</td><td class="cite">:212–216</td></tr>
+  <tr><td class="f">quantity_reserved / quantity_available</td><td class="t">Numeric(18,4)</td><td class="req-yes">yes (dflt 0)</td><td><span class="pill add">added</span> (available derived)</td><td class="cite">:217–226</td></tr>
+  <tr><td class="f">min_level / max_level / reorder_point</td><td class="t">Numeric(18,4)</td><td class="req-no">no</td><td><span class="pill add">added</span> thresholds</td><td class="cite">:227–229</td></tr>
+  <tr><td class="f">unit_cost / unit_cost_currency_id / unit_cost_base</td><td class="t">Numeric / FK</td><td class="req-yes">yes (dflt 0)</td><td><span class="pill add">added</span> weighted-avg cost</td><td class="cite">:230–236</td></tr>
+</table>
+<div class="intro-list"><ul>
+  <li><strong>StockMovement introduces</strong> the immutable, per-line ledger delta (qty, cost, type, reference). It is the
+  <em>sole</em> writer of balances — <code>record_stock_movement</code>
+  <span class="cite">warehouse_management/services.py:1122–1306</span>.</li>
+  <li><strong>StockItem introduces / updates</strong> the on-hand balance via <code>apply_incoming_balance</code>
+  (weighted-average cost recompute, <span class="cite">warehouse_management/services.py:999–1030</span>);
+  the row is auto-created if absent (<code>get_or_create_stock_item_for_receipt</code>, <span class="cite">:937–968</span>).</li>
+  <li><strong>Idempotency:</strong> for GRN movements the task takes a pg advisory lock + looks up an existing reference movement
+  before inserting, so a re-fired event is a no-op <span class="cite">warehouse_management/services.py:1149–1167</span>, backed by the
+  partial-unique index <span class="cite">warehouse_management/models.py:254–262</span>.</li>
+</ul></div>
+
+<!-- ============================================================= -->
+<h2 id="bypass">5 · Which states can be bypassed <em>now</em></h2>
+<p>Bypassability is read off the schema (which linking FK is nullable / what free-text fallback exists) and any service guard
+that blocks the path. Each card states the evidence.</p>
+
+<div class="bypass-grid">
+
+  <div class="card skip">
+    <div class="verdict" style="color:var(--opt)">Skippable</div>
+    <h4>① Material Requisition</h4>
+    <p>Nothing downstream hard-requires an MR. <code>rfqs.mr_id</code> is nullable, and a PO can be created with no MR/RFQ at all.</p>
+    <div class="ev"><strong>Evidence:</strong> <span class="cite">rfq_management/models.py:57–61</span> (mr_id SET-NULL nullable);
+    manual PO endpoint creates a PO with no mr_id/rfq_id — <span class="cite">purchase_management/services.py:155–191</span>,
+    wired at <span class="cite">routes/orders.py:25,55</span>. From-RFQ only marks an MR ordered <em>if</em> mr_id is present —
+    <span class="cite">purchase_management/services.py:313–319</span>.</p>
+  </div>
+
+  <div class="card skip">
+    <div class="verdict" style="color:var(--opt)">Skippable</div>
+    <h4>② RFQ + supplier quotes</h4>
+    <p>All three links from the PO back to the RFQ are nullable, and supplier is satisfied by a free-text fallback. The PO can
+    be authored directly.</p>
+    <div class="ev"><strong>Evidence:</strong> <code>purchase_orders.rfq_id</code> <span class="cite">:86–91</span>,
+    <code>winning_quotation_response_id</code> <span class="cite">:92–97</span>, <code>supplier_id</code> <span class="cite">:100</span>
+    all nullable; <code>supplier_name</code> free-text fallback <span class="cite">:101</span>. Manual create path takes
+    <code>supplier_name</code> without any supplier_id — <span class="cite">purchase_management/services.py:135–191</span>.</p>
+  </div>
+
+  <div class="card cant">
+    <div class="verdict" style="color:var(--core)">Cannot skip</div>
+    <h4>③ Purchase Order + Phase</h4>
+    <p>A GRN cannot exist without a PO <em>and</em> a phase — both FKs are NOT NULL with <code>RESTRICT</code>. Receipt is also
+    blocked unless the PO has been approved to <code>ORDERED</code>.</p>
+    <div class="ev"><strong>Evidence:</strong> <code>goods_receipt_notes.purchase_order_id</code> &amp;
+    <code>purchase_phase_id</code> NOT NULL — <span class="cite">goods_receipt_management/models.py:53–62</span>;
+    receivability guard rejects draft/cancelled/closed PO &amp; draft/closed phase —
+    <span class="cite">purchase_management/services.py:745–754, 772–780</span>; approval sets PO→ORDERED, phases→ORDERED —
+    <span class="cite">purchase_management/services.py:411–419</span>.</p>
+  </div>
+
+  <div class="card cant">
+    <div class="verdict" style="color:var(--core)">Cannot skip (for purchase→stock)</div>
+    <h4>④ Goods Receipt Note</h4>
+    <p>On the purchase path, stock only enters via a posted GRN: each <code>goods_receipt_items</code> row hard-references a
+    <code>purchase_phase_item_id</code> (NOT NULL), and posting drives <code>received_quantity</code> + the warehouse event.</p>
+    <div class="ev"><strong>Evidence:</strong> <code>goods_receipt_items.purchase_phase_item_id</code> NOT NULL —
+    <span class="cite">goods_receipt_management/models.py:120–124</span>; warehouse IN movement is created only from a posted GRN dict —
+    <span class="cite">warehouse_management/services.py:1402–1458</span>.
+    <em>Caveat:</em> warehouse stock <strong>can</strong> be created without any GRN via a manual movement — see ⑤ alt.</p>
+  </div>
+
+  <div class="card cant">
+    <div class="verdict" style="color:var(--core)">Cannot skip</div>
+    <h4>⑤ Stock Movement (ledger)</h4>
+    <p>The <code>stock_items</code> balance is <em>only ever</em> changed through <code>record_stock_movement</code>. There is no
+    other code path that writes on-hand quantity — so the ledger delta cannot be bypassed for any balance change (GRN receipt,
+    manual entry, or stock-count adjustment all funnel through it).</p>
+    <div class="ev"><strong>Evidence:</strong> sole balance writers <code>apply_incoming_balance</code> /
+    <code>apply_outgoing_balance</code> live inside <code>record_stock_movement</code> —
+    <span class="cite">warehouse_management/services.py:999–1060, 1122–1306</span>; manual path
+    <code>create_manual_stock_movement</code> (<span class="cite">:1309–1347</span>, route <span class="cite">routes/warehouse.py:299–310</span>)
+    and stock-count post (<span class="cite">:2003–2030</span>) both call the same function.</p>
+  </div>
+
+</div>
+
+<div class="note warn"><strong>Not enforced in code (worth flagging):</strong>
+the warehouse event is fire-and-forget — if the Celery dispatch fails or the module is missing, the GRN still commits as
+<code>POSTED</code> and stock movement is merely <em>deferred</em> (logged, recoverable via
+<code>backfill_posted_goods_receipts</code>) — <span class="cite">goods_receipt_management/services.py:697–727</span>,
+<span class="cite">warehouse_management/services.py:2092–2120</span>. So "GRN posted" does not <em>transactionally</em>
+guarantee "stock updated"; it guarantees it eventually. Also, nothing in the schema forces a PO to originate from an RFQ or an
+RFQ from an MR — those are conventions, not constraints.</div>
+
+<footer>
+Generated from source — models &amp; services in <code>backend/{requisition,rfq,purchase,goods_receipt,warehouse}_management/</code>.
+Every cited line was read directly from the repository. Items marked “service” are enforced in service code, not the DB schema;
+items marked “not enforced in code” have no schema or guard backing them.
+</footer>
+
+</body>
+</html>

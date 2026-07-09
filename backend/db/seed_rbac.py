@@ -118,6 +118,12 @@ def seed() -> None:
             ("permissions:read", "permissions", "read", "Read permissions"),
             ("company:read", "company", "read", "Read company settings"),
             ("company:update", "company", "update", "Update company settings"),
+            (
+                "developer_docs:read",
+                "developer_docs",
+                "read",
+                "Read backend developer documentation",
+            ),
             ("documents:read", "documents", "read", "Read documents"),
             ("documents:create", "documents", "create", "Create documents"),
             ("documents:update", "documents", "update", "Update documents"),

@@ -287,6 +287,64 @@ to resolve a department name safely. Do not invent department ids; leave it
 missing or require an explicit numeric id until a real department resource
 exists.
 
+## Enum vs Lookup Field Rule
+
+Do not treat all "choice-looking" fields the same.
+
+There are two different cases:
+
+1. Real enum fields
+2. Lookup/reference id fields
+
+Real enum fields are closed values already defined by the backend schema or
+model enum. They should use `PayloadField(..., kind="enum", enum_values=...)`.
+The assistant may map user text or Persian aliases to one of the allowed string
+values, but it must not return labels or ids for them.
+
+Examples of real enum fields:
+
+- `supplier_type`
+- supplier `status`
+- material `item_type`
+- material requisition `priority`
+- stock adjustment `movement_type`
+- purchase order `status`
+
+Lookup/reference id fields point to rows in another table or master-data table.
+The user usually knows a name, code, label, or Persian description, not the
+numeric id. These fields must use the reference-resolution convention:
+
+- register a `ResourceSpec` for the resource
+- add a `ReferenceFieldSpec` in the write spec
+- accept text aliases like `*_query`, `*_name`, `*_code`, or natural names such
+  as `supplier`, `unit`, `currency`, `warehouse`, `location`
+- resolve through the owning module's service/search seam
+- write only the English backend id field into `draft.payload`
+- return `partial_draft` when missing, ambiguous, or not found
+
+Examples of lookup/reference id fields:
+
+- `item_id`
+- `supplier_id` / `supplier_ids`
+- `category_id`
+- `unit_id`
+- `model_id`
+- `currency_id`
+- `base_currency_id`
+- `warehouse_id`
+- `storage_location_id`
+- `from_location_id`
+- `to_location_id`
+- `mr_id`
+- `rfq_id`
+- `purchase_phase_id`
+- `purchase_phase_item_id`
+
+The router prompt should also tell the model not to invent these ids. If the
+user says "ACME", "PCS", "تومان", "انبار اصلی", or "چسب belzona مدل m22",
+the router should put that text into the appropriate query/name/code slot. It
+should only put `*_id` when the user literally provides a numeric id.
+
 ## Current Commerce Reference Behavior
 
 The commerce assistant supports these reference flows:
@@ -317,6 +375,88 @@ The commerce assistant supports these reference flows:
   - source storage location name/code -> `from_location_id`
   - target storage location name/code -> `to_location_id`
   - currency/base-currency code/name -> `currency_id` and `base_currency_id`
+
+## Creation Flow Examples
+
+These examples are the expected behavior for future module implementations.
+
+### Material Requisition Creation
+
+When the user creates an MR and names an item:
+
+```text
+برای چسب belzona مدل m22 یک درخواست کالا بساز
+```
+
+the draft builder must search the material item resource.
+
+- If exactly one item matches, write `items[].item_id`.
+- If multiple items match, return `partial_draft` with `validation.references`
+  so the frontend can show choices.
+- If no item matches, return `partial_draft` and ask whether the user wants to
+  create a new item or search again with different text.
+- Do not invent `item_id`.
+
+If the user provides estimated cost with a currency such as "تومان", "IRT", or
+"rial", resolve that text to:
+
+- `items[].currency_id`
+- `items[].base_currency_id`
+
+The frontend still receives English payload fields.
+
+### RFQ Creation
+
+When the user creates an RFQ from an existing MR:
+
+```text
+برای MR-31 از تامین‌کننده ACME استعلام قیمت بساز
+```
+
+the draft builder must resolve:
+
+- `MR-31` -> `mr_id`
+- `ACME` -> `supplier_ids`
+
+When the user creates an RFQ from explicit item names instead of an MR, resolve
+each item name/code/text into `items[].item_id`.
+
+Missing or ambiguous MR, supplier, or item references must return
+`partial_draft`; chat text alone must not create the RFQ.
+
+### Purchase Order Creation
+
+There are two supported PO creation paths.
+
+For PO from RFQ:
+
+```text
+از RFQ-17 سفارش خرید بساز
+```
+
+resolve the RFQ text to `rfq_id` and create a draft whose `commit_target`
+points to:
+
+```text
+POST /purchase/orders/from-rfq/{rfq_id}
+```
+
+The payload is `{}` because the endpoint derives supplier, currency, phases,
+and items from the selected RFQ/winning quotation.
+
+For direct PO creation:
+
+```text
+برای تامین‌کننده ACME با ارز تومان سفارش خرید بساز
+```
+
+resolve:
+
+- supplier text -> `supplier_id`
+- currency/base-currency text -> `currency_id` and `base_currency_id`
+
+If any required reference is missing or ambiguous, return `partial_draft` with
+references/choices. Do not invent ids.
 
 ## PO From RFQ Convention
 
