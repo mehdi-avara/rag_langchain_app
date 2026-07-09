@@ -109,6 +109,15 @@ class GoodsReceiptAssistantToolSet(ConfiguredCommerceToolSet):
             method="PATCH",
             endpoint=f"{API_PREFIX}/{{entity_id}}",
             id_aliases=("goods_receipt_id", "grn_id", "id"),
+            reference_fields=(
+                ReferenceFieldSpec(
+                    field="warehouse_id",
+                    resource_key="warehouse",
+                    raw_aliases=("warehouse_query", "warehouse_name", "warehouse"),
+                    explicit_aliases=("warehouse_id",),
+                    missing_label="warehouse",
+                ),
+            ),
             fields=(
                 PayloadField("receipt_date", aliases=("date",)),
                 PayloadField("delivery_note_number", aliases=("delivery_note",)),

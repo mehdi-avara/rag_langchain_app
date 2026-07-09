@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
+from shared.assistant_resources import register_shared_assistant_resources
 from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, ReferenceFieldSpec, SearchSpec, WriteSpec
 
 from .models import StockMovementType
@@ -126,11 +127,32 @@ class WarehouseAssistantToolSet(ConfiguredCommerceToolSet):
                     missing_label="item",
                 ),
                 ReferenceFieldSpec(
+                    field="from_location_id",
+                    resource_key="storage_location",
+                    raw_aliases=("from_location_query", "from_location",),
+                    explicit_aliases=("from_location_id",),
+                    missing_label="source storage location",
+                ),
+                ReferenceFieldSpec(
                     field="to_location_id",
                     resource_key="storage_location",
-                    raw_aliases=("location_query", "storage_location_query", "location", "storage_location"),
+                    raw_aliases=("to_location_query", "to_location", "location_query", "storage_location_query", "location", "storage_location"),
                     explicit_aliases=("to_location_id", "storage_location_id", "location_id"),
                     missing_label="storage location",
+                ),
+                ReferenceFieldSpec(
+                    field="currency_id",
+                    resource_key="currency",
+                    raw_aliases=("currency_query", "currency_code", "currency"),
+                    explicit_aliases=("currency_id",),
+                    missing_label="currency",
+                ),
+                ReferenceFieldSpec(
+                    field="base_currency_id",
+                    resource_key="currency",
+                    raw_aliases=("base_currency_query", "base_currency_code", "base_currency"),
+                    explicit_aliases=("base_currency_id",),
+                    missing_label="base currency",
                 ),
             ),
             fields=(
@@ -154,6 +176,7 @@ class WarehouseAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> WarehouseAssistantToolSet:
     toolset = WarehouseAssistantToolSet()
     register_toolset(toolset)
+    register_shared_assistant_resources()
     register_warehouse_resources()
     return toolset
 

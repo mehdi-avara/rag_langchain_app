@@ -228,8 +228,10 @@ def requisition_items_from_slots(slots: dict) -> Optional[list[dict]]:
         ("quantity", "decimal", ("qty",)),
         ("estimated_unit_cost", "decimal", ()),
         ("currency_id", "int", ()),
+        ("currency_query", "str", ("currency", "currency_code")),
         ("estimated_unit_cost_base", "decimal", ()),
         ("base_currency_id", "int", ()),
+        ("base_currency_query", "str", ("base_currency", "base_currency_code")),
         ("exchange_rate_used", "decimal", ()),
         ("notes", "str", ("item_notes",)),
     ))
@@ -553,9 +555,39 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
     def _clarify_question(missing: list[str], pending_references: list[dict]) -> str:
         if pending_references:
             first = pending_references[0]
+            label = _reference_label(str(first.get("field", "")))
             if first.get("status") == "ambiguous":
-                return "I found multiple possible matches. Please choose the correct item from the references."
+                return f"I found multiple possible matches. Please choose the correct {label} from the references."
             if first.get("create_suggestion"):
-                return "I could not find that item. Do you want to create it, or should I search again with different text?"
-            return "I could not resolve the referenced item. Please provide an item id or a clearer item name."
+                return f"I could not find that {label}. Do you want to create it, or should I search again with different text?"
+            return f"I could not resolve the referenced {label}. Please provide an id or a clearer name."
         return "I still need: " + ", ".join(missing) + "."
+
+
+def _reference_label(field: str) -> str:
+    name = field.split(".")[-1]
+    labels = {
+        "item_id": "item",
+        "category_id": "category",
+        "unit_id": "unit",
+        "model_id": "model",
+        "currency_id": "currency",
+        "base_currency_id": "base currency",
+        "supplier_id": "supplier",
+        "supplier_ids": "supplier",
+        "mr_id": "material requisition",
+        "rfq_id": "RFQ",
+        "warehouse_id": "warehouse",
+        "storage_location_id": "storage location",
+        "from_location_id": "source storage location",
+        "to_location_id": "storage location",
+        "purchase_phase_id": "purchase phase",
+        "purchase_phase_item_id": "purchase phase item",
+    }
+    if name in labels:
+        return labels[name]
+    if name.endswith("_ids"):
+        name = name[:-4]
+    elif name.endswith("_id"):
+        name = name[:-3]
+    return name.replace("_", " ") or "reference"

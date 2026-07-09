@@ -1,12 +1,15 @@
 from datetime import datetime
 from types import SimpleNamespace
 
+import material_management.services as material_services
 from material_management.services import (
     _import_bool,
     _import_specs,
     build_category_tree,
     item_searchable_text,
     item_to_out,
+    search_categories_for_assistant,
+    search_units_for_assistant,
 )
 
 
@@ -35,6 +38,35 @@ def make_unit():
         created_at=datetime(2026, 6, 20, 10, 0, 0),
         updated_at=datetime(2026, 6, 20, 10, 0, 0),
     )
+
+
+def test_assistant_category_search_matches_code_name_and_description(monkeypatch):
+    categories = [
+        make_category(category_id=1, code="SPARE", name="Spare Parts"),
+        make_category(category_id=2, code="CHEM", name="Chemicals"),
+    ]
+    categories[1].description = "Adhesives and sealants"
+    monkeypatch.setattr(material_services, "list_categories", lambda db, user: categories)
+
+    by_name = search_categories_for_assistant(None, None, "spare", limit=10)
+    by_description = search_categories_for_assistant(None, None, "sealants", limit=10)
+
+    assert [category.id for category in by_name] == [1]
+    assert [category.id for category in by_description] == [2]
+
+
+def test_assistant_unit_search_matches_code_name_and_type(monkeypatch):
+    units = [
+        make_unit(),
+        SimpleNamespace(id=3, code="KG", name="Kilogram", unit_type="mass"),
+    ]
+    monkeypatch.setattr(material_services, "list_units", lambda db, user: units)
+
+    by_code = search_units_for_assistant(None, None, "PCS", limit=10)
+    by_type = search_units_for_assistant(None, None, "mass", limit=10)
+
+    assert [unit.id for unit in by_code] == [2]
+    assert [unit.id for unit in by_type] == [3]
 
 
 def test_category_tree_builds_parent_child_structure():

@@ -68,6 +68,10 @@ ALL_FINANCIAL_PERMS = [
 ALL_COMMERCE_PERMS = [
     "assistant:chat",
     "assistant:draft",
+    "currencies:read",
+    "currencies:create",
+    "models:read",
+    "models:create",
     "supplier_management:read",
     "supplier_management:search",
     "supplier_management:ask",

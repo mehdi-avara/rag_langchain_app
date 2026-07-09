@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
@@ -303,6 +304,47 @@ def list_categories(db: Session, current_user: User) -> list[ItemCategory]:
     )
 
 
+def _lookup_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[\w\u0600-\u06ff]+", (text or "").lower())
+        if len(token) >= 2
+    }
+
+
+def _lookup_rank(query_text: str, values: Sequence[Optional[str]]) -> Optional[tuple[int, str]]:
+    query = (query_text or "").strip().lower()
+    haystack = " ".join(value for value in values if value).lower()
+    if not query:
+        return (50, haystack)
+    if any((value or "").strip().lower() == query for value in values):
+        return (0, haystack)
+    if any((value or "").strip().lower().startswith(query) for value in values):
+        return (10, haystack)
+    if query in haystack:
+        return (20, haystack)
+    query_tokens = _lookup_tokens(query)
+    if query_tokens and query_tokens & _lookup_tokens(haystack):
+        return (30, haystack)
+    return None
+
+
+def search_categories_for_assistant(
+    db: Session,
+    current_user: User,
+    query_text: str,
+    *,
+    limit: int = 10,
+) -> list[ItemCategory]:
+    ranked: list[tuple[tuple[int, str], ItemCategory]] = []
+    for category in list_categories(db, current_user):
+        rank = _lookup_rank(query_text, (category.code, category.name, category.description))
+        if rank is not None:
+            ranked.append((rank, category))
+    ranked.sort(key=lambda item: (item[0][0], item[1].code, item[1].id))
+    return [category for _, category in ranked[: max(1, limit)]]
+
+
 def build_category_tree(categories: Sequence[ItemCategory]) -> list[ItemCategoryTreeOut]:
     nodes = {
         category.id: ItemCategoryTreeOut(
@@ -466,6 +508,22 @@ def list_units(db: Session, current_user: User) -> list[Unit]:
         .order_by(Unit.code.asc(), Unit.id.asc())
         .all()
     )
+
+
+def search_units_for_assistant(
+    db: Session,
+    current_user: User,
+    query_text: str,
+    *,
+    limit: int = 10,
+) -> list[Unit]:
+    ranked: list[tuple[tuple[int, str], Unit]] = []
+    for unit in list_units(db, current_user):
+        rank = _lookup_rank(query_text, (unit.code, unit.name, unit.unit_type))
+        if rank is not None:
+            ranked.append((rank, unit))
+    ranked.sort(key=lambda item: (item[0][0], item[1].code, item[1].id))
+    return [unit for _, unit in ranked[: max(1, limit)]]
 
 
 def create_unit(db: Session, current_user: User, data: dict) -> Unit:

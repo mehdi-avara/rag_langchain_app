@@ -1,6 +1,7 @@
 from typing import List
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,29 @@ def get_model_or_404(db: Session, model_id: int, current_user: User) -> ManagedM
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     return model
+
+
+def search_models_for_assistant(
+    db: Session,
+    current_user: User,
+    query_text: str,
+    ids=None,
+    limit: int = 10,
+) -> list[ManagedModel]:
+    company_id = require_company(current_user)
+    query = db.query(ManagedModel).filter(ManagedModel.company_id == company_id)
+    if ids is not None:
+        query = query.filter(ManagedModel.id.in_(ids))
+    text_value = (query_text or "").strip()
+    if text_value:
+        pattern = f"%{text_value}%"
+        query = query.filter(or_(
+            ManagedModel.manufacturer.ilike(pattern),
+            ManagedModel.model.ilike(pattern),
+            ManagedModel.description.ilike(pattern),
+            ManagedModel.type.ilike(pattern),
+        ))
+    return query.order_by(ManagedModel.created_at.desc()).limit(limit).all()
 
 
 def get_doc_ids(db: Session, model_id: int) -> List[int]:

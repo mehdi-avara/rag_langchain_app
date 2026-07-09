@@ -8,13 +8,13 @@ import pytest
 
 from assistant.tests.fakes import ALL_COMMERCE_PERMS, FakeProvider, make_user
 
-import goods_receipt_management.assistant_tools  # noqa: F401
+import goods_receipt_management.assistant_tools as goods_receipt_tools
 import material_management.assistant_tools as material_tools
 import purchase_management.assistant_tools as purchase_tools
 import requisition_management.assistant_tools as requisition_tools
 import rfq_management.assistant_tools as rfq_tools
 import supplier_management.assistant_tools as supplier_tools
-import warehouse_management.assistant_tools  # noqa: F401
+import warehouse_management.assistant_tools as warehouse_tools
 from assistant import registry, router as router_mod
 from assistant.graph import build_assistant_graph
 from assistant.module_interface import Candidate, ResourceSpec, get_resource, register_resource
@@ -172,6 +172,244 @@ def test_complete_commerce_write_returns_pending_draft_commit_target():
     assert draft.payload["name"] == "ACME"
 
 
+def test_material_item_resolves_category_and_unit_names_to_english_id_fields():
+    saved_category = get_resource("item_category")
+    saved_unit = get_resource("material_unit")
+    register_resource(ResourceSpec(
+        key="item_category",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(
+                id=5,
+                match_text="Spare Parts",
+                label="SPARE - Spare Parts",
+                data={"id": 5, "code": "SPARE", "name": "Spare Parts"},
+            )
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials/categories",
+    ))
+    register_resource(ResourceSpec(
+        key="material_unit",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(
+                id=2,
+                match_text="Piece",
+                label="PCS - Piece - count",
+                data={"id": 2, "code": "PCS", "name": "Piece", "unit_type": "count"},
+            )
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials/units",
+    ))
+    try:
+        draft = material_tools.MaterialAssistantToolSet().build_draft(
+            intent="add_item",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "item_code": "PUMP-SEAL",
+                "name": "Pump seal",
+                "category": "Spare Parts",
+                "unit": "Piece",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_category is not None:
+            register_resource(saved_category)
+        if saved_unit is not None:
+            register_resource(saved_unit)
+
+    assert draft.valid is True
+    assert draft.payload["category_id"] == 5
+    assert draft.payload["unit_id"] == 2
+    assert "category" not in draft.payload
+    assert "unit" not in draft.payload
+    assert draft.commit_target == {
+        "method": "POST",
+        "endpoint": "/materials",
+        "permission": "material_management:create",
+    }
+
+
+def test_material_item_missing_unit_name_returns_partial_reference():
+    saved_category = get_resource("item_category")
+    saved_unit = get_resource("material_unit")
+    register_resource(ResourceSpec(
+        key="item_category",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(
+                id=5,
+                match_text="Spare Parts",
+                label="SPARE - Spare Parts",
+                data={"id": 5, "code": "SPARE", "name": "Spare Parts"},
+            )
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials/categories",
+    ))
+    register_resource(ResourceSpec(
+        key="material_unit",
+        read_permission="material_management:read",
+        provider=FakeProvider([]),
+        create_permission="material_management:create",
+        create_endpoint="/materials/units",
+        suggestion_from=lambda raw, slots: {"code": raw, "name": raw},
+    ))
+    try:
+        draft = material_tools.MaterialAssistantToolSet().build_draft(
+            intent="add_item",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "item_code": "BELZONA-M22",
+                "name": "Belzona adhesive M22",
+                "category": "Spare Parts",
+                "unit": "box",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_category is not None:
+            register_resource(saved_category)
+        if saved_unit is not None:
+            register_resource(saved_unit)
+
+    assert draft.valid is False
+    assert draft.commit_target == {}
+    assert draft.payload["category_id"] == 5
+    assert "unit_id" not in draft.payload
+    assert "unit" in draft.validation["missing"]
+    reference = next(ref for ref in draft.validation["references"] if ref["field"] == "unit_id")
+    assert reference["status"] == "missing"
+    assert reference["create_suggestion"]["endpoint"] == "/materials/units"
+    assert "unit" in draft.clarify_question
+
+
+def test_material_item_ambiguous_category_returns_choices():
+    saved_category = get_resource("item_category")
+    saved_unit = get_resource("material_unit")
+    register_resource(ResourceSpec(
+        key="item_category",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(
+                id=5,
+                match_text="Mechanical Spare Parts",
+                label="MECH - Mechanical Spare Parts",
+                data={"id": 5, "code": "MECH", "name": "Mechanical Spare Parts"},
+            ),
+            Candidate(
+                id=6,
+                match_text="Electrical Spare Parts",
+                label="ELEC - Electrical Spare Parts",
+                data={"id": 6, "code": "ELEC", "name": "Electrical Spare Parts"},
+            ),
+        ]),
+        create_permission="material_management:create",
+        create_endpoint="/materials/categories",
+    ))
+    register_resource(ResourceSpec(
+        key="material_unit",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(
+                id=2,
+                match_text="Piece",
+                label="PCS - Piece - count",
+                data={"id": 2, "code": "PCS", "name": "Piece", "unit_type": "count"},
+            )
+        ]),
+    ))
+    try:
+        draft = material_tools.MaterialAssistantToolSet().build_draft(
+            intent="add_item",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "item_code": "PUMP-SEAL",
+                "name": "Pump seal",
+                "category": "Spare Parts",
+                "unit": "Piece",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_category is not None:
+            register_resource(saved_category)
+        if saved_unit is not None:
+            register_resource(saved_unit)
+
+    assert draft.valid is False
+    reference = next(ref for ref in draft.validation["references"] if ref["field"] == "category_id")
+    assert reference["status"] == "ambiguous"
+    assert reference["chosen"]["id"] == 5
+    assert reference["alternatives"][0]["id"] == 6
+    assert "category" in draft.clarify_question
+
+
+def test_material_item_resolves_optional_model_name_to_model_id():
+    saved_category = get_resource("item_category")
+    saved_unit = get_resource("material_unit")
+    saved_model = get_resource("managed_model")
+    register_resource(ResourceSpec(
+        key="item_category",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(id=5, match_text="Spare Parts", label="SPARE - Spare Parts", data={})
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="material_unit",
+        read_permission="material_management:read",
+        provider=FakeProvider([
+            Candidate(id=2, match_text="Piece", label="PCS - Piece - count", data={})
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="managed_model",
+        read_permission="models:read",
+        provider=FakeProvider([
+            Candidate(
+                id=77,
+                match_text="M22",
+                label="Belzona - M22 - material",
+                data={"id": 77, "manufacturer": "Belzona", "model": "M22"},
+            )
+        ]),
+        create_permission="models:create",
+        create_endpoint="/models",
+    ))
+    try:
+        draft = material_tools.MaterialAssistantToolSet().build_draft(
+            intent="add_item",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "item_code": "BELZONA-M22",
+                "name": "Belzona adhesive M22",
+                "category": "Spare Parts",
+                "unit": "Piece",
+                "model": "M22",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_category is not None:
+            register_resource(saved_category)
+        if saved_unit is not None:
+            register_resource(saved_unit)
+        if saved_model is not None:
+            register_resource(saved_model)
+
+    assert draft.valid is True
+    assert draft.payload["model_id"] == 77
+    assert "model" not in draft.payload
+
+
 def test_material_requisition_resolves_item_name_to_item_id():
     saved = get_resource("material_item")
     register_resource(ResourceSpec(
@@ -215,6 +453,59 @@ def test_material_requisition_resolves_item_name_to_item_id():
         "permission": "requisition_management:create",
     }
     assert draft.validation["references"][0]["chosen"]["label"] == "PUMP-SEAL - Pump seal"
+
+
+def test_material_requisition_resolves_item_currency_codes_to_ids():
+    saved_item = get_resource("material_item")
+    saved_currency = get_resource("currency")
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission="material_management:search",
+        provider=FakeProvider([
+            Candidate(id=99, match_text="Pump seal", label="PUMP-SEAL - Pump seal", data={})
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="currency",
+        read_permission="currencies:read",
+        provider=FakeProvider([
+            Candidate(id=1, match_text="IRT", label="IRT - Toman", data={"code": "IRT"}),
+        ]),
+    ))
+    try:
+        draft = requisition_tools.RequisitionAssistantToolSet().build_draft(
+            intent="add_material_requisition",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "needed_by_date": "2026-08-01",
+                "reason": "pump repair",
+                "item_name": "Pump seal",
+                "quantity": "2",
+                "estimated_unit_cost": "100",
+                "currency": "IRT",
+                "estimated_unit_cost_base": "100",
+                "base_currency": "IRT",
+                "exchange_rate_used": "1",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_item is not None:
+            register_resource(saved_item)
+        if saved_currency is not None:
+            register_resource(saved_currency)
+
+    assert draft.valid is True
+    assert draft.payload["items"] == [{
+        "quantity": "2",
+        "estimated_unit_cost": "100",
+        "estimated_unit_cost_base": "100",
+        "exchange_rate_used": "1",
+        "item_id": 99,
+        "currency_id": 1,
+        "base_currency_id": 1,
+    }]
 
 
 def test_material_requisition_missing_item_returns_partial_with_create_suggestion():
@@ -336,6 +627,84 @@ def test_purchase_order_from_rfq_uses_rfq_conversion_endpoint():
     }
 
 
+def test_purchase_order_resolves_currency_codes_to_ids():
+    saved_currency = get_resource("currency")
+    register_resource(ResourceSpec(
+        key="currency",
+        read_permission="currencies:read",
+        provider=FakeProvider([
+            Candidate(id=1, match_text="IRT", label="IRT - Toman", data={"code": "IRT"}),
+        ]),
+    ))
+    try:
+        draft = purchase_tools.PurchaseAssistantToolSet().build_draft(
+            intent="add_purchase_order",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "title": "Direct pump PO",
+                "currency": "IRT",
+                "base_currency": "IRT",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_currency is not None:
+            register_resource(saved_currency)
+
+    assert draft.valid is True
+    assert draft.payload["currency_id"] == 1
+    assert draft.payload["base_currency_id"] == 1
+    assert draft.commit_target == {
+        "method": "POST",
+        "endpoint": "/purchase/orders",
+        "permission": "purchase_management:orders:create",
+    }
+
+
+def test_update_purchase_order_resolves_supplier_and_currency_text():
+    saved_supplier = get_resource("supplier")
+    saved_currency = get_resource("currency")
+    register_resource(ResourceSpec(
+        key="supplier",
+        read_permission="supplier_management:search",
+        provider=FakeProvider([
+            Candidate(id=44, match_text="ACME", label="SUP-44 - ACME", data={})
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="currency",
+        read_permission="currencies:read",
+        provider=FakeProvider([
+            Candidate(id=1, match_text="IRT", label="IRT - Toman", data={"code": "IRT"}),
+        ]),
+    ))
+    try:
+        draft = purchase_tools.PurchaseAssistantToolSet().build_draft(
+            intent="update_purchase_order",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "purchase_order_id": 12,
+                "supplier": "ACME",
+                "currency": "IRT",
+                "base_currency": "IRT",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_supplier is not None:
+            register_resource(saved_supplier)
+        if saved_currency is not None:
+            register_resource(saved_currency)
+
+    assert draft.valid is True
+    assert draft.payload["supplier_id"] == 44
+    assert draft.payload["currency_id"] == 1
+    assert draft.payload["base_currency_id"] == 1
+    assert draft.commit_target["endpoint"] == "/purchase/orders/12"
+
+
 def test_rfq_from_mr_and_supplier_names_resolve_to_ids():
     saved_mr = get_resource("material_requisition")
     saved_supplier = get_resource("supplier")
@@ -400,6 +769,89 @@ def test_update_commerce_write_uses_entity_id():
     assert draft.commit_target["method"] == "PATCH"
     assert draft.commit_target["endpoint"] == "/supplier_management/suppliers/42"
     assert draft.commit_target["entity_id"] == 42
+
+
+def test_stock_adjustment_resolves_locations_and_currency_text():
+    saved_item = get_resource("material_item")
+    saved_location = get_resource("storage_location")
+    saved_currency = get_resource("currency")
+    register_resource(ResourceSpec(
+        key="material_item",
+        read_permission="material_management:search",
+        provider=FakeProvider([
+            Candidate(id=99, match_text="Pump seal", label="PUMP-SEAL - Pump seal", data={})
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="storage_location",
+        read_permission="warehouse_management:stock:read",
+        provider=FakeProvider([
+            Candidate(id=7, match_text="Main Bin", label="MAIN-BIN - Main Bin", data={}),
+        ]),
+    ))
+    register_resource(ResourceSpec(
+        key="currency",
+        read_permission="currencies:read",
+        provider=FakeProvider([
+            Candidate(id=1, match_text="IRT", label="IRT - Toman", data={"code": "IRT"}),
+        ]),
+    ))
+    try:
+        draft = warehouse_tools.WarehouseAssistantToolSet().build_draft(
+            intent="add_stock_adjustment",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={
+                "item_name": "Pump seal",
+                "to_location": "Main Bin",
+                "quantity": "3",
+                "unit_cost": "100",
+                "currency": "IRT",
+                "unit_cost_base": "100",
+                "base_currency": "IRT",
+                "exchange_rate_used": "1",
+            },
+            attachments=[],
+        )
+    finally:
+        if saved_item is not None:
+            register_resource(saved_item)
+        if saved_location is not None:
+            register_resource(saved_location)
+        if saved_currency is not None:
+            register_resource(saved_currency)
+
+    assert draft.valid is True
+    assert draft.payload["item_id"] == 99
+    assert draft.payload["to_location_id"] == 7
+    assert draft.payload["currency_id"] == 1
+    assert draft.payload["base_currency_id"] == 1
+
+
+def test_update_goods_receipt_resolves_warehouse_text():
+    saved_warehouse = get_resource("warehouse")
+    register_resource(ResourceSpec(
+        key="warehouse",
+        read_permission="warehouse_management:stock:read",
+        provider=FakeProvider([
+            Candidate(id=3, match_text="Main Warehouse", label="MAIN - Main Warehouse", data={})
+        ]),
+    ))
+    try:
+        draft = goods_receipt_tools.GoodsReceiptAssistantToolSet().build_draft(
+            intent="update_goods_receipt",
+            db=None,
+            user=make_user(ALL_COMMERCE_PERMS),
+            slots={"goods_receipt_id": 8, "warehouse": "Main Warehouse"},
+            attachments=[],
+        )
+    finally:
+        if saved_warehouse is not None:
+            register_resource(saved_warehouse)
+
+    assert draft.valid is True
+    assert draft.payload["warehouse_id"] == 3
+    assert draft.commit_target["endpoint"] == "/goods-receipts/8"
 
 
 def test_graph_routes_commerce_write_to_draft_not_commit(monkeypatch):

@@ -4,6 +4,7 @@ from sqlalchemy import or_
 
 from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
+from shared.assistant_resources import register_shared_assistant_resources
 from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, ReferenceFieldSpec, SearchSpec, WriteSpec
 
 from .models import PurchaseOrder, PurchaseOrderStatus, PurchasePhase, PurchasePhaseItem
@@ -163,6 +164,20 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
                     explicit_aliases=("supplier_id",),
                     missing_label="supplier",
                 ),
+                ReferenceFieldSpec(
+                    field="currency_id",
+                    resource_key="currency",
+                    raw_aliases=("currency_query", "currency_code", "currency"),
+                    explicit_aliases=("currency_id",),
+                    missing_label="currency",
+                ),
+                ReferenceFieldSpec(
+                    field="base_currency_id",
+                    resource_key="currency",
+                    raw_aliases=("base_currency_query", "base_currency_code", "base_currency"),
+                    explicit_aliases=("base_currency_id",),
+                    missing_label="base currency",
+                ),
             ),
             fields=(
                 PayloadField("rfq_id", kind="int"),
@@ -185,6 +200,29 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
             method="PATCH",
             endpoint=f"{API_PREFIX}/{{entity_id}}",
             id_aliases=("purchase_order_id", "po_id", "id"),
+            reference_fields=(
+                ReferenceFieldSpec(
+                    field="supplier_id",
+                    resource_key="supplier",
+                    raw_aliases=("supplier_query", "supplier_name", "supplier"),
+                    explicit_aliases=("supplier_id",),
+                    missing_label="supplier",
+                ),
+                ReferenceFieldSpec(
+                    field="currency_id",
+                    resource_key="currency",
+                    raw_aliases=("currency_query", "currency_code", "currency"),
+                    explicit_aliases=("currency_id",),
+                    missing_label="currency",
+                ),
+                ReferenceFieldSpec(
+                    field="base_currency_id",
+                    resource_key="currency",
+                    raw_aliases=("base_currency_query", "base_currency_code", "base_currency"),
+                    explicit_aliases=("base_currency_id",),
+                    missing_label="base currency",
+                ),
+            ),
             fields=(
                 PayloadField("title"),
                 PayloadField("supplier_id", aliases=("supplier",), kind="int"),
@@ -219,6 +257,7 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> PurchaseAssistantToolSet:
     toolset = PurchaseAssistantToolSet()
     register_toolset(toolset)
+    register_shared_assistant_resources()
     register_purchase_resources()
     return toolset
 

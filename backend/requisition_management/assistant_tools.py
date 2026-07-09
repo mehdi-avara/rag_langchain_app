@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
+from shared.assistant_resources import register_shared_assistant_resources
 from shared.commerce_assistant import (
     ConfiguredCommerceToolSet,
     PayloadField,
@@ -102,6 +103,22 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
                     missing_label="item",
                     collection="items",
                 ),
+                ReferenceFieldSpec(
+                    field="currency_id",
+                    resource_key="currency",
+                    raw_aliases=("currency_query", "currency_code", "currency"),
+                    explicit_aliases=("currency_id",),
+                    missing_label="currency",
+                    collection="items",
+                ),
+                ReferenceFieldSpec(
+                    field="base_currency_id",
+                    resource_key="currency",
+                    raw_aliases=("base_currency_query", "base_currency_code", "base_currency"),
+                    explicit_aliases=("base_currency_id",),
+                    missing_label="base currency",
+                    collection="items",
+                ),
             ),
             fields=(
                 PayloadField("department_id", aliases=("department",), kind="int"),
@@ -133,6 +150,7 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
 def register() -> RequisitionAssistantToolSet:
     toolset = RequisitionAssistantToolSet()
     register_toolset(toolset)
+    register_shared_assistant_resources()
     register_requisition_resources()
     return toolset
 
