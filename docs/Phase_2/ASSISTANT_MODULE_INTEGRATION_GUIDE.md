@@ -228,6 +228,10 @@ Example resource keys:
 - `storage_location`
 - `purchase_phase`
 - `purchase_phase_item`
+- `currency`
+- `item_category`
+- `material_unit`
+- `managed_model`
 
 Reference behavior:
 
@@ -266,28 +270,53 @@ ReferenceFieldSpec(
 )
 ```
 
+Lookup tables and enum-like master data follow the same rule. The user should
+not need to know backend ids for values such as `category_id`, `unit_id`,
+`currency_id`, `base_currency_id`, `warehouse_id`, `storage_location_id`, or
+future similar fields. Accept names, codes, labels, Persian text, or synonyms
+into raw aliases such as `category`, `category_name`, `unit`, `unit_code`,
+`currency`, `base_currency`, `warehouse`, or `location`; resolve them through
+the owning module's service/search seam; then write only the English backend id
+field into the draft payload. If the value is missing, ambiguous, or not found,
+return `partial_draft` with references/choices or a clarification asking for
+that exact lookup value.
+
+Current exception: `department_id` on material requisitions remains numeric-only
+because this codebase currently has no department module/resource/service seam
+to resolve a department name safely. Do not invent department ids; leave it
+missing or require an explicit numeric id until a real department resource
+exists.
+
 ## Current Commerce Reference Behavior
 
 The commerce assistant supports these reference flows:
 
+- Material item:
+  - category name/code/text -> `category_id`
+  - unit name/code/text -> `unit_id`
+  - managed model/manufacturer/model text -> `model_id`
 - Material requisition:
   - item name/code -> `items[].item_id`
+  - item currency/base-currency code/name -> `items[].currency_id` and `items[].base_currency_id`
 - RFQ:
   - MR number/text -> `mr_id`
   - supplier name/code -> `supplier_ids`
   - item name/code -> `items[].item_id`
 - Purchase order:
   - supplier name/code -> `supplier_id` for direct PO create
+  - currency/base-currency code/name -> `currency_id` and `base_currency_id`
   - RFQ number/text -> `POST /purchase/orders/from-rfq/{rfq_id}`
 - Goods receipt:
   - purchase phase text -> `purchase_phase_id`
   - purchase phase item text -> `items[].purchase_phase_item_id`
   - item name/code -> `items[].item_id`
-  - warehouse name/code -> `warehouse_id`
+  - warehouse name/code -> `warehouse_id` for create/update
   - storage location name/code -> `items[].storage_location_id`
 - Stock adjustment:
   - item name/code -> `item_id`
-  - storage location name/code -> `to_location_id`
+  - source storage location name/code -> `from_location_id`
+  - target storage location name/code -> `to_location_id`
+  - currency/base-currency code/name -> `currency_id` and `base_currency_id`
 
 ## PO From RFQ Convention
 
@@ -345,9 +374,6 @@ Persian text may be routed into English slot names such as:
 
 The assistant should answer Persian `ask_*` questions in Persian when practical,
 but frontend draft keys must remain English.
-
-Future assistant improvements are tracked separately in
-`docs/ASSISTANT_NEXT_STEPS.md`.
 
 ## Adding A New Assistant Part
 
