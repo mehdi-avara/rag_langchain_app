@@ -65,6 +65,44 @@ ALL_FINANCIAL_PERMS = [
     "financial_management:receipt_files:create",
 ]
 
+ALL_COMMERCE_PERMS = [
+    "assistant:chat",
+    "assistant:draft",
+    "supplier_management:read",
+    "supplier_management:search",
+    "supplier_management:ask",
+    "supplier_management:create",
+    "supplier_management:update",
+    "material_management:read",
+    "material_management:search",
+    "material_management:ask",
+    "material_management:create",
+    "material_management:update",
+    "warehouse_management:stock:read",
+    "warehouse_management:movements:create",
+    "warehouse_management:search",
+    "warehouse_management:ask",
+    "requisition_management:read",
+    "requisition_management:search",
+    "requisition_management:ask",
+    "requisition_management:create",
+    "requisition_management:update",
+    "rfq_management:read",
+    "rfq_management:search",
+    "rfq_management:ask",
+    "rfq_management:create",
+    "rfq_management:update",
+    "purchase_management:orders:read",
+    "purchase_management:orders:search",
+    "purchase_management:orders:create",
+    "purchase_management:orders:update",
+    "goods_receipt_management:read",
+    "goods_receipt_management:search",
+    "goods_receipt_management:ask",
+    "goods_receipt_management:create",
+    "goods_receipt_management:update",
+]
+
 
 class FakeProvider:
     """A SearchProvider stand-in for reference-resolution tests.

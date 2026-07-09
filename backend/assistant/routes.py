@@ -17,8 +17,15 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-# Ensure the financial toolset is registered into the intent registry.
+# Ensure module toolsets are registered into the intent registry.
 import financial_management.assistant_tools  # noqa: F401
+import goods_receipt_management.assistant_tools  # noqa: F401
+import material_management.assistant_tools  # noqa: F401
+import purchase_management.assistant_tools  # noqa: F401
+import requisition_management.assistant_tools  # noqa: F401
+import rfq_management.assistant_tools  # noqa: F401
+import supplier_management.assistant_tools  # noqa: F401
+import warehouse_management.assistant_tools  # noqa: F401
 from db.init_db import get_db
 from deps import require_permission
 from Models import User

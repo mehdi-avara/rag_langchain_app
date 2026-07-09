@@ -30,7 +30,13 @@ async def answer_from_references(
     context: str,
     citation_prefix: str,
     component_name: str,
+    language: str | None = None,
 ) -> str:
+    language_instruction = (
+        f" Answer in the user's language (BCP-47: {language})."
+        if language
+        else ""
+    )
     try:
         response = await llm_client.async_openai_client.chat.completions.create(
             model=settings.openai_model,
@@ -43,6 +49,7 @@ async def answer_from_references(
                         "If the references are insufficient, say so. "
                         f"Cite every factual statement as "
                         f"[{citation_prefix}:<id>]."
+                        f"{language_instruction}"
                     ),
                 },
                 {
