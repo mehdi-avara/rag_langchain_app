@@ -18,12 +18,12 @@ class BusinessFlowRoot(BaseModel):
 class BusinessFlowNode(BaseModel):
     id: str
     kind: str
+    entity_id: int | None = None
     state: str
     title: str
     description: str | None = None
     source: FlowSource
     is_inferred: bool = False
-    route: str | None = None
     actor_user_id: int | None = None
     created_at: datetime | None = None
     changed_at: datetime | None = None

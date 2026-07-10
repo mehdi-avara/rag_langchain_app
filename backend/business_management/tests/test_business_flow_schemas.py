@@ -23,6 +23,7 @@ def test_business_flow_response_shape_supports_frontend_contract():
             BusinessFlowNode(
                 id="skipped:rfq:po:7",
                 kind="skipped",
+                entity_id=7,
                 state="skipped",
                 title="RFQ skipped",
                 description="This purchase order was created manually without an RFQ.",
@@ -32,6 +33,7 @@ def test_business_flow_response_shape_supports_frontend_contract():
             BusinessFlowNode(
                 id="waiting:stock:grn:4",
                 kind="blocked",
+                entity_id=4,
                 state="waiting",
                 title="Warehouse movement pending",
                 description="GRN is posted, but no warehouse stock movement was found yet. Celery or backfill may still be pending.",
@@ -65,8 +67,11 @@ def test_business_flow_response_shape_supports_frontend_contract():
     )
 
     assert response.nodes[0].id == "skipped:rfq:po:7"
+    assert response.nodes[0].entity_id == 7
     assert response.nodes[1].kind == "blocked"
+    assert response.nodes[1].entity_id == 4
     assert response.timeline[0].source == "audit"
+    assert not hasattr(response.nodes[0], "route")
 
 
 def test_business_flow_permission_is_declared():

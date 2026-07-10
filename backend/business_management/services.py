@@ -72,6 +72,14 @@ def _details(**values: Any) -> dict[str, Any]:
     return _clean({key: value for key, value in values.items()})
 
 
+def _extract_entity_id_from_node_id(node_id: str) -> int | None:
+    for part in reversed(node_id.split(":")):
+        if part.isdigit():
+            return int(part)
+
+    return None
+
+
 class BusinessFlowBuilder:
     def __init__(self, db: Session, company_id: int):
         self.db = db
@@ -100,12 +108,12 @@ class BusinessFlowBuilder:
         *,
         id: str,
         kind: str,
+        entity_id: int | None = None,
         state: str,
         title: str,
         source: str,
         description: str | None = None,
         is_inferred: bool = False,
-        route: str | None = None,
         actor_user_id: int | None = None,
         created_at: datetime | None = None,
         changed_at: datetime | None = None,
@@ -117,12 +125,12 @@ class BusinessFlowBuilder:
         self.nodes[id] = BusinessFlowNode(
             id=id,
             kind=kind,
+            entity_id=entity_id if entity_id is not None else _extract_entity_id_from_node_id(id),
             state=state,
             title=title,
             description=description,
             source=source,
             is_inferred=is_inferred,
-            route=route,
             actor_user_id=actor_user_id,
             created_at=created_at,
             changed_at=changed_at,
@@ -279,7 +287,6 @@ class BusinessFlowBuilder:
             title=mr.mr_number,
             description=mr.reason,
             source="record",
-            route=f"/requisitions/{mr.id}",
             actor_user_id=mr.requested_by_user_id,
             created_at=mr.created_at,
             details=_details(
@@ -324,11 +331,11 @@ class BusinessFlowBuilder:
                 title=f"MR {history.action}",
                 description=history.note,
                 source="audit",
-                route=f"/requisitions/{mr.id}",
                 actor_user_id=history.changed_by_user_id,
                 changed_at=history.changed_at,
                 details=_details(
                     history_id=history.id,
+                    mr_id=mr.id,
                     from_status=history.from_status,
                     to_status=history.to_status,
                     action=history.action,
@@ -343,6 +350,7 @@ class BusinessFlowBuilder:
                 source="audit",
                 details=_details(
                     history_id=history.id,
+                    mr_id=mr.id,
                     from_status=history.from_status,
                     to_status=history.to_status,
                 ),
@@ -361,7 +369,7 @@ class BusinessFlowBuilder:
                 from_status=history.from_status,
                 to_status=history.to_status,
                 changed_at=history.changed_at,
-                details=_details(action=history.action),
+                details=_details(mr_id=mr.id, action=history.action),
             )
 
             previous_node_id = history_node_id
@@ -376,7 +384,6 @@ class BusinessFlowBuilder:
             title=rfq.rfq_number,
             description=rfq.title,
             source="record",
-            route=f"/rfqs/{rfq.id}",
             actor_user_id=rfq.created_by_user_id,
             created_at=rfq.created_at,
             details=_details(
@@ -435,6 +442,7 @@ class BusinessFlowBuilder:
                 changed_at=supplier.sent_at,
                 details=_details(
                     rfq_supplier_id=supplier.id,
+                    rfq_id=rfq.id,
                     supplier_id=supplier.supplier_id,
                     supplier_code=supplier.supplier_code,
                     response_status=supplier.response_status,
@@ -506,7 +514,6 @@ class BusinessFlowBuilder:
                 title="Quotation comparison",
                 description="Supplier quotations available for comparison.",
                 source="record",
-                route=f"/rfqs/{rfq.id}/comparison",
                 details=_details(
                     rfq_id=rfq.id,
                     quotation_count=len(responses),
@@ -537,7 +544,6 @@ class BusinessFlowBuilder:
                 title=response.supplier_name,
                 description=response.notes,
                 source="record",
-                route=f"/rfqs/{rfq.id}/responses",
                 created_at=response.created_at,
                 changed_at=response.received_at,
                 details=_details(
@@ -600,6 +606,7 @@ class BusinessFlowBuilder:
                     created_at=quote_item.created_at,
                     details=_details(
                         quotation_response_item_id=quote_item.id,
+                        rfq_id=rfq.id,
                         quotation_response_id=quote_item.quotation_response_id,
                         rfq_item_id=quote_item.rfq_item_id,
                         unit_price=quote_item.unit_price,
@@ -627,7 +634,6 @@ class BusinessFlowBuilder:
                     title=f"Winning quotation: {response.supplier_name}",
                     description="This quotation is marked as the selected winner.",
                     source="record",
-                    route=f"/rfqs/{rfq.id}/comparison",
                     actor_user_id=response.selected_by_user_id,
                     changed_at=response.selected_at,
                     details=_details(
@@ -696,7 +702,6 @@ class BusinessFlowBuilder:
             title=po.reference_number,
             description=po.title or po.description,
             source="record",
-            route=f"/purchase/orders/{po.id}",
             actor_user_id=po.created_by_user_id,
             created_at=po.created_at,
             details=_details(
@@ -826,10 +831,10 @@ class BusinessFlowBuilder:
                 title=phase.title or f"Phase {phase.phase_number}",
                 description=phase.description,
                 source="record",
-                route=f"/purchase/orders/{po.id}/phases",
                 created_at=phase.created_at,
                 details=_details(
                     phase_id=phase.id,
+                    po_id=po.id,
                     purchase_order_id=phase.purchase_order_id,
                     phase_number=phase.phase_number,
                     expected_delivery_date=phase.expected_delivery_date,
@@ -866,6 +871,7 @@ class BusinessFlowBuilder:
                     created_at=item.created_at,
                     details=_details(
                         phase_item_id=item.id,
+                        po_id=po.id,
                         phase_id=item.phase_id,
                         item_id=item.item_id,
                         item_code=item.item_code,
@@ -926,7 +932,6 @@ class BusinessFlowBuilder:
             title=grn.grn_number,
             description=grn.notes,
             source="record",
-            route=f"/goods-receipts/{grn.id}",
             actor_user_id=grn.received_by_user_id,
             created_at=grn.created_at,
             details=_details(
@@ -1081,7 +1086,6 @@ class BusinessFlowBuilder:
             title=movement.movement_number,
             description=movement.notes,
             source="record",
-            route="/warehouse/movements",
             actor_user_id=movement.performed_by_user_id,
             created_at=movement.created_at,
             changed_at=movement.movement_date,
@@ -1225,7 +1229,6 @@ class BusinessFlowBuilder:
                         title=f"Stock item {stock_item.item_id}",
                         description=None,
                         source="record",
-                        route="/warehouse/stock",
                         created_at=stock_item.created_at,
                         changed_at=stock_item.updated_at,
                         details=_details(
