@@ -663,7 +663,7 @@ def _parse_retrieved_items(raw) -> list[RetrievedItem]:
 async def get_chat_history(
     chat_id: int,
     include_drafts: bool = Query(True),
-    limit: int | None = Query(None, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission("chat:read")),
     db: Session = Depends(get_db),
@@ -687,10 +687,7 @@ async def get_chat_history(
         .order_by(desc(ChatMessage.id))
     )
 
-    if offset:
-        messages_query = messages_query.offset(offset)
-    if limit is not None:
-        messages_query = messages_query.limit(limit)
+    messages_query = messages_query.offset(offset).limit(limit)
 
     messages = messages_query.all()
     drafts_by_id: dict[int, dict[str, Any]] = {}

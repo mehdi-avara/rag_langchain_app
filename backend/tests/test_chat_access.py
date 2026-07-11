@@ -322,6 +322,8 @@ async def test_get_chat_history_returns_messages_for_owned_chat():
     assert result.chat_id == 10
     assert result.name == "Chat"
     assert len(result.messages) == 2
+    assert db.queries[1].offset_value == 0
+    assert db.queries[1].limit_value == 50
 
 
 @pytest.mark.asyncio
