@@ -13,9 +13,10 @@ from db.init_db import get_db
 from deps import require_permission
 from financial_management.models import FinancialReceipt
 from financial_management.services import receipt_to_out
-from Models import Chat, ChatMessage, Comment, Document, User
+from Models import Chat, ChatMessage, Comment, Document, Draft, User
 from Models.chat import ChatRole
 from routs.documents import _get_accessible_document_ids
+from assistant.schemas import DraftOut
 from schemas.chat import (
     ChatHistoryResponse,
     ChatListItem,
@@ -661,6 +662,9 @@ def _parse_retrieved_items(raw) -> list[RetrievedItem]:
 @router.get("/{chat_id}/history", response_model=ChatHistoryResponse)
 async def get_chat_history(
     chat_id: int,
+    include_drafts: bool = Query(True),
+    limit: int | None = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_permission("chat:read")),
     db: Session = Depends(get_db),
 ):
@@ -677,12 +681,41 @@ async def get_chat_history(
     if not chat_obj:
         raise chat_not_found_exception()
 
-    messages = (
+    messages_query = (
         db.query(ChatMessage)
         .filter(ChatMessage.chat_id == chat_obj.id)
         .order_by(desc(ChatMessage.id))
-        .all()
     )
+
+    if offset:
+        messages_query = messages_query.offset(offset)
+    if limit is not None:
+        messages_query = messages_query.limit(limit)
+
+    messages = messages_query.all()
+    drafts_by_id: dict[int, dict[str, Any]] = {}
+
+    if include_drafts:
+        draft_ids = {
+            draft_id
+            for draft_id in (getattr(message, "draft_id", None) for message in messages)
+            if draft_id is not None
+        }
+
+        if draft_ids:
+            drafts = (
+                db.query(Draft)
+                .filter(
+                    Draft.id.in_(draft_ids),
+                    Draft.company_id == current_user.company_id,
+                    Draft.created_by_user_id == current_user.id,
+                )
+                .all()
+            )
+            drafts_by_id = {
+                draft.id: DraftOut.model_validate(draft).model_dump(mode="json")
+                for draft in drafts
+            }
 
     message_items = []
 
@@ -705,6 +738,7 @@ async def get_chat_history(
                 retrieved_chunks=retrieved_items,
                 retrieve_information=retrieve_information,
                 draft_id=getattr(message, "draft_id", None),
+                draft=drafts_by_id.get(getattr(message, "draft_id", None)),
                 created_at=message.created_at,
             )
         )

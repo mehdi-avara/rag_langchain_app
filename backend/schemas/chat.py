@@ -60,6 +60,7 @@ class ChatMessageItem(BaseModel):
     retrieved_chunks: List[RetrievedItem] = Field(default_factory=list)
     retrieve_information: RetrieveInformation = Field(default_factory=RetrieveInformation)
     draft_id: Optional[int] = None
+    draft: Optional[Dict[str, Any]] = None
     created_at: datetime
 
 

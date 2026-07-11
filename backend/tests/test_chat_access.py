@@ -16,7 +16,7 @@ os.environ.setdefault("jwt_secret", "test-secret")
 os.environ.setdefault("openai_api_key", "test")
 os.environ.setdefault("jina_api_key", "test")
 
-from Models import Chat, ChatMessage, Comment, Document
+from Models import Chat, ChatMessage, Comment, Document, Draft
 from Models.chat import ChatRole
 from routs import chat as chat_routes
 from schemas.chat import ChatRequest
@@ -65,6 +65,9 @@ class FakeQuery:
         if self.target is ChatMessage:
             return self.db.message_rows
 
+        if self.target is Draft:
+            return self.db.draft_rows
+
         if key == "id":
             return [(item_id,) for item_id in self.db.comment_ids]
 
@@ -87,12 +90,14 @@ class FakeDB:
         chat_result=None,
         chat_rows=None,
         message_rows=None,
+        draft_rows=None,
         doc_rows=None,
         comment_ids=None,
     ):
         self.chat_result = chat_result
         self.chat_rows = chat_rows or []
         self.message_rows = message_rows or []
+        self.draft_rows = draft_rows or []
         self.doc_rows = doc_rows or []
         self.comment_ids = comment_ids or []
         self.added = []
@@ -152,7 +157,7 @@ def make_chat(chat_id=10, user_id=3, company_id=1, name="Chat"):
     )
 
 
-def make_message(message_id=1, chat_id=10, role=ChatRole.user, content="hello"):
+def make_message(message_id=1, chat_id=10, role=ChatRole.user, content="hello", draft_id=None):
     return SimpleNamespace(
         id=message_id,
         chat_id=chat_id,
@@ -160,7 +165,29 @@ def make_message(message_id=1, chat_id=10, role=ChatRole.user, content="hello"):
         content=content,
         citations=[],
         retrieved_chunks=[],
+        draft_id=draft_id,
         created_at=datetime(2026, 5, 16, 10, 0, 0),
+    )
+
+
+def make_draft(draft_id=55, chat_id=10, user_id=7, company_id=4):
+    return SimpleNamespace(
+        id=draft_id,
+        chat_id=chat_id,
+        agent_run_id=99,
+        created_by_user_id=user_id,
+        company_id=company_id,
+        target_module="material_management",
+        target_action="create_item",
+        payload={"item_code": "PUMP-SEAL"},
+        commit_target={"method": "POST", "endpoint": "/materials/items"},
+        attachments=[],
+        validation={},
+        language="en",
+        status="pending",
+        committed_entity_ref=None,
+        created_at=datetime(2026, 5, 16, 10, 0, 0),
+        updated_at=datetime(2026, 5, 16, 10, 0, 0),
     )
 
 
@@ -295,6 +322,80 @@ async def test_get_chat_history_returns_messages_for_owned_chat():
     assert result.chat_id == 10
     assert result.name == "Chat"
     assert len(result.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_accepts_pagination():
+    chat = make_chat(chat_id=10, user_id=7, company_id=4)
+    db = FakeDB(chat_result=chat, message_rows=[make_message(1)])
+    current_user = make_user(user_id=7, company_id=4)
+
+    await chat_routes.get_chat_history(
+        chat_id=10,
+        limit=25,
+        offset=50,
+        current_user=current_user,
+        db=db,
+    )
+
+    assert db.queries[1].offset_value == 50
+    assert db.queries[1].limit_value == 25
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_includes_drafts_by_default():
+    chat = make_chat(chat_id=10, user_id=7, company_id=4)
+    message = make_message(
+        1,
+        role=ChatRole.assistant,
+        content="I prepared a draft.",
+        draft_id=55,
+    )
+    db = FakeDB(
+        chat_result=chat,
+        message_rows=[message],
+        draft_rows=[make_draft(draft_id=55)],
+    )
+    current_user = make_user(user_id=7, company_id=4)
+
+    result = await chat_routes.get_chat_history(
+        chat_id=10,
+        current_user=current_user,
+        db=db,
+    )
+
+    assert result.messages[0].draft_id == 55
+    assert result.messages[0].draft["id"] == 55
+    assert result.messages[0].draft["payload"] == {"item_code": "PUMP-SEAL"}
+    assert db.queries[2].target is Draft
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_can_skip_drafts():
+    chat = make_chat(chat_id=10, user_id=7, company_id=4)
+    message = make_message(
+        1,
+        role=ChatRole.assistant,
+        content="I prepared a draft.",
+        draft_id=55,
+    )
+    db = FakeDB(
+        chat_result=chat,
+        message_rows=[message],
+        draft_rows=[make_draft(draft_id=55)],
+    )
+    current_user = make_user(user_id=7, company_id=4)
+
+    result = await chat_routes.get_chat_history(
+        chat_id=10,
+        include_drafts=False,
+        current_user=current_user,
+        db=db,
+    )
+
+    assert result.messages[0].draft_id == 55
+    assert result.messages[0].draft is None
+    assert len(db.queries) == 2
 
 
 @pytest.mark.asyncio
