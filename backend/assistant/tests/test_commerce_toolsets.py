@@ -855,15 +855,20 @@ def test_update_goods_receipt_resolves_warehouse_text():
 
 
 def test_graph_routes_commerce_write_to_draft_not_commit(monkeypatch):
-    async def fake_classify(**kwargs):
+    async def fake_classify_module(**kwargs):
+        return {"module": "supplier_management", "language": "en", "confidence": 0.9, "clarify_question": None}
+
+    async def fake_classify_task(**kwargs):
         return {
             "intent": "add_supplier",
             "language": "en",
+            "confidence": 0.9,
             "slots": {"name": "ACME"},
             "clarify_question": None,
         }
 
-    monkeypatch.setattr(router_mod, "classify", fake_classify)
+    monkeypatch.setattr(router_mod, "classify_module", fake_classify_module)
+    monkeypatch.setattr(router_mod, "classify_task", fake_classify_task)
     result = asyncio.run(
         build_assistant_graph().ainvoke(
             {
@@ -902,11 +907,15 @@ def test_vlm_extracted_commerce_slots_build_material_requisition_draft(monkeypat
         suggestion_from=lambda raw, slots: {"name": raw, "item_code": raw},
     ))
 
-    async def fake_classify(**kwargs):
+    async def fake_classify_module(**kwargs):
+        return {"module": "requisition_management", "language": "fa", "confidence": 0.9, "clarify_question": None}
+
+    async def fake_classify_task(**kwargs):
         captured_router_call.update(kwargs)
         return {
             "intent": "add_material_requisition",
             "language": "fa",
+            "confidence": 0.9,
             "slots": {
                 "needed_by_date": "2026-08-01",
                 "reason": "پمپ تعمیر شود",
@@ -916,7 +925,8 @@ def test_vlm_extracted_commerce_slots_build_material_requisition_draft(monkeypat
             "clarify_question": None,
         }
 
-    monkeypatch.setattr(router_mod, "classify", fake_classify)
+    monkeypatch.setattr(router_mod, "classify_module", fake_classify_module)
+    monkeypatch.setattr(router_mod, "classify_task", fake_classify_task)
     image_blocks = [
         {
             "type": "image_url",
@@ -962,10 +972,14 @@ def test_vlm_extracted_commerce_slots_build_material_requisition_draft(monkeypat
 
 
 def test_followup_merges_previous_commerce_partial_draft(monkeypatch):
-    async def fake_classify(**kwargs):
+    async def fake_classify_module(**kwargs):
+        return {"module": "material_management", "language": "en", "confidence": 0.9, "clarify_question": None}
+
+    async def fake_classify_task(**kwargs):
         return {
             "intent": "add_item",
             "language": "en",
+            "confidence": 0.9,
             "slots": {"name": "Pump seal", "category_id": 5, "unit_id": 2},
             "clarify_question": None,
         }
@@ -976,7 +990,8 @@ def test_followup_merges_previous_commerce_partial_draft(monkeypatch):
         "payload": {"item_code": "PUMP-SEAL"},
         "missing": ["name", "category_id", "unit_id"],
     }
-    monkeypatch.setattr(router_mod, "classify", fake_classify)
+    monkeypatch.setattr(router_mod, "classify_module", fake_classify_module)
+    monkeypatch.setattr(router_mod, "classify_task", fake_classify_task)
     result = asyncio.run(
         build_assistant_graph().ainvoke(
             {

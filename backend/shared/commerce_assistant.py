@@ -8,7 +8,13 @@ from typing import Any, Callable, Iterable, Optional
 from sqlalchemy.orm import Session
 
 from Models import User
-from assistant.registry import DraftData, IntentSpec, ModuleToolSet
+from assistant.registry import (
+    DraftData,
+    IntentSpec,
+    ModuleAssistantDescriptor,
+    ModuleToolSet,
+    TaskAssistantDescriptor,
+)
 from assistant.rbac import ensure_permission
 from assistant.resolve import resolve_field
 from shared.phase1_ask import answer_from_references, parse_citations
@@ -43,6 +49,9 @@ class SearchSpec:
     ask_description: Optional[str] = None
     citation_prefix: Optional[str] = None
     extra_params: dict[str, tuple[str, str]] = field(default_factory=dict)
+    slot_rules: tuple[str, ...] = ()
+    examples: tuple[str, ...] = ()
+    specialist_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +68,9 @@ class WriteSpec:
     item_builder: Optional[Callable[[dict], Optional[list[dict]]]] = None
     validate: Optional[Callable[[dict, dict], list[str]]] = None
     reference_fields: tuple["ReferenceFieldSpec", ...] = ()
+    slot_rules: tuple[str, ...] = ()
+    examples: tuple[str, ...] = ()
+    specialist_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -282,8 +294,62 @@ def goods_receipt_required(payload: dict, slots: dict) -> list[str]:
 
 class ConfiguredCommerceToolSet(ModuleToolSet):
     module: str
+    module_display_title: Optional[str] = None
+    module_description: Optional[str] = None
+    module_specialist_notes: tuple[str, ...] = ()
     search_specs: tuple[SearchSpec, ...] = ()
     write_specs: tuple[WriteSpec, ...] = ()
+
+    def module_descriptor(self) -> ModuleAssistantDescriptor:
+        return ModuleAssistantDescriptor(
+            module=self.module,
+            display_title=self.module_display_title or self.module.replace("_", " ").title(),
+            description=self.module_description or f"Search and manage records in {self.module}.",
+        )
+
+    def task_descriptors(self) -> list[TaskAssistantDescriptor]:
+        output: list[TaskAssistantDescriptor] = []
+        for spec in self.search_specs:
+            output.append(TaskAssistantDescriptor(
+                module=spec.module,
+                intent=spec.intent,
+                kind="read",
+                required_permission=spec.permission,
+                description=spec.description,
+                slot_rules=spec.slot_rules,
+                examples=spec.examples,
+                specialist_notes=spec.specialist_notes,
+            ))
+            if spec.ask_intent and spec.ask_permission:
+                output.append(TaskAssistantDescriptor(
+                    module=spec.module,
+                    intent=spec.ask_intent,
+                    kind="read",
+                    required_permission=spec.ask_permission,
+                    description=spec.ask_description or spec.description,
+                    slot_rules=spec.slot_rules,
+                    examples=spec.examples,
+                    specialist_notes=spec.specialist_notes,
+                ))
+        for spec in self.write_specs:
+            output.append(TaskAssistantDescriptor(
+                module=self.module,
+                intent=spec.intent,
+                kind="write",
+                required_permission=spec.permission,
+                description=spec.description,
+                slot_rules=spec.slot_rules,
+                examples=spec.examples,
+                specialist_notes=spec.specialist_notes,
+                target_action=spec.target_action,
+            ))
+        return output
+
+    def specialist_instructions(self, intent: str) -> tuple[str, ...]:
+        for descriptor in self.task_descriptors():
+            if descriptor.intent == intent:
+                return (*self.module_specialist_notes, *descriptor.specialist_notes)
+        return self.module_specialist_notes
 
     def intents(self) -> list[IntentSpec]:
         output: list[IntentSpec] = []

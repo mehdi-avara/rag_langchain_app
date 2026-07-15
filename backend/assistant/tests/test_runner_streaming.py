@@ -38,6 +38,7 @@ def _install_fake_routs_chat(monkeypatch):
     monkeypatch.setitem(sys.modules, "routs.chat", mod)
 
 from assistant import router as router_mod  # noqa: E402
+from assistant import registry  # noqa: E402
 from assistant import runner as runner_mod  # noqa: E402
 from assistant import intake as intake_mod  # noqa: E402
 from assistant.models import AgentRun, AgentRunStatus, Draft, DraftStatus  # noqa: E402
@@ -62,10 +63,23 @@ def _collect(db, user, request, monkeypatch, *, intent, slots=None, clarify=None
     _install_fake_routs_chat(monkeypatch)
     db.set_all("AgentRun", [])
 
-    async def fake_classify(**kwargs):
-        return {"intent": intent, "language": "en", "slots": slots or {}, "clarify_question": clarify}
+    spec = registry.find_intent(user, intent)
+    selected_module = spec.module if spec and spec.module else ("clarify" if intent == "clarify" else "general")
 
-    monkeypatch.setattr(router_mod, "classify", fake_classify)
+    async def fake_classify_module(**kwargs):
+        return {
+            "module": selected_module, "language": "en", "confidence": 0.9,
+            "clarify_question": clarify,
+        }
+
+    async def fake_classify_task(**kwargs):
+        return {
+            "intent": intent, "language": "en", "confidence": 0.9,
+            "slots": slots or {}, "clarify_question": clarify,
+        }
+
+    monkeypatch.setattr(router_mod, "classify_module", fake_classify_module)
+    monkeypatch.setattr(router_mod, "classify_task", fake_classify_task)
     # Avoid instantiating a live model client in the resolver.
     monkeypatch.setattr(
         intake_mod,
@@ -166,6 +180,22 @@ def test_answer_messages_include_history():
     assert messages[1] == {"role": "user", "content": "We were discussing receipt 42."}
     assert messages[2] == {"role": "assistant", "content": "Receipt 42 was for pump repair."}
     assert messages[3] == {"role": "user", "content": "what about yesterday?"}
+
+
+def test_answer_prompt_is_module_aware_not_finance_hardcoded():
+    messages = runner_mod._answer_messages({
+        "selected_module": "purchase_management",
+        "selected_task": "search_purchase_orders",
+        "intent": "search_purchase_orders",
+        "language": "en",
+        "question": "find PO-42",
+        "history": [],
+        "retrieved_items": [],
+        "citations": [],
+    })
+    system = messages[0]["content"]
+    assert "Current module: purchase_management" in system
+    assert "financial-management assistant" not in system
 
 
 def test_load_latest_partial_draft_from_prior_run():

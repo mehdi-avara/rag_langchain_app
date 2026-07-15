@@ -7,6 +7,7 @@ from assistant.registry import register_toolset
 from shared.assistant_resources import register_shared_assistant_resources
 from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, ReferenceFieldSpec, SearchSpec, WriteSpec
 
+from . import assistant_prompt
 from .models import PurchaseOrder, PurchaseOrderStatus, PurchasePhase, PurchasePhaseItem
 from .search.service import search_purchase_order_hits
 from .services import _tenant_id
@@ -126,6 +127,9 @@ def _purchase_order_required(payload: dict, slots: dict) -> list[str]:
 
 class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
     module = MODULE
+    module_display_title = assistant_prompt.MODULE_DISPLAY_TITLE
+    module_description = assistant_prompt.MODULE_DESCRIPTION
+    module_specialist_notes = assistant_prompt.MODULE_SPECIALIST_NOTES
     search_specs = (
         SearchSpec(
             intent="search_purchase_orders",
@@ -138,6 +142,7 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
             title_fields=("reference_number", "title", "supplier_name", "status"),
             module=MODULE,
             citation_prefix="purchase_order",
+            **assistant_prompt.SEARCH_PURCHASE_ORDERS,
         ),
     )
     write_specs = (
@@ -191,6 +196,7 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("exchange_rate_used", aliases=("exchange_rate",), kind="decimal", default="1"),
                 PayloadField("description"),
             ),
+            **assistant_prompt.ADD_PURCHASE_ORDER,
         ),
         WriteSpec(
             intent="update_purchase_order",
@@ -233,6 +239,7 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("description"),
                 PayloadField("status", kind="enum", enum_values=tuple(item.value for item in PurchaseOrderStatus)),
             ),
+            **assistant_prompt.UPDATE_PURCHASE_ORDER,
         ),
     )
 

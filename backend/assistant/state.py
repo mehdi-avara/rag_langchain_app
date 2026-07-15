@@ -35,9 +35,15 @@ class AgentState(TypedDict, total=False):
     model_name: str                 # resolved model name (from ChatAIModels row)
 
     # --- router output ---
+    selected_module: str
+    selected_task: str
+    module_confidence: float
+    task_confidence: float
     intent: str
     slots: dict
     clarify_question: Optional[str]
+    loaded_prompt_parts: List[str]
+    specialist_instructions: List[str]
 
     # --- planning / multi-step control ---
     plan: List[str]
@@ -53,6 +59,8 @@ class AgentState(TypedDict, total=False):
     active_partial_draft: Optional[dict]  # latest incomplete draft from prior turn
     answer: str
     citations: List[Any]
+    tool_calls: List[dict]
+    validation_result: dict
 
     # --- file intake bookkeeping (§6/§7) ---
     intake_mode: Optional[str]      # inline | heavy | None
@@ -73,9 +81,25 @@ MAX_STEPS = 8
 
 def snapshot_state(state: AgentState) -> dict:
     """Return a JSON-safe snapshot of the graph state for AgentRun.state."""
-    out: dict = {}
-    for key, value in state.items():
-        if key in NON_SERIALISABLE_KEYS:
-            continue
-        out[key] = value
-    return out
+    def json_safe(value):
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(key): json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [json_safe(item) for item in value]
+        if hasattr(value, "isoformat"):
+            try:
+                return value.isoformat()
+            except (TypeError, ValueError):
+                pass
+        enum_value = getattr(value, "value", None)
+        if isinstance(enum_value, (str, int, float, bool)):
+            return enum_value
+        return str(value)
+
+    return {
+        key: json_safe(value)
+        for key, value in state.items()
+        if key not in NON_SERIALISABLE_KEYS
+    }

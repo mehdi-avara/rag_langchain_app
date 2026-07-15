@@ -50,6 +50,30 @@ class IntentSpec:
     target_action: Optional[str] = None  # for write intents -> Draft.target_action
 
 
+@dataclass(frozen=True)
+class ModuleAssistantDescriptor:
+    """Prompt-safe description of one module exposed to the module router."""
+
+    module: str
+    display_title: str
+    description: str
+
+
+@dataclass(frozen=True)
+class TaskAssistantDescriptor:
+    """Prompt-safe description of one RBAC-filtered module task."""
+
+    module: str
+    intent: str
+    kind: str  # read | write | file | general | clarify
+    required_permission: Optional[str]
+    description: str
+    slot_rules: tuple[str, ...] = ()
+    examples: tuple[str, ...] = ()
+    specialist_notes: tuple[str, ...] = ()
+    target_action: Optional[str] = None
+
+
 # Always-available, module-independent intents.
 GENERAL_INTENT = IntentSpec(
     name="general",
@@ -91,6 +115,40 @@ class ModuleToolSet:
     """
 
     module: str = "base"
+
+    def module_descriptor(self) -> ModuleAssistantDescriptor:
+        """Return module routing metadata.
+
+        The default keeps existing toolsets compatible while modules migrate to
+        richer, module-owned prompt metadata.
+        """
+        descriptions = [spec.description for spec in self.intents() if spec.description]
+        return ModuleAssistantDescriptor(
+            module=self.module,
+            display_title=self.module.replace("_", " ").title(),
+            description=descriptions[0] if descriptions else f"Operations in {self.module}.",
+        )
+
+    def task_descriptors(self) -> List[TaskAssistantDescriptor]:
+        """Return task routing metadata; legacy ``intents`` are adapted safely."""
+        return [
+            TaskAssistantDescriptor(
+                module=spec.module or self.module,
+                intent=spec.name,
+                kind=spec.kind if spec.kind in {"read", "write", "file", "general", "clarify"} else "general",
+                required_permission=spec.permission,
+                description=spec.description,
+                target_action=spec.target_action,
+            )
+            for spec in self.intents()
+        ]
+
+    def specialist_instructions(self, intent: str) -> tuple[str, ...]:
+        """Return optional module-owned notes for the selected task only."""
+        for descriptor in self.task_descriptors():
+            if descriptor.intent == intent:
+                return descriptor.specialist_notes
+        return ()
 
     def intents(self) -> List[IntentSpec]:  # pragma: no cover - interface
         raise NotImplementedError
@@ -145,6 +203,34 @@ def assemble_intents(user: User) -> List[IntentSpec]:
         permitted.append(GENERAL_INTENT)
     permitted.append(CLARIFY_INTENT)
 
+    return permitted
+
+
+def assemble_module_descriptors(user: User) -> List[ModuleAssistantDescriptor]:
+    """Return only modules with at least one task accessible to ``user``."""
+    if not has_permission(user, GENERAL_INTENT.permission):
+        return []
+    descriptors: List[ModuleAssistantDescriptor] = []
+    for toolset in _REGISTRY.values():
+        if assemble_task_descriptors(user, toolset.module):
+            descriptors.append(toolset.module_descriptor())
+    return descriptors
+
+
+def assemble_task_descriptors(user: User, module: str) -> List[TaskAssistantDescriptor]:
+    """Return only permitted tasks owned by the selected module."""
+    if not has_permission(user, GENERAL_INTENT.permission):
+        return []
+    toolset = get_toolset(module)
+    if toolset is None:
+        return []
+    permitted: List[TaskAssistantDescriptor] = []
+    for descriptor in toolset.task_descriptors():
+        if descriptor.module != module:
+            continue
+        permission = descriptor.required_permission
+        if permission is None or has_permission(user, permission):
+            permitted.append(descriptor)
     return permitted
 
 

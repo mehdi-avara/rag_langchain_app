@@ -7,8 +7,8 @@ import pytest
 from assistant.tests.fakes import ALL_FINANCIAL_PERMS, FakeProvider, make_user
 
 import financial_management.assistant_tools  # noqa: F401
-from assistant import router as router_mod
-from assistant.graph import build_assistant_graph
+from assistant import registry, router as router_mod
+from assistant.graph import build_assistant_graph, validator_node
 from assistant.module_interface import ResourceSpec, get_resource, register_resource
 from assistant.routes import router as assistant_api_router
 
@@ -45,12 +45,25 @@ def _run_graph(
     question="hi",
     active_partial_draft=None,
 ):
-    async def fake_classify(**kwargs):
-        return {"intent": intent, "language": language, "slots": slots or {}, "clarify_question": clarify}
-
-    monkeypatch.setattr(router_mod, "classify", fake_classify)
-
     user = make_user(ALL_FINANCIAL_PERMS)
+    spec = registry.find_intent(user, intent)
+    selected_module = spec.module if spec and spec.module else ("clarify" if intent == "clarify" else "general")
+
+    async def fake_classify_module(**kwargs):
+        return {
+            "module": selected_module, "language": language, "confidence": 0.95,
+            "clarify_question": clarify,
+        }
+
+    async def fake_classify_task(**kwargs):
+        return {
+            "intent": intent, "language": language, "confidence": 0.95,
+            "slots": slots or {}, "clarify_question": clarify,
+        }
+
+    monkeypatch.setattr(router_mod, "classify_module", fake_classify_module)
+    monkeypatch.setattr(router_mod, "classify_task", fake_classify_task)
+
     graph = build_assistant_graph()
     state = {
         "user": user,
@@ -82,6 +95,7 @@ def test_write_intent_builds_pending_draft(monkeypatch):
     assert draft["commit_target"]["endpoint"] == "/financial_management/receipts"
     # The graph never commits: there is no committed marker in the produced draft.
     assert "committed_entity_ref" not in draft
+    assert result["validation_result"]["outcome"] == "pending_draft"
 
 
 def test_missing_fields_routes_to_clarify_with_partial_object(monkeypatch):
@@ -93,6 +107,7 @@ def test_missing_fields_routes_to_clarify_with_partial_object(monkeypatch):
     partial = result.get("partial_draft")
     assert partial and partial["payload"]["description"] == "only this"
     assert "amount" in partial["missing"]
+    assert result["validation_result"]["outcome"] == "partial_draft"
 
 
 def test_partial_draft_answer_is_the_clarify_question(monkeypatch):
@@ -173,6 +188,27 @@ def test_complete_receipt_yields_committable_pending_draft(monkeypatch):
     }
     assert draft["payload"]["amount"] == "1200000"
     assert draft["payload"]["direction"] == "output"
+
+
+def test_validator_degrades_malformed_write_draft_to_clarify():
+    state = {
+        "user": make_user(ALL_FINANCIAL_PERMS),
+        "selected_module": "financial_management",
+        "selected_task": "add_receipt",
+        "intent": "add_receipt",
+        "pending_draft": {
+            "target_module": "financial_management",
+            "target_action": "create_receipt",
+            "payload": {},
+            "commit_target": {"method": "POST"},
+            "validation": {"valid": True},
+        },
+    }
+    result = asyncio.run(validator_node(state))
+    assert result["intent"] == "clarify"
+    assert result["pending_draft"] is None
+    assert result["validation_result"]["valid"] is False
+    assert any("commit_target missing" in error for error in result["validation_result"]["errors"])
 
 
 def test_general_intent(monkeypatch):
