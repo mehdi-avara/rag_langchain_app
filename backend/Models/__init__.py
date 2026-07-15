@@ -115,6 +115,7 @@ from document_intelligence.models import (
 from assistant.models import (
     AgentRun,
     AgentRunStatus,
+    AssistantEvent,
     Draft,
     DraftStatus,
 )
@@ -202,6 +203,7 @@ __all__ = [
     "DocumentIntelligenceLabel",
     "AgentRun",
     "AgentRunStatus",
+    "AssistantEvent",
     "Draft",
     "DraftStatus",
 ]

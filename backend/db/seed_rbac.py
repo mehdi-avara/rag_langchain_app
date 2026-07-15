@@ -13,6 +13,7 @@ from goods_receipt_management.permissions import PERMISSIONS as GOODS_RECEIPT_MA
 from warehouse_management.permissions import PERMISSIONS as WAREHOUSE_MANAGEMENT_PERMISSIONS
 from supplier_management.permissions import PERMISSIONS as SUPPLIER_MANAGEMENT_PERMISSIONS
 from business_management.permissions import PERMISSIONS as BUSINESS_MANAGEMENT_PERMISSIONS
+from assistant.permissions import PERMISSIONS as ASSISTANT_PERMISSIONS
 
 
 def get_or_create_permission(
@@ -196,9 +197,6 @@ def seed() -> None:
             ("financial_management:receipt_comments:read", "financial_management.receipt_comments", "read", "Read financial receipt comments"),
             ("financial_management:receipt_comments:delete", "financial_management.receipt_comments", "delete", "Delete financial receipt comment links"),
             ("financial_management:receipt_comments:search", "financial_management.receipt_comments", "search", "Search financial receipt comments"),
-            ("assistant:chat", "assistant", "chat", "Use the AI assistant chat"),
-            ("assistant:draft", "assistant", "draft", "Manage AI assistant drafts"),
-            ("assistant:files", "assistant", "files", "Use files with the AI assistant"),
             ("property_management:read", "property_management", "read", "Read warehouse and property data"),
             ("property_management:create", "property_management", "create", "Create warehouse and property data"),
             ("property_management:update", "property_management", "update", "Update warehouse and property data"),
@@ -215,6 +213,7 @@ def seed() -> None:
         permissions_data.extend(GOODS_RECEIPT_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(WAREHOUSE_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(BUSINESS_MANAGEMENT_PERMISSIONS)
+        permissions_data.extend(ASSISTANT_PERMISSIONS)
 
         permissions = [
             get_or_create_permission(db, name, resource, action, description)

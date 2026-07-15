@@ -8,6 +8,7 @@ permission and creates/modifies no financial entity.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -36,13 +37,20 @@ def suspend_active_runs(db: Session, *, chat_id: int) -> None:
         db.commit()
 
 
-def create_agent_run(db: Session, *, chat_id: int, user: User) -> AgentRun:
+def create_agent_run(
+    db: Session, *, chat_id: int, user: User, input_message_id: Optional[int] = None,
+) -> AgentRun:
     suspend_active_runs(db, chat_id=chat_id)
     run = AgentRun(
         chat_id=chat_id,
         created_by_user_id=user.id,
+        user_id=user.id,
         company_id=user.company_id,
+        input_message_id=input_message_id,
         status=AgentRunStatus.ACTIVE.value,
+        current_stage="starting",
+        started_at=datetime.utcnow(),
+        last_event_sequence=0,
     )
     db.add(run)
     db.commit()
@@ -61,6 +69,9 @@ def update_run(
     task_id: Optional[str] = None,
     error_code: Optional[str] = None,
     state: Optional[dict] = None,
+    current_stage: Optional[str] = None,
+    output_message_id: Optional[int] = None,
+    completed_at: Optional[datetime] = None,
 ) -> AgentRun:
     if status is not None:
         run.status = status
@@ -76,6 +87,12 @@ def update_run(
         run.error_code = error_code
     if state is not None:
         run.state = state
+    if current_stage is not None:
+        run.current_stage = current_stage
+    if output_message_id is not None:
+        run.output_message_id = output_message_id
+    if completed_at is not None:
+        run.completed_at = completed_at
     db.commit()
     db.refresh(run)
     return run

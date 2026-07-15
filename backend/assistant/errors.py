@@ -20,6 +20,7 @@ from core.exceptions.error_codes import (
     CONFLICT_STATUS_CODE,
     FORBIDDEN_STATUS_CODE,
     NOT_FOUND_STATUS_CODE,
+    MESSAGE_NOT_FOUND,
     PERMISSION_DENIED,
     TOO_MANY_REQUESTS_STATUS_CODE,
     VALIDATION_STATUS_CODE,
@@ -73,6 +74,14 @@ def run_not_found() -> AppException:
         status_code=NOT_FOUND_STATUS_CODE,
         code=ASSISTANT_RUN_NOT_FOUND,
         message="Agent run not found",
+    )
+
+
+def message_not_found() -> AppException:
+    return AppException(
+        status_code=NOT_FOUND_STATUS_CODE,
+        code=MESSAGE_NOT_FOUND,
+        message="Chat message not found",
     )
 
 

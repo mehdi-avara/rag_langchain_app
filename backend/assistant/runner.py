@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
+from time import perf_counter
 from typing import AsyncGenerator, Optional
 
 from sqlalchemy import desc
@@ -27,7 +29,7 @@ from Models.chat import ChatRole
 from settings import get_settings
 
 from . import intake as intake_mod
-from . import prompt_builder, registry
+from . import observability, prompt_builder, registry
 from . import service as draft_service
 from . import tracing
 from .graph import build_assistant_graph
@@ -40,6 +42,13 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 HISTORY_MESSAGE_LIMIT = 12
 HISTORY_CONTENT_LIMIT = 4000
+
+
+def _record_observability_failure(callback, /, *args, **kwargs) -> None:
+    try:
+        callback(*args, **kwargs)
+    except Exception:  # pragma: no cover - broken event transaction only
+        logger.exception("assistant observability failure while preserving assistant exception")
 
 
 def sse_event(event: str, data: dict) -> str:
@@ -174,7 +183,7 @@ async def run_turn_stream(
     chat_obj, is_new_chat = get_or_create_chat(db, chat_id=request.chat_id, user=user)
     history = _load_recent_history(db, chat_id=chat_obj.id)
     active_partial_draft = _load_latest_partial_draft(db, chat_id=chat_obj.id, user=user)
-    add_message(db, chat_id=chat_obj.id, role=ChatRole.user, content=request.query)
+    input_message = add_message(db, chat_id=chat_obj.id, role=ChatRole.user, content=request.query)
 
     if is_new_chat:
         try:  # title generation is best-effort
@@ -184,7 +193,17 @@ async def run_turn_stream(
         except Exception:  # pragma: no cover
             logger.debug("chat title generation unavailable", exc_info=True)
 
-    run = draft_service.create_agent_run(db, chat_id=chat_obj.id, user=user)
+    run = draft_service.create_agent_run(
+        db, chat_id=chat_obj.id, user=user, input_message_id=getattr(input_message, "id", None),
+    )
+    observability.record_event(
+        db, run, event_type="chat.started", stage="chat", status="started",
+        payload={"is_new_chat": is_new_chat},
+    )
+    observability.record_event(
+        db, run, event_type="run.started", stage="run", status="started",
+        payload={"attachment_count": len(request.attachments or [])},
+    )
 
     async def event_generator() -> AsyncGenerator[str, None]:
         full_answer_parts: list[str] = []
@@ -215,6 +234,8 @@ async def run_turn_stream(
                 state: AgentState = {
                     "chat_id": chat_obj.id,
                     "agent_run_id": run.id,
+                    "agent_run": run,
+                    "input_message_id": getattr(input_message, "id", None),
                     "user": user,
                     "user_id": user.id,
                     "company_id": user.company_id,
@@ -281,9 +302,20 @@ async def run_turn_stream(
                     )
                     draft_id = draft.id
                     draft_out = DraftOut.model_validate(draft).model_dump(mode="json")
+                    observability.record_event(
+                        db, run, event_type="draft.persisted", stage="validator", status="completed",
+                        selected_module=pending_draft.get("target_module"),
+                        selected_task=pending_draft.get("target_action"),
+                        payload={"draft_id": draft.id, "status": draft.status},
+                    )
                     yield sse_event("draft", {"draft": draft_out})
 
                 # --- answer deltas ---
+                answer_started = perf_counter()
+                observability.start_step(
+                    db, run, stage="answer", event_type="answer.started", state=snapshot_state(result),
+                    payload={"precomputed": bool((result.get("answer") or "").strip())},
+                )
                 precomputed = (result.get("answer") or "").strip()
                 if precomputed:
                     # ask_finance / clarify already produced grounded/clarifying text.
@@ -291,15 +323,50 @@ async def run_turn_stream(
                         full_answer_parts.append(piece)
                         yield sse_event("delta", {"text": piece})
                 else:
-                    async for piece in _stream_model_answer(result):
-                        full_answer_parts.append(piece)
-                        yield sse_event("delta", {"text": piece})
+                    answer_messages = _answer_messages(result)
+                    model_started = perf_counter()
+                    observability.record_model_call(
+                        db, run, stage="answer", status="started", provider="openai_compatible",
+                        model=result.get("model_name") or settings.openai_model,
+                        prompt_version="answer-v1",
+                        prompt_digest=observability.prompt_hash(answer_messages), response_format="text",
+                    )
+                    try:
+                        async for piece in _stream_model_answer(result):
+                            full_answer_parts.append(piece)
+                            yield sse_event("delta", {"text": piece})
+                    except Exception as exc:
+                        _record_observability_failure(
+                            observability.record_model_call, db, run, stage="answer", status="failed",
+                            provider="openai_compatible", model=result.get("model_name") or settings.openai_model,
+                            elapsed_ms=observability.duration_ms(model_started), prompt_version="answer-v1",
+                            prompt_digest=observability.prompt_hash(answer_messages), response_format="text",
+                            error_code=getattr(exc, "code", INTERNAL_SERVER_ERROR),
+                        )
+                        raise
+                    observability.record_model_call(
+                        db, run, stage="answer", status="completed", provider="openai_compatible",
+                        model=result.get("model_name") or settings.openai_model,
+                        elapsed_ms=observability.duration_ms(model_started), prompt_version="answer-v1",
+                        prompt_digest=observability.prompt_hash(answer_messages), response_format="text",
+                    )
+                observability.complete_step(
+                    db, run, stage="answer", event_type="answer.completed",
+                    state=snapshot_state(result),
+                    payload={"output_char_count": sum(len(part) for part in full_answer_parts)},
+                    elapsed_ms=observability.duration_ms(answer_started),
+                )
 
             except AppException as exc:
                 # Catalogued error: stream-safe, leave the run resumable + draft intact (§8.2).
                 draft_service.update_run(
                     db, run, status=AgentRunStatus.SUSPENDED.value, error_code=exc.code,
                     state=snapshot_state(result) if result is not None else None,
+                )
+                _record_observability_failure(
+                    observability.record_event, db, run, event_type="run.failed",
+                    stage=run.current_stage or "run", status="failed", severity="error",
+                    error_code=exc.code, payload={"recoverable": True},
                 )
                 yield sse_event("error", {"code": exc.code, "message": exc.message})
                 return
@@ -308,12 +375,17 @@ async def run_turn_stream(
                 draft_service.update_run(
                     db, run, status=AgentRunStatus.SUSPENDED.value, error_code=INTERNAL_SERVER_ERROR
                 )
+                _record_observability_failure(
+                    observability.record_event, db, run, event_type="run.failed",
+                    stage=run.current_stage or "run", status="failed", severity="error",
+                    error_code=INTERNAL_SERVER_ERROR, payload={"recoverable": True},
+                )
                 yield sse_event("error", {"code": INTERNAL_SERVER_ERROR, "message": "Internal server error"})
                 return
 
             # --- persist after streaming (§8.2): transcript = visible history ---
             full_answer = "".join(full_answer_parts).strip()
-            add_message(
+            output_message = add_message(
                 db,
                 chat_id=chat_obj.id,
                 role=ChatRole.assistant,
@@ -322,8 +394,14 @@ async def run_turn_stream(
                 retrieved_chunks=retrieved_items,
                 draft_id=draft_id,
             )
-            draft_service.update_run(
-                db, run, status=AgentRunStatus.COMPLETED.value, state=snapshot_state(result)
+            run.status = AgentRunStatus.COMPLETED.value
+            run.current_stage = "completed"
+            run.completed_at = datetime.utcnow()
+            run.output_message_id = getattr(output_message, "id", None)
+            run.state = snapshot_state(result)
+            observability.record_event(
+                db, run, event_type="run.completed", stage="run", status="completed",
+                payload={"output_message_id": getattr(output_message, "id", None), "draft_id": draft_id},
             )
 
             yield sse_event(

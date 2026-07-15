@@ -11,13 +11,33 @@ handlers. The graph never commits domain data; write handlers only build drafts.
 from __future__ import annotations
 
 import logging
+from time import perf_counter
 
 from langgraph.graph import StateGraph
+from core.exceptions import AppException
+from core.exceptions.error_codes import INTERNAL_SERVER_ERROR
 
-from . import registry, router
-from .state import AgentState
+from . import observability, prompt_builder, registry, router
+from .state import AgentState, snapshot_state
 
 logger = logging.getLogger(__name__)
+
+
+def _observable(state: AgentState):
+    db, run = state.get("db"), state.get("agent_run")
+    return (db, run) if db is not None and run is not None else (None, None)
+
+
+def _error_code(exc: BaseException) -> str:
+    return exc.code if isinstance(exc, AppException) else INTERNAL_SERVER_ERROR
+
+
+def _record_failure(state: AgentState, callback, /, *args, **kwargs) -> None:
+    """Preserve the original assistant exception if failure recording also fails."""
+    try:
+        callback(*args, **kwargs)
+    except Exception:  # pragma: no cover - only a broken observability transaction
+        logger.exception("assistant observability failure while preserving original exception", extra=_log_context(state))
 
 
 def _log_context(state: AgentState, **extra) -> dict:
@@ -37,16 +57,50 @@ def _log_context(state: AgentState, **extra) -> dict:
 async def module_router_node(state: AgentState) -> AgentState:
     user = state["user"]
     modules = registry.assemble_module_descriptors(user)
-    logger.info("assistant.module_router.started", extra=_log_context(state))
-    result = await router.classify_module(
-        question=state.get("question", ""),
-        modules=modules,
-        has_attachments=bool(state.get("attachments")),
+    db, run = _observable(state)
+    started = perf_counter()
+    messages = prompt_builder.build_module_router_messages(
+        question=state.get("question", ""), modules=modules,
+        history=state.get("history"), has_attachments=bool(state.get("attachments")),
         image_blocks=state.get("image_blocks") or [],
-        history=state.get("history") or [],
-        client=state.get("model_client"),
-        model=state.get("model_name"),
     )
+    if run is not None:
+        observability.start_step(
+            db, run, stage="module_router", event_type="module_router.started",
+            state=snapshot_state(state), payload={"allowed_candidates": [item.module for item in modules]},
+        )
+        observability.record_model_call(
+            db, run, stage="module_router", status="started", provider="openai_compatible",
+            model=state.get("model_name") or "configured", prompt_version="module-router-v1",
+            prompt_digest=observability.prompt_hash(messages), response_format="json_object",
+        )
+    logger.info("assistant.module_router.started", extra=_log_context(state))
+    try:
+        result = await router.classify_module(
+            question=state.get("question", ""),
+            modules=modules,
+            has_attachments=bool(state.get("attachments")),
+            image_blocks=state.get("image_blocks") or [],
+            history=state.get("history") or [],
+            client=state.get("model_client"),
+            model=state.get("model_name"),
+        )
+    except Exception as exc:
+        if run is not None:
+            elapsed = observability.duration_ms(started)
+            _record_failure(
+                state, observability.record_model_call, db, run, stage="module_router", status="failed",
+                provider="openai_compatible", model=state.get("model_name") or "configured",
+                elapsed_ms=elapsed, prompt_version="module-router-v1",
+                prompt_digest=observability.prompt_hash(messages), response_format="json_object",
+                error_code=_error_code(exc),
+            )
+            _record_failure(
+                state, observability.fail_step, db, run, stage="module_router",
+                event_type="module_router.failed", error_code=_error_code(exc), elapsed_ms=elapsed,
+                state=snapshot_state(state),
+            )
+        raise
     selected_module = result.get("module") or "clarify"
     output = {
         **state,
@@ -68,12 +122,41 @@ async def module_router_node(state: AgentState) -> AgentState:
         "assistant.module_router.selected",
         extra=_log_context(output, confidence=output["module_confidence"]),
     )
+    if run is not None:
+        elapsed = observability.duration_ms(started)
+        metadata = result.get("_model_call") or {}
+        observability.record_model_call(
+            db, run, stage="module_router", status="completed",
+            provider=metadata.get("provider") or "openai_compatible",
+            model=metadata.get("model") or state.get("model_name") or "configured",
+            elapsed_ms=elapsed, input_tokens=metadata.get("input_tokens"),
+            output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"),
+            prompt_version="module-router-v1", prompt_digest=observability.prompt_hash(messages),
+            response_format="json_object",
+        )
+        observability.record_route(
+            db, run, event_type="module_router.selected", stage="module_router",
+            route_from="chat", route_to=selected_module, selected_module=selected_module,
+            confidence=output["module_confidence"],
+            allowed_candidates=[item.module for item in modules] + ["general", "clarify"],
+            decision_summary=f"Selected module {selected_module} from the permitted module catalog.",
+            elapsed_ms=elapsed,
+        )
+        run.state = snapshot_state(output)
+        db.commit()
     return output
 
 
 async def task_finder_node(state: AgentState) -> AgentState:
     user = state["user"]
     selected_module = state.get("selected_module") or "clarify"
+    db, run = _observable(state)
+    started = perf_counter()
+    if run is not None:
+        observability.start_step(
+            db, run, stage="task_finder", event_type="task_finder.started",
+            state=snapshot_state(state), payload={"selected_module": selected_module},
+        )
     logger.info("assistant.task_finder.started", extra=_log_context(state))
 
     if selected_module == "clarify":
@@ -108,16 +191,55 @@ async def task_finder_node(state: AgentState) -> AgentState:
                 "clarify_question": state.get("clarify_question"),
             }
         else:
-            result = await router.classify_task(
-                question=state.get("question", ""),
-                module=module_descriptor,
-                tasks=tasks,
-                has_attachments=bool(state.get("attachments")),
+            messages = prompt_builder.build_task_finder_messages(
+                question=state.get("question", ""), module=module_descriptor, tasks=tasks,
+                history=state.get("history"), has_attachments=bool(state.get("attachments")),
                 image_blocks=state.get("image_blocks") or [],
-                history=state.get("history") or [],
-                client=state.get("model_client"),
-                model=state.get("model_name"),
             )
+            if run is not None:
+                observability.record_model_call(
+                    db, run, stage="task_finder", status="started", provider="openai_compatible",
+                    model=state.get("model_name") or "configured", prompt_version="task-finder-v1",
+                    prompt_digest=observability.prompt_hash(messages), response_format="json_object",
+                )
+            try:
+                result = await router.classify_task(
+                    question=state.get("question", ""),
+                    module=module_descriptor,
+                    tasks=tasks,
+                    has_attachments=bool(state.get("attachments")),
+                    image_blocks=state.get("image_blocks") or [],
+                    history=state.get("history") or [],
+                    client=state.get("model_client"),
+                    model=state.get("model_name"),
+                )
+            except Exception as exc:
+                if run is not None:
+                    elapsed = observability.duration_ms(started)
+                    _record_failure(
+                        state, observability.record_model_call, db, run, stage="task_finder",
+                        status="failed", provider="openai_compatible",
+                        model=state.get("model_name") or "configured", elapsed_ms=elapsed,
+                        prompt_version="task-finder-v1", prompt_digest=observability.prompt_hash(messages),
+                        response_format="json_object", error_code=_error_code(exc),
+                    )
+                    _record_failure(
+                        state, observability.fail_step, db, run, stage="task_finder",
+                        event_type="task_finder.failed", error_code=_error_code(exc), elapsed_ms=elapsed,
+                        state=snapshot_state(state),
+                    )
+                raise
+            if run is not None:
+                metadata = result.get("_model_call") or {}
+                observability.record_model_call(
+                    db, run, stage="task_finder", status="completed",
+                    provider=metadata.get("provider") or "openai_compatible",
+                    model=metadata.get("model") or state.get("model_name") or "configured",
+                    elapsed_ms=observability.duration_ms(started), input_tokens=metadata.get("input_tokens"),
+                    output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"),
+                    prompt_version="task-finder-v1", prompt_digest=observability.prompt_hash(messages),
+                    response_format="json_object",
+                )
 
     slots = dict(state.get("slots") or {})
     slots.update(result.get("slots") or {})
@@ -150,6 +272,19 @@ async def task_finder_node(state: AgentState) -> AgentState:
         "assistant.task_finder.selected",
         extra=_log_context(output, confidence=output["task_confidence"]),
     )
+    if run is not None:
+        elapsed = observability.duration_ms(started)
+        observability.record_route(
+            db, run, event_type="task_finder.selected", stage="task_finder",
+            route_from=selected_module, route_to=selected_task,
+            selected_module=selected_module, selected_task=selected_task,
+            confidence=output["task_confidence"],
+            allowed_candidates=[item.intent for item in tasks] + ["clarify"],
+            decision_summary=f"Selected task {selected_task} within module {selected_module}.",
+            elapsed_ms=elapsed,
+        )
+        run.state = snapshot_state(output)
+        db.commit()
     return output
 
 
@@ -303,8 +438,26 @@ async def clarify_node(state: AgentState) -> AgentState:
 
 
 async def executor_node(state: AgentState) -> AgentState:
-    logger.info("assistant.executor.started", extra=_log_context(state))
+    db, run = _observable(state)
+    started = perf_counter()
     kind = _resolve_kind(state)
+    selected_module = state.get("selected_module") or "general"
+    selected_task = state.get("selected_task") or state.get("intent") or kind
+    tool_identifier = f"{selected_module}.{selected_task}"
+    if run is not None:
+        observability.start_step(
+            db, run, stage="executor", event_type="executor.started",
+            state=snapshot_state(state), payload={"task_kind": kind},
+        )
+        observability.record_tool_call(
+            db, run, stage="executor", status="started", tool_identifier=tool_identifier,
+            owning_module=selected_module, operation=selected_task,
+            input_summary={
+                "slot_keys": sorted((state.get("slots") or {}).keys()),
+                "attachment_count": len(state.get("attachments") or []),
+            },
+        )
+    logger.info("assistant.executor.started", extra=_log_context(state))
     handler = {
         "read": read_node,
         "write": write_node,
@@ -312,8 +465,48 @@ async def executor_node(state: AgentState) -> AgentState:
         "general": general_node,
         "clarify": clarify_node,
     }[kind]
-    output = await handler(state)
+    try:
+        if run is not None:
+            with observability.execution_context(
+                db=db, run=run, selected_module=selected_module, selected_task=selected_task,
+            ) as execution:
+                output = await handler(state)
+                searched_modules = sorted(execution["searched_modules"])
+        else:
+            output = await handler(state)
+            searched_modules = []
+    except Exception as exc:
+        if run is not None:
+            elapsed = observability.duration_ms(started)
+            _record_failure(
+                state, observability.record_tool_call, db, run, stage="executor", status="failed",
+                tool_identifier=tool_identifier, owning_module=selected_module, operation=selected_task,
+                elapsed_ms=elapsed, error_code=_error_code(exc),
+            )
+            _record_failure(
+                state, observability.fail_step, db, run, stage="executor", event_type="executor.failed",
+                error_code=_error_code(exc), elapsed_ms=elapsed, state=snapshot_state(state),
+            )
+        raise
     logger.info("assistant.executor.completed", extra=_log_context(output, task_kind=kind))
+    if run is not None:
+        elapsed = observability.duration_ms(started)
+        pending, partial = output.get("pending_draft"), output.get("partial_draft")
+        observability.record_tool_call(
+            db, run, stage="executor", status="completed", tool_identifier=tool_identifier,
+            owning_module=selected_module, operation=selected_task, elapsed_ms=elapsed,
+            output_summary={
+                "retrieved_count": len(output.get("retrieved_items") or []),
+                "has_summary": bool(output.get("summary")),
+                "validation_outcome": (output.get("validation_result") or {}).get("outcome"),
+            },
+            produced_draft=bool(pending or partial),
+            searched_another_module=bool(searched_modules),
+        )
+        observability.complete_step(
+            db, run, stage="executor", event_type="executor.completed",
+            state=snapshot_state(output), payload={"task_kind": kind}, elapsed_ms=elapsed,
+        )
     return output
 
 
@@ -330,80 +523,95 @@ def _clarify_invalid(state: AgentState, errors: list[str]) -> AgentState:
 
 
 async def validator_node(state: AgentState) -> AgentState:
+    db, run = _observable(state)
+    started = perf_counter()
+    if run is not None:
+        observability.start_step(
+            db, run, stage="validator", event_type="validator.started", state=snapshot_state(state),
+        )
     errors: list[str] = []
     output: AgentState = state
     selected_task = state.get("selected_task")
     spec = registry.find_intent(state["user"], selected_task) if selected_task else None
     kind = spec.kind if spec is not None else ("general" if selected_task in {"general", "assistant_help"} else "clarify")
 
-    if kind in {"write", "file"}:
-        pending, partial = state.get("pending_draft"), state.get("partial_draft")
-        if pending:
-            required = {"target_module", "target_action", "payload", "commit_target", "validation"}
-            missing = sorted(required - set(pending))
-            if missing:
-                errors.append("pending_draft missing: " + ", ".join(missing))
-            if pending.get("target_module") != spec.module:
-                errors.append("pending_draft target_module does not match selected task")
-            if spec.target_action and pending.get("target_action") != spec.target_action:
-                errors.append("pending_draft target_action does not match selected task")
-            if not isinstance(pending.get("payload"), dict):
-                errors.append("pending_draft payload must be an object")
-            commit_target = pending.get("commit_target") if isinstance(pending.get("commit_target"), dict) else {}
-            target_missing = sorted(
-                key for key in {"method", "endpoint", "permission"}
-                if not isinstance(commit_target.get(key), str) or not commit_target.get(key).strip()
-            )
-            if target_missing:
-                errors.append("commit_target missing: " + ", ".join(target_missing))
-            if commit_target.get("permission") and commit_target.get("permission") != spec.permission:
-                errors.append("commit_target permission does not match selected task")
-            validation = pending.get("validation") if isinstance(pending.get("validation"), dict) else {}
-            if validation.get("valid") is not True:
-                errors.append("pending_draft validation is not valid")
-            if "committed_entity_ref" in pending or pending.get("status") == "committed":
-                errors.append("executor returned a committed domain result")
-            if any(
-                call.get("kind") in {"commit", "domain_write"}
-                for call in state.get("tool_calls") or []
-                if isinstance(call, dict)
-            ):
-                errors.append("executor attempted a domain write")
-        elif not partial:
-            errors.append("write task returned neither pending_draft nor partial_draft")
-        if errors:
-            output = _clarify_invalid(state, errors)
-        elif partial:
+    try:
+        if kind in {"write", "file"}:
+            pending, partial = state.get("pending_draft"), state.get("partial_draft")
+            if pending:
+                required = {"target_module", "target_action", "payload", "commit_target", "validation"}
+                missing = sorted(required - set(pending))
+                if missing:
+                    errors.append("pending_draft missing: " + ", ".join(missing))
+                if pending.get("target_module") != spec.module:
+                    errors.append("pending_draft target_module does not match selected task")
+                if spec.target_action and pending.get("target_action") != spec.target_action:
+                    errors.append("pending_draft target_action does not match selected task")
+                if not isinstance(pending.get("payload"), dict):
+                    errors.append("pending_draft payload must be an object")
+                commit_target = pending.get("commit_target") if isinstance(pending.get("commit_target"), dict) else {}
+                target_missing = sorted(
+                    key for key in {"method", "endpoint", "permission"}
+                    if not isinstance(commit_target.get(key), str) or not commit_target.get(key).strip()
+                )
+                if target_missing:
+                    errors.append("commit_target missing: " + ", ".join(target_missing))
+                if commit_target.get("permission") and commit_target.get("permission") != spec.permission:
+                    errors.append("commit_target permission does not match selected task")
+                validation = pending.get("validation") if isinstance(pending.get("validation"), dict) else {}
+                if validation.get("valid") is not True:
+                    errors.append("pending_draft validation is not valid")
+                if "committed_entity_ref" in pending or pending.get("status") == "committed":
+                    errors.append("executor returned a committed domain result")
+                if any(
+                    call.get("kind") in {"commit", "domain_write"}
+                    for call in state.get("tool_calls") or []
+                    if isinstance(call, dict)
+                ):
+                    errors.append("executor attempted a domain write")
+            elif not partial:
+                errors.append("write task returned neither pending_draft nor partial_draft")
+            if errors:
+                output = _clarify_invalid(state, errors)
+            elif partial:
+                output = {
+                    **state,
+                    "intent": "clarify",
+                    "validation_result": {"valid": True, "errors": [], "outcome": "partial_draft"},
+                }
+            else:
+                output = {
+                    **state,
+                    "validation_result": {"valid": True, "errors": [], "outcome": "pending_draft"},
+                }
+                logger.info("assistant.draft.created", extra=_log_context(output, target_action=pending.get("target_action")))
+        elif kind == "read":
+            items = state.get("retrieved_items") or []
+            citations = state.get("citations") or []
+            if items and not citations:
+                citations = [item.get("citation_key") for item in items if isinstance(item, dict) and item.get("citation_key")]
             output = {
                 **state,
-                "intent": "clarify",
-                "validation_result": {"valid": True, "errors": [], "outcome": "partial_draft"},
+                "citations": citations,
+                "validation_result": {"valid": True, "errors": [], "outcome": "read"},
             }
+        elif kind in {"general", "help"}:
+            output = {**state, "validation_result": {"valid": True, "errors": [], "outcome": kind}}
         else:
             output = {
                 **state,
-                "validation_result": {"valid": True, "errors": [], "outcome": "pending_draft"},
+                "intent": "clarify",
+                "answer": state.get("answer") or state.get("clarify_question") or "Could you clarify your request?",
+                "validation_result": {"valid": True, "errors": [], "outcome": "clarify"},
             }
-            logger.info("assistant.draft.created", extra=_log_context(output, target_action=pending.get("target_action")))
-    elif kind == "read":
-        items = state.get("retrieved_items") or []
-        citations = state.get("citations") or []
-        if items and not citations:
-            citations = [item.get("citation_key") for item in items if isinstance(item, dict) and item.get("citation_key")]
-        output = {
-            **state,
-            "citations": citations,
-            "validation_result": {"valid": True, "errors": [], "outcome": "read"},
-        }
-    elif kind in {"general", "help"}:
-        output = {**state, "validation_result": {"valid": True, "errors": [], "outcome": kind}}
-    else:
-        output = {
-            **state,
-            "intent": "clarify",
-            "answer": state.get("answer") or state.get("clarify_question") or "Could you clarify your request?",
-            "validation_result": {"valid": True, "errors": [], "outcome": "clarify"},
-        }
+    except Exception as exc:
+        if run is not None:
+            _record_failure(
+                state, observability.fail_step, db, run, stage="validator", event_type="validator.failed",
+                error_code=_error_code(exc), elapsed_ms=observability.duration_ms(started),
+                state=snapshot_state(state),
+            )
+        raise
 
     if output.get("intent") == "clarify":
         logger.info("assistant.clarification.required", extra=_log_context(output))
@@ -411,6 +619,33 @@ async def validator_node(state: AgentState) -> AgentState:
         "assistant.validator.completed",
         extra=_log_context(output, validation_outcome=output.get("validation_result", {}).get("outcome")),
     )
+    if run is not None:
+        outcome = output.get("validation_result", {}).get("outcome")
+        if outcome == "pending_draft":
+            observability.record_event(
+                db, run, event_type="draft.created", stage="validator", status="completed",
+                selected_module=output.get("selected_module"), selected_task=output.get("selected_task"),
+                payload={
+                    "target_module": (output.get("pending_draft") or {}).get("target_module"),
+                    "target_action": (output.get("pending_draft") or {}).get("target_action"),
+                    "validation": (output.get("pending_draft") or {}).get("validation") or {},
+                },
+            )
+        elif outcome == "partial_draft":
+            observability.record_event(
+                db, run, event_type="partial_draft.created", stage="validator", status="completed",
+                selected_module=output.get("selected_module"), selected_task=output.get("selected_task"),
+                payload={
+                    "target_module": (output.get("partial_draft") or {}).get("target_module"),
+                    "target_action": (output.get("partial_draft") or {}).get("target_action"),
+                    "missing": (output.get("partial_draft") or {}).get("missing") or [],
+                },
+            )
+        observability.complete_step(
+            db, run, stage="validator", event_type="validator.completed", state=snapshot_state(output),
+            payload={"outcome": outcome, "valid": output.get("validation_result", {}).get("valid")},
+            elapsed_ms=observability.duration_ms(started),
+        )
     return output
 
 

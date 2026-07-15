@@ -48,3 +48,137 @@ class DraftPatchRequest(BaseModel):
 class DraftCommittedRequest(BaseModel):
     # Record-only notification: the frontend already wrote via the module endpoint.
     committed_entity_ref: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Module-independent assistant debug API
+# ---------------------------------------------------------------------------
+
+
+class DebugChatMetadata(BaseModel):
+    id: int
+    name: str
+    company_id: int
+    user_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class DebugMessageOut(BaseModel):
+    id: int
+    chat_id: int
+    role: str
+    content: str
+    draft_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+class TimelineItem(BaseModel):
+    id: int
+    agent_run_id: int
+    message_id: Optional[int] = None
+    sequence: int
+    kind: str
+    event_type: str
+    stage: str
+    module: Optional[str] = None
+    task: Optional[str] = None
+    title: str
+    summary: str
+    status: str
+    severity: str
+    duration_ms: Optional[int] = None
+    error_code: Optional[str] = None
+    data: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AgentRunSummary(BaseModel):
+    id: int
+    chat_id: int
+    input_message_id: Optional[int] = None
+    output_message_id: Optional[int] = None
+    company_id: int
+    user_id: int
+    status: str
+    current_stage: Optional[str] = None
+    intent: Optional[str] = None
+    language: Optional[str] = None
+    state: Optional[Dict[str, Any]] = None
+    error_code: Optional[str] = None
+    last_event_sequence: int = 0
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunDebugOut(BaseModel):
+    run: AgentRunSummary
+    timeline: List[TimelineItem] = Field(default_factory=list)
+    routing_decisions: List[TimelineItem] = Field(default_factory=list)
+    drafts: List[DraftOut] = Field(default_factory=list)
+    errors: List[TimelineItem] = Field(default_factory=list)
+    final_output_message: Optional[DebugMessageOut] = None
+
+
+class MessageRunDebugOut(BaseModel):
+    message: DebugMessageOut
+    run: Optional[RunDebugOut] = None
+
+
+class ChatDebugOut(BaseModel):
+    chat: DebugChatMetadata
+    messages: List[MessageRunDebugOut] = Field(default_factory=list)
+    runs: List[RunDebugOut] = Field(default_factory=list)
+    unassociated_runs: List[RunDebugOut] = Field(default_factory=list)
+
+
+class DebugMessagesResponse(BaseModel):
+    chat: DebugChatMetadata
+    messages: List[DebugMessageOut]
+    limit: int
+    offset: int
+
+
+class RunEventsResponse(BaseModel):
+    run_id: int
+    after_sequence: int
+    next_after_sequence: int
+    has_more: bool
+    events: List[TimelineItem]
+
+
+class RunTimelineGroup(BaseModel):
+    run: AgentRunSummary
+    events: List[TimelineItem]
+
+
+class ChatTimelineResponse(BaseModel):
+    chat_id: int
+    runs: List[RunTimelineGroup]
+
+
+class RunStateResponse(BaseModel):
+    run_id: int
+    status: str
+    current_stage: Optional[str] = None
+    state: Optional[Dict[str, Any]] = None
+
+
+class DebugTaskDescriptor(BaseModel):
+    identifier: str
+    kind: str
+    description: str
+    required_permission: Optional[str] = None
+
+
+class DebugModuleDescriptor(BaseModel):
+    identifier: str
+    title: str
+    description: str
+    tasks: List[DebugTaskDescriptor] = Field(default_factory=list)
+
+
+class DebugModulesResponse(BaseModel):
+    modules: List[DebugModuleDescriptor]

@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     request_log_max_chars: int = 1024
     request_log_max_file_size: int = 10 * 1024 * 1024  # 10 MB
     request_log_backup_count: int = 5
+    # Assistant event payloads are intentionally bounded and redacted before
+    # they reach either PostgreSQL or operational logs.
+    assistant_event_payload_max_bytes: int = 32 * 1024
+    assistant_event_preview_chars: int = 256
+    assistant_state_snapshot_max_bytes: int = 128 * 1024
     
     #services stt
     STT_URL: str = "http://localhost:8010"

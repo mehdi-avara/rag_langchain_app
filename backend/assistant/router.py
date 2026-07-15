@@ -247,7 +247,16 @@ async def _json_completion(*, messages: list[dict], client=None, model: Optional
         logger.exception("assistant staged router model call failed", extra={"component": component, "model": model})
         raise_llm_exception(exc, component)
     raw = (response.choices[0].message.content or "").strip()
-    return _parse_router_json(raw)
+    parsed = _parse_router_json(raw)
+    usage = getattr(response, "usage", None)
+    parsed["_model_call"] = {
+        "provider": "openai_compatible",
+        "model": getattr(response, "model", None) or model,
+        "input_tokens": getattr(usage, "prompt_tokens", None),
+        "output_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
+    return parsed
 
 
 async def classify_module(
@@ -282,6 +291,7 @@ async def classify_module(
         "language": parsed.get("language") or "en",
         "confidence": _confidence(parsed.get("confidence")),
         "clarify_question": parsed.get("clarify_question") if isinstance(parsed.get("clarify_question"), str) else None,
+        "_model_call": parsed.get("_model_call") or {},
     }
 
 
@@ -321,4 +331,5 @@ async def classify_task(
         "confidence": _confidence(parsed.get("confidence")),
         "slots": _sanitize_model_slots(question, slots),
         "clarify_question": parsed.get("clarify_question") if isinstance(parsed.get("clarify_question"), str) else None,
+        "_model_call": parsed.get("_model_call") or {},
     }

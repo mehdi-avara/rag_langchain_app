@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 from Models import User
@@ -136,7 +137,47 @@ def resolve_field(db, user: User, *, field: str, resource_key: str, raw_text: st
     if not has_permission(user, spec.read_permission):
         return ReferenceResolution(field, raw_text or "", MISSING, note="no_access")
 
-    candidates = spec.provider.search(db=db, user=user, query=raw_text or "", limit=5)
+    # When a selected module resolves a reference through another module's
+    # provider, record the fan-out without persisting the raw query or results.
+    from . import observability
+
+    context = observability.current_execution_context()
+    search_fn = getattr(spec.provider, "_search_fn", None)
+    provider_module = getattr(search_fn, "__module__", "").split(".", 1)[0] or None
+    is_cross_module = bool(
+        context and provider_module and provider_module != context["selected_module"]
+    )
+    started = perf_counter()
+    if is_cross_module:
+        context["searched_modules"].add(provider_module)
+        observability.record_event(
+            db, context["run"], event_type="cross_module_search.started", stage="executor",
+            status="started", selected_module=context["selected_module"],
+            selected_task=context["selected_task"],
+            payload={"target_module": provider_module, "resource_identifier": resource_key},
+        )
+    try:
+        candidates = spec.provider.search(db=db, user=user, query=raw_text or "", limit=5)
+    except Exception as exc:
+        if is_cross_module:
+            observability.record_event(
+                db, context["run"], event_type="cross_module_search.failed", stage="executor",
+                status="failed", severity="error", selected_module=context["selected_module"],
+                selected_task=context["selected_task"], duration_ms=observability.duration_ms(started),
+                error_code=getattr(exc, "code", "INTERNAL_SERVER_ERROR"),
+                payload={"target_module": provider_module, "resource_identifier": resource_key},
+            )
+        raise
+    if is_cross_module:
+        observability.record_event(
+            db, context["run"], event_type="cross_module_search.completed", stage="executor",
+            status="completed", selected_module=context["selected_module"],
+            selected_task=context["selected_task"], duration_ms=observability.duration_ms(started),
+            payload={
+                "target_module": provider_module, "resource_identifier": resource_key,
+                "result_count": len(candidates),
+            },
+        )
     res = resolve_reference(field, raw_text or "", candidates)
 
     if res.status == MISSING and spec.create_endpoint and \

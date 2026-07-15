@@ -38,8 +38,10 @@ from .schemas import (
     DraftOut,
     DraftPatchRequest,
 )
+from .debug_routes import router as debug_router
 
 router = APIRouter()
+router.include_router(debug_router, prefix="/debug", tags=["assistant-debug"])
 
 
 @router.post("/chat")

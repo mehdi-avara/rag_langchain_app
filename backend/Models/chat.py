@@ -27,6 +27,8 @@ class Chat(Base):
 class ChatRole(str, Enum):
     user = "user"
     assistant = "assistant"
+    system = "system"
+    tool = "tool"
     
 class ChatMessage(Base):
     __tablename__ = "chat_messages"

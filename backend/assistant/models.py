@@ -23,6 +23,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -60,14 +61,24 @@ class AgentRun(Base):
         Index("ix_assistant_agent_runs_chat_id", "chat_id"),
         Index("ix_assistant_agent_runs_company_id", "company_id"),
         Index("ix_assistant_agent_runs_status", "status"),
+        Index("ix_assistant_agent_runs_output_message_id", "output_message_id"),
+        UniqueConstraint("input_message_id", name="uq_assistant_agent_runs_input_message_id"),
     )
 
     id = Column(Integer, primary_key=True)
     chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False)
     created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # ``created_by_user_id`` is retained for backward compatibility. ``user_id``
+    # is the explicit initiating identity used by the debug API and new runs set
+    # both values. It stays nullable so older integrations that construct rows
+    # directly are not broken.
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    input_message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True)
+    output_message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True)
 
     status = Column(String(20), nullable=False, default=AgentRunStatus.ACTIVE.value)
+    current_stage = Column(String(64), nullable=True)
     intent = Column(String(64), nullable=True)
     language = Column(String(16), nullable=True)
     intake_mode = Column(String(16), nullable=True)  # inline | heavy | None
@@ -76,11 +87,59 @@ class AgentRun(Base):
 
     # JSON snapshot of AgentState (sanitised — no Session / User objects).
     state = Column(JSONB, nullable=True)
+    # Incremented atomically with UPDATE ... RETURNING before an event insert.
+    last_event_sequence = Column(Integer, nullable=False, default=0)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
 
     drafts = relationship("Draft", back_populates="agent_run")
+    events = relationship(
+        "AssistantEvent",
+        back_populates="agent_run",
+        order_by="AssistantEvent.sequence",
+        cascade="all, delete-orphan",
+    )
+
+
+class AssistantEvent(Base):
+    """One immutable, frontend-safe observation in an assistant run.
+
+    Application services expose insert/list operations only. Database-level
+    ordering is per run and allocated from ``AgentRun.last_event_sequence``.
+    """
+
+    __tablename__ = "assistant_events"
+    __table_args__ = (
+        Index("ix_assistant_events_company_chat_created", "company_id", "chat_id", "created_at"),
+        Index("ix_assistant_events_run_sequence", "agent_run_id", "sequence"),
+        UniqueConstraint("agent_run_id", "sequence", name="uq_assistant_events_agent_run_id_sequence"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False)
+    agent_run_id = Column(Integer, ForeignKey("assistant_agent_runs.id", ondelete="CASCADE"), nullable=False)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    sequence = Column(Integer, nullable=False)
+    event_type = Column(String(96), nullable=False)
+    stage = Column(String(64), nullable=False)
+    status = Column(String(32), nullable=False, default="completed")
+    severity = Column(String(16), nullable=False, default="info")
+    selected_module = Column(String(96), nullable=True)
+    selected_task = Column(String(128), nullable=True)
+    route_from = Column(String(128), nullable=True)
+    route_to = Column(String(128), nullable=True)
+    payload = Column(JSONB, nullable=False, default=dict)
+    duration_ms = Column(Integer, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    agent_run = relationship("AgentRun", back_populates="events")
 
 
 class Draft(Base):
