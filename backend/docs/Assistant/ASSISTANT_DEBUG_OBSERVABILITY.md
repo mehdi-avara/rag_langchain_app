@@ -54,6 +54,10 @@ and oversized payloads become size/count/key metadata. Limits are configured by
 
 ## Frontend contract
 
+See [ASSISTANT_DEBUG_FRONTEND.md](ASSISTANT_DEBUG_FRONTEND.md) for the complete
+frontend integration guide, response usage, cursor polling, and authenticated
+SSE constraints.
+
 Debug endpoints require `assistant:debug` and scope every query to the caller's
 company. `/assistant/debug/chats/{id}` returns ordered messages plus the distinct
 run associated with each initiating user message. Timeline items use the generic
