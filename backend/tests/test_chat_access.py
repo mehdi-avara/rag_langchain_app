@@ -317,7 +317,13 @@ async def test_get_chat_history_returns_messages_for_owned_chat():
     db = FakeDB(chat_result=chat, message_rows=messages)
     current_user = make_user(user_id=7, company_id=4)
 
-    result = await chat_routes.get_chat_history(chat_id=10, current_user=current_user, db=db)
+    result = await chat_routes.get_chat_history(
+        chat_id=10,
+        limit=50,
+        offset=0,
+        current_user=current_user,
+        db=db,
+    )
 
     assert result.chat_id == 10
     assert result.name == "Chat"
