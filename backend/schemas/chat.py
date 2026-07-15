@@ -59,8 +59,12 @@ class ChatMessageItem(BaseModel):
     citations: List[Any] = Field(default_factory=list)
     retrieved_chunks: List[RetrievedItem] = Field(default_factory=list)
     retrieve_information: RetrieveInformation = Field(default_factory=RetrieveInformation)
+    agent_run_id: Optional[int] = None
+    summary: Optional[Dict[str, Any]] = None
+    intent: Optional[str] = None
     draft_id: Optional[int] = None
     draft: Optional[Dict[str, Any]] = None
+    partial_draft: Optional[Dict[str, Any]] = None
     created_at: datetime
 
 
@@ -69,3 +73,4 @@ class ChatHistoryResponse(BaseModel):
     name: str
     messages: List[ChatMessageItem]
     drafts: List[Dict[str, Any]] = Field(default_factory=list)
+    partial_drafts: List[Dict[str, Any]] = Field(default_factory=list)

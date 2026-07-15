@@ -16,7 +16,7 @@ os.environ.setdefault("jwt_secret", "test-secret")
 os.environ.setdefault("openai_api_key", "test")
 os.environ.setdefault("jina_api_key", "test")
 
-from Models import Chat, ChatMessage, Comment, Document, Draft
+from Models import AgentRun, Chat, ChatMessage, Comment, Document, Draft
 from Models.chat import ChatRole
 from routs import chat as chat_routes
 from schemas.chat import ChatRequest
@@ -68,6 +68,9 @@ class FakeQuery:
         if self.target is Draft:
             return self.db.draft_rows
 
+        if self.target is AgentRun:
+            return self.db.agent_run_rows
+
         if key == "id":
             return [(item_id,) for item_id in self.db.comment_ids]
 
@@ -91,6 +94,7 @@ class FakeDB:
         chat_rows=None,
         message_rows=None,
         draft_rows=None,
+        agent_run_rows=None,
         doc_rows=None,
         comment_ids=None,
     ):
@@ -98,6 +102,7 @@ class FakeDB:
         self.chat_rows = chat_rows or []
         self.message_rows = message_rows or []
         self.draft_rows = draft_rows or []
+        self.agent_run_rows = agent_run_rows or []
         self.doc_rows = doc_rows or []
         self.comment_ids = comment_ids or []
         self.added = []
@@ -188,6 +193,26 @@ def make_draft(draft_id=55, chat_id=10, user_id=7, company_id=4):
         committed_entity_ref=None,
         created_at=datetime(2026, 5, 16, 10, 0, 0),
         updated_at=datetime(2026, 5, 16, 10, 0, 0),
+    )
+
+
+def make_agent_run(
+    run_id=99,
+    chat_id=10,
+    user_id=7,
+    company_id=4,
+    output_message_id=None,
+    intent=None,
+    state=None,
+):
+    return SimpleNamespace(
+        id=run_id,
+        chat_id=chat_id,
+        created_by_user_id=user_id,
+        company_id=company_id,
+        output_message_id=output_message_id,
+        intent=intent,
+        state=state or {},
     )
 
 
@@ -407,6 +432,63 @@ async def test_get_chat_history_includes_unreferenced_chat_drafts():
 
 
 @pytest.mark.asyncio
+async def test_get_chat_history_replays_structured_run_output_and_partial_drafts():
+    chat = make_chat(chat_id=10, user_id=7, company_id=4)
+    assistant_message = make_message(
+        2,
+        role=ChatRole.assistant,
+        content="Which warehouse should I use?",
+    )
+    linked_partial = {
+        "target_module": "warehouse_management",
+        "target_action": "adjust_stock",
+        "payload": {"quantity": 5},
+        "missing": ["warehouse_id"],
+    }
+    orphaned_partial = {
+        "target_module": "material_management",
+        "target_action": "create_item",
+        "payload": {"name": "Pump seal"},
+        "missing": ["item_code"],
+    }
+    linked_run = make_agent_run(
+        run_id=100,
+        output_message_id=2,
+        intent="adjust_stock",
+        state={
+            "summary": {"matched_items": 1},
+            "partial_draft": linked_partial,
+        },
+    )
+    orphaned_run = make_agent_run(
+        run_id=99,
+        output_message_id=None,
+        intent="add_item",
+        state={"partial_draft": orphaned_partial},
+    )
+    db = FakeDB(
+        chat_result=chat,
+        message_rows=[assistant_message],
+        agent_run_rows=[linked_run, orphaned_run],
+    )
+    current_user = make_user(user_id=7, company_id=4)
+
+    result = await chat_routes.get_chat_history(
+        chat_id=10,
+        include_drafts=True,
+        current_user=current_user,
+        db=db,
+    )
+
+    message = result.messages[0]
+    assert message.agent_run_id == 100
+    assert message.intent == "adjust_stock"
+    assert message.summary == {"matched_items": 1}
+    assert message.partial_draft == linked_partial
+    assert result.partial_drafts == [linked_partial, orphaned_partial]
+
+
+@pytest.mark.asyncio
 async def test_get_chat_history_can_skip_drafts():
     chat = make_chat(chat_id=10, user_id=7, company_id=4)
     message = make_message(
@@ -432,7 +514,8 @@ async def test_get_chat_history_can_skip_drafts():
     assert result.messages[0].draft_id == 55
     assert result.messages[0].draft is None
     assert result.drafts == []
-    assert len(db.queries) == 2
+    assert result.partial_drafts == []
+    assert len(db.queries) == 3
 
 
 @pytest.mark.asyncio

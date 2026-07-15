@@ -13,7 +13,7 @@ from db.init_db import get_db
 from deps import require_permission
 from financial_management.models import FinancialReceipt
 from financial_management.services import receipt_to_out
-from Models import Chat, ChatMessage, Comment, Document, Draft, User
+from Models import AgentRun, Chat, ChatMessage, Comment, Document, Draft, User
 from Models.chat import ChatRole
 from routs.documents import _get_accessible_document_ids
 from assistant.schemas import DraftOut
@@ -710,9 +710,41 @@ async def get_chat_history(
         ]
         drafts_by_id = {draft["id"]: draft for draft in draft_items}
 
+    runs = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.chat_id == chat_obj.id,
+            AgentRun.company_id == current_user.company_id,
+            AgentRun.created_by_user_id == current_user.id,
+        )
+        .order_by(desc(AgentRun.id))
+        .all()
+    )
+    run_details_by_message_id: dict[int, dict[str, Any]] = {}
+    partial_draft_items: list[dict[str, Any]] = []
+
+    for run in runs:
+        state = run.state if isinstance(run.state, dict) else {}
+        partial_draft = state.get("partial_draft")
+        if not isinstance(partial_draft, dict):
+            partial_draft = None
+        elif include_drafts:
+            partial_draft_items.append(partial_draft)
+
+        output_message_id = getattr(run, "output_message_id", None)
+        if output_message_id is not None and output_message_id not in run_details_by_message_id:
+            summary = state.get("summary")
+            run_details_by_message_id[output_message_id] = {
+                "agent_run_id": run.id,
+                "summary": summary if isinstance(summary, dict) else None,
+                "intent": getattr(run, "intent", None) or state.get("intent"),
+                "partial_draft": partial_draft if include_drafts else None,
+            }
+
     message_items = []
 
     for message in messages:
+        run_details = run_details_by_message_id.get(message.id, {})
         retrieved_items = _parse_retrieved_items(message.retrieved_chunks)
         retrieve_information = RetrieveInformation(
             items=retrieved_items,
@@ -730,8 +762,12 @@ async def get_chat_history(
                 citations=message.citations or [],
                 retrieved_chunks=retrieved_items,
                 retrieve_information=retrieve_information,
+                agent_run_id=run_details.get("agent_run_id"),
+                summary=run_details.get("summary"),
+                intent=run_details.get("intent"),
                 draft_id=getattr(message, "draft_id", None),
                 draft=drafts_by_id.get(getattr(message, "draft_id", None)),
+                partial_draft=run_details.get("partial_draft"),
                 created_at=message.created_at,
             )
         )
@@ -741,4 +777,5 @@ async def get_chat_history(
         name=chat_obj.name,
         messages=message_items,
         drafts=draft_items,
+        partial_drafts=partial_draft_items,
     )
