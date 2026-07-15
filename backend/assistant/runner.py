@@ -153,6 +153,13 @@ async def _stream_model_answer(state: AgentState):
         timeout=intake_mod.LLM_TIMEOUT,
     )
     async for chunk in stream:
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            state["_answer_model_usage"] = {
+                "input_tokens": getattr(usage, "prompt_tokens", None),
+                "output_tokens": getattr(usage, "completion_tokens", None),
+                "total_tokens": getattr(usage, "total_tokens", None),
+            }
         choices = getattr(chunk, "choices", None) or []
         if not choices:
             continue
@@ -347,7 +354,11 @@ async def run_turn_stream(
                     observability.record_model_call(
                         db, run, stage="answer", status="completed", provider="openai_compatible",
                         model=result.get("model_name") or settings.openai_model,
-                        elapsed_ms=observability.duration_ms(model_started), prompt_version="answer-v1",
+                        elapsed_ms=observability.duration_ms(model_started),
+                        input_tokens=(result.get("_answer_model_usage") or {}).get("input_tokens"),
+                        output_tokens=(result.get("_answer_model_usage") or {}).get("output_tokens"),
+                        total_tokens=(result.get("_answer_model_usage") or {}).get("total_tokens"),
+                        prompt_version="answer-v1",
                         prompt_digest=observability.prompt_hash(answer_messages), response_format="text",
                     )
                 observability.complete_step(

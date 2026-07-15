@@ -690,29 +690,25 @@ async def get_chat_history(
     messages_query = messages_query.offset(offset).limit(limit)
 
     messages = messages_query.all()
+    draft_items: list[dict[str, Any]] = []
     drafts_by_id: dict[int, dict[str, Any]] = {}
 
     if include_drafts:
-        draft_ids = {
-            draft_id
-            for draft_id in (getattr(message, "draft_id", None) for message in messages)
-            if draft_id is not None
-        }
-
-        if draft_ids:
-            drafts = (
-                db.query(Draft)
-                .filter(
-                    Draft.id.in_(draft_ids),
-                    Draft.company_id == current_user.company_id,
-                    Draft.created_by_user_id == current_user.id,
-                )
-                .all()
+        drafts = (
+            db.query(Draft)
+            .filter(
+                Draft.chat_id == chat_obj.id,
+                Draft.company_id == current_user.company_id,
+                Draft.created_by_user_id == current_user.id,
             )
-            drafts_by_id = {
-                draft.id: DraftOut.model_validate(draft).model_dump(mode="json")
-                for draft in drafts
-            }
+            .order_by(desc(Draft.id))
+            .all()
+        )
+        draft_items = [
+            DraftOut.model_validate(draft).model_dump(mode="json")
+            for draft in drafts
+        ]
+        drafts_by_id = {draft["id"]: draft for draft in draft_items}
 
     message_items = []
 
@@ -744,4 +740,5 @@ async def get_chat_history(
         chat_id=chat_obj.id,
         name=chat_obj.name,
         messages=message_items,
+        drafts=draft_items,
     )

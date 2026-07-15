@@ -375,7 +375,35 @@ async def test_get_chat_history_includes_drafts_by_default():
     assert result.messages[0].draft_id == 55
     assert result.messages[0].draft["id"] == 55
     assert result.messages[0].draft["payload"] == {"item_code": "PUMP-SEAL"}
+    assert [draft["id"] for draft in result.drafts] == [55]
     assert db.queries[2].target is Draft
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_includes_unreferenced_chat_drafts():
+    chat = make_chat(chat_id=10, user_id=7, company_id=4)
+    message = make_message(
+        1,
+        role=ChatRole.assistant,
+        content="The stream ended before the draft was linked.",
+    )
+    db = FakeDB(
+        chat_result=chat,
+        message_rows=[message],
+        draft_rows=[make_draft(draft_id=55), make_draft(draft_id=56)],
+    )
+    current_user = make_user(user_id=7, company_id=4)
+
+    result = await chat_routes.get_chat_history(
+        chat_id=10,
+        include_drafts=True,
+        current_user=current_user,
+        db=db,
+    )
+
+    assert result.messages[0].draft_id is None
+    assert result.messages[0].draft is None
+    assert [draft["id"] for draft in result.drafts] == [55, 56]
 
 
 @pytest.mark.asyncio
@@ -403,6 +431,7 @@ async def test_get_chat_history_can_skip_drafts():
 
     assert result.messages[0].draft_id == 55
     assert result.messages[0].draft is None
+    assert result.drafts == []
     assert len(db.queries) == 2
 
 

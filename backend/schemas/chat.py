@@ -68,3 +68,4 @@ class ChatHistoryResponse(BaseModel):
     chat_id: int
     name: str
     messages: List[ChatMessageItem]
+    drafts: List[Dict[str, Any]] = Field(default_factory=list)
