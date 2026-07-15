@@ -35,7 +35,7 @@ from .schemas import (
 )
 
 
-router = APIRouter()
+router = APIRouter(prefix="/debug", tags=["assistant-debug"])
 
 
 def _company_id(user: User) -> int:

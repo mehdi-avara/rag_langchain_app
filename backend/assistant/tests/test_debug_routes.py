@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from assistant.tests.fakes import make_user
-from assistant.routes import router
+from assistant.debug_routes import router as debug_router
 from assistant.schemas import TimelineItem
 from assistant.permissions import PERMISSIONS
 
@@ -33,13 +33,13 @@ def _permission_dependency(route):
 
 
 def test_all_debug_routes_exist_and_require_assistant_debug():
-    debug_routes = [route for route in router.routes if route.path.startswith("/debug/")]
+    debug_routes = [route for route in debug_router.routes if hasattr(route, "path")]
     assert {route.path for route in debug_routes} == EXPECTED_PATHS
     assert all(_permission_dependency(route) is not None for route in debug_routes)
 
 
 def test_debug_permission_rejects_ordinary_assistant_user():
-    route = next(route for route in router.routes if route.path == "/debug/modules")
+    route = next(route for route in debug_router.routes if getattr(route, "path", None) == "/debug/modules")
     checker = _permission_dependency(route)
     user = make_user(["assistant:chat", "assistant:draft"])
     with pytest.raises(HTTPException) as exc:

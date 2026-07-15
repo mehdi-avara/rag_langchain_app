@@ -41,7 +41,10 @@ from .schemas import (
 from .debug_routes import router as debug_router
 
 router = APIRouter()
-router.include_router(debug_router, prefix="/debug", tags=["assistant-debug"])
+# Keep this router's public ``routes`` collection flat.  Newer FastAPI
+# versions may retain ``include_router`` calls as private wrapper objects,
+# while existing integrations inspect this collection as concrete APIRoutes.
+router.routes.extend(debug_router.routes)
 
 
 @router.post("/chat")
