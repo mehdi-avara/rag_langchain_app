@@ -289,7 +289,7 @@ def create_requisition(
                 mr_number=_next_mr_number(db, company_id),
                 requested_by_user_id=current_user.id,
                 department_id=data.get("department_id"),
-                needed_by_date=data["needed_by_date"],
+                needed_by_date=data.get("needed_by_date"),
                 reason=str(data["reason"]).strip(),
                 priority=_enum_value(data.get("priority"))
                 or MaterialRequisitionPriority.NORMAL.value,

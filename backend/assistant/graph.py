@@ -11,6 +11,7 @@ handlers. The graph never commits domain data; write handlers only build drafts.
 from __future__ import annotations
 
 import logging
+import re
 from time import perf_counter
 
 from langgraph.graph import StateGraph
@@ -309,14 +310,128 @@ def _resolve_kind(state: AgentState) -> str:
     return "clarify"
 
 
+
+_READ_FOLLOWUP_EN_RE = re.compile(
+    r"\b(last|previous|that|those|same|first|second|third|above|result|results|output|outputs|it|them)\b",
+    flags=re.IGNORECASE,
+)
+
+_READ_REFRESH_EN_RE = re.compile(
+    r"\b(search again|find again|new search|search new|refresh|run the search again|latest data)\b",
+    flags=re.IGNORECASE,
+)
+
+_READ_FOLLOWUP_FA = (
+    "قبلی",
+    "آخرین نتیجه",
+    "نتیجه قبلی",
+    "خروجی قبلی",
+    "خروجی آخر",
+    "همان",
+    "همون",
+    "اون",
+    "آن مورد",
+    "این مورد",
+    "مورد بالا",
+    "اولی",
+    "دومی",
+    "سومی",
+    "نتایج بالا",
+)
+
+_READ_REFRESH_FA = (
+    "دوباره جستجو",
+    "دوباره جست‌وجو",
+    "جستجوی مجدد",
+    "جست‌وجوی مجدد",
+    "جستجوی جدید",
+    "جست‌وجوی جدید",
+    "دوباره سرچ",
+    "بروزرسانی جستجو",
+    "به‌روزرسانی جستجو",
+)
+
+
+def _is_previous_result_followup(question: str) -> bool:
+    text = re.sub(r"\s+", " ", str(question or "").strip())
+    lowered = text.lower()
+
+    if not text:
+        return False
+
+    if _READ_REFRESH_EN_RE.search(lowered):
+        return False
+
+    if any(marker in text for marker in _READ_REFRESH_FA):
+        return False
+
+    if _READ_FOLLOWUP_EN_RE.search(lowered):
+        return True
+
+    return any(marker in text for marker in _READ_FOLLOWUP_FA)
+
+
+def _matching_read_context(state: AgentState, spec) -> dict | None:
+    context = state.get("active_read_context")
+
+    if not isinstance(context, dict):
+        return None
+
+    if context.get("selected_module") != spec.module:
+        return None
+
+    retrieved_items = context.get("retrieved_items")
+
+    if not isinstance(retrieved_items, list) or not retrieved_items:
+        return None
+
+    if not _is_previous_result_followup(state.get("question", "")):
+        return None
+
+    return context
+
+
 async def read_node(state: AgentState) -> AgentState:
     user, db = state["user"], state["db"]
     intent = state.get("selected_task") or state["intent"]
     spec = registry.find_intent(user, intent)
+
     if spec is None or spec.module != state.get("selected_module"):
-        return await clarify_node({**state, "clarify_question": "Could you clarify what you want to do?"})
+        return await clarify_node(
+            {
+                **state,
+                "clarify_question": "Could you clarify what you want to do?",
+            }
+        )
+
+    cached_context = _matching_read_context(state, spec)
+
+    if cached_context is not None:
+        return {
+            **state,
+            "current_step": intent,
+            "retrieved_items": cached_context.get("retrieved_items") or [],
+            "summary": cached_context.get("summary"),
+            "answer": "",
+            "citations": cached_context.get("citations") or [],
+            "tool_calls": [
+                *(state.get("tool_calls") or []),
+                {
+                    "module": spec.module,
+                    "intent": intent,
+                    "kind": "read_context_reuse",
+                },
+            ],
+        }
+
     toolset = registry.get_toolset(spec.module)
-    result = await toolset.handle_read(intent=intent, db=db, user=user, slots=state.get("slots") or {})
+    result = await toolset.handle_read(
+        intent=intent,
+        db=db,
+        user=user,
+        slots=state.get("slots") or {},
+    )
+
     return {
         **state,
         "current_step": intent,

@@ -63,6 +63,7 @@ class AgentState(TypedDict, total=False):
     partial_draft: Optional[dict]   # incomplete write: object-so-far + missing field nouns
     active_partial_draft: Optional[dict]
     active_partial_drafts: List[dict]
+    active_read_context: Optional[dict]
     answer: str
     citations: List[Any]
     tool_calls: List[dict]

@@ -66,7 +66,7 @@ class MaterialRequisition(Base):
         nullable=True,
     )
     department_id = Column(Integer, nullable=True)
-    needed_by_date = Column(Date, nullable=False)
+    needed_by_date = Column(Date, nullable=True)
     reason = Column(Text, nullable=False)
     priority = Column(
         String(20),

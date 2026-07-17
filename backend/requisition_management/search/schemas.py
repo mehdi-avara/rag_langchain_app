@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ class RequisitionSearchHit(BaseModel):
     status: str
     priority: str
     reason: str
-    needed_by_date: date
+    needed_by_date: Optional[date]
     item_ids: list[int]
     item_codes: list[str]
     match_source: str

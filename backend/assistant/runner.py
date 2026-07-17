@@ -155,6 +155,53 @@ def _load_latest_partial_draft(
     return active_partials[0] if active_partials else None
 
 
+def _load_latest_read_context(
+    db: Session,
+    *,
+    chat_id: int,
+    user: User,
+    limit: int = 12,
+) -> Optional[dict]:
+    runs = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.chat_id == chat_id,
+            AgentRun.company_id == user.company_id,
+            AgentRun.created_by_user_id == user.id,
+        )
+        .order_by(desc(AgentRun.id))
+        .limit(limit)
+        .all()
+    )
+
+    for run in runs:
+        state = run.state if isinstance(run.state, dict) else {}
+        retrieved_items = state.get("retrieved_items")
+
+        if not isinstance(retrieved_items, list) or not retrieved_items:
+            continue
+
+        selected_module = state.get("selected_module")
+        selected_task = state.get("selected_task")
+
+        if not isinstance(selected_module, str) or not selected_module.strip():
+            continue
+
+        if not isinstance(selected_task, str) or not selected_task.strip():
+            continue
+
+        return {
+            "selected_module": selected_module,
+            "selected_task": selected_task,
+            "retrieved_items": retrieved_items,
+            "summary": state.get("summary"),
+            "citations": state.get("citations") or [],
+            "question": state.get("question"),
+        }
+
+    return None
+
+
 def _history_messages(state: AgentState) -> list[dict]:
     messages: list[dict] = []
     for item in state.get("history") or []:
@@ -252,6 +299,11 @@ async def run_turn_stream(
         if active_partial_drafts
         else None
     )
+    active_read_context = _load_latest_read_context(
+        db,
+        chat_id=chat_obj.id,
+        user=user,
+    )
     input_message = add_message(db, chat_id=chat_obj.id, role=ChatRole.user, content=request.query)
 
     if is_new_chat:
@@ -329,6 +381,7 @@ async def run_turn_stream(
                     "validation_result": {},
                     "active_partial_draft": active_partial_draft,
                     "active_partial_drafts": active_partial_drafts,
+                    "active_read_context": active_read_context,
                     "plan": [],
                     "step_count": 0,
                     "retrieved_items": [],

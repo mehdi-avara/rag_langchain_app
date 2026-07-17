@@ -92,7 +92,7 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
             target_action="create_material_requisition",
             method="POST",
             endpoint=API_PREFIX,
-            required=("needed_by_date", "reason"),
+            required=("reason",),
             item_builder=requisition_items_from_slots,
             reference_fields=(
                 ReferenceFieldSpec(

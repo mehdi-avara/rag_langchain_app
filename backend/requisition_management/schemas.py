@@ -54,7 +54,7 @@ class MaterialRequisitionItemUpdate(BaseModel):
 
 class MaterialRequisitionCreate(BaseModel):
     department_id: Optional[int] = Field(None, gt=0)
-    needed_by_date: date
+    needed_by_date: Optional[date] = None
     reason: str = Field(..., min_length=1)
     priority: MaterialRequisitionPriority = MaterialRequisitionPriority.NORMAL
     notes: Optional[str] = None
@@ -116,7 +116,7 @@ class MaterialRequisitionRead(BaseModel):
     mr_number: str
     requested_by_user_id: Optional[int]
     department_id: Optional[int]
-    needed_by_date: date
+    needed_by_date: Optional[date]
     reason: str
     priority: str
     status: str
