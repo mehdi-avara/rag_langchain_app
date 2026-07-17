@@ -1,5 +1,10 @@
 # Assistant Module Integration Guide
 
+> For the general assistant architecture, runtime flow, module onboarding steps,
+> vocabulary placement, and user-help design, start with
+> `backend/docs/Assistant/ASSISTANT_IMPLEMENTATION_GUIDE.md`. This document keeps
+> the detailed commerce and maintenance integration conventions and examples.
+
 This guide documents the conventions for adding new backend modules to the existing
 assistant without redesigning the assistant core.
 
