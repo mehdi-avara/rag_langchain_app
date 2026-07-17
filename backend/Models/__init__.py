@@ -118,6 +118,17 @@ from organization_management.models import (
     OrganizationUserAssignment,
 )
 
+from workflow_management.models import (
+    WorkflowDefinition,
+    WorkflowDefinitionVersion,
+    WorkflowStepDefinition,
+    WorkflowTransitionDefinition,
+    WorkflowInstance,
+    WorkflowStepInstance,
+    WorkflowInstanceFile,
+    WorkflowAuditLog,
+)
+
 from assistant.models import (
     AgentRun,
     AgentRunStatus,
@@ -210,6 +221,14 @@ __all__ = [
     "OrganizationDepartment",
     "OrganizationPosition",
     "OrganizationUserAssignment",
+    "WorkflowDefinition",
+    "WorkflowDefinitionVersion",
+    "WorkflowStepDefinition",
+    "WorkflowTransitionDefinition",
+    "WorkflowInstance",
+    "WorkflowStepInstance",
+    "WorkflowInstanceFile",
+    "WorkflowAuditLog",
     "AgentRun",
     "AgentRunStatus",
     "AssistantEvent",

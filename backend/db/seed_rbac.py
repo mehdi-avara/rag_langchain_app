@@ -15,6 +15,7 @@ from supplier_management.permissions import PERMISSIONS as SUPPLIER_MANAGEMENT_P
 from business_management.permissions import PERMISSIONS as BUSINESS_MANAGEMENT_PERMISSIONS
 from assistant.permissions import PERMISSIONS as ASSISTANT_PERMISSIONS
 from organization_management.permissions import PERMISSIONS as ORGANIZATION_MANAGEMENT_PERMISSIONS
+from workflow_management.permissions import PERMISSIONS as WORKFLOW_MANAGEMENT_PERMISSIONS
 
 
 def get_or_create_permission(
@@ -216,6 +217,7 @@ def seed() -> None:
         permissions_data.extend(BUSINESS_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(ASSISTANT_PERMISSIONS)
         permissions_data.extend(ORGANIZATION_MANAGEMENT_PERMISSIONS)
+        permissions_data.extend(WORKFLOW_MANAGEMENT_PERMISSIONS)
 
         permissions = [
             get_or_create_permission(db, name, resource, action, description)

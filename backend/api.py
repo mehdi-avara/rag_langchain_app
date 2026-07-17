@@ -32,6 +32,7 @@ from goods_receipt_management.routes import goods_receipt_router
 from warehouse_management.routes import warehouse_router
 from business_management.routes import business_router
 from organization_management.routes import organization_router
+from workflow_management.routes import workflow_router
 from shared.currency.routes import router as currency_router
 from shared.export.routes import router as export_router
 from shared.reporting.routes import router as reporting_router
@@ -114,6 +115,7 @@ app.include_router(goods_receipt_router, tags=["goods_receipt_management"])
 app.include_router(warehouse_router, tags=["warehouse_management"])
 app.include_router(business_router, tags=["business_management"])
 app.include_router(organization_router)
+app.include_router(workflow_router)
 app.include_router(currency_router, prefix="/currencies", tags=["currencies"])
 app.include_router(tasks_router, tags=["tasks"])
 app.include_router(assistant_router, prefix="/assistant", tags=["assistant"])
