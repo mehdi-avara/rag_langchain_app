@@ -80,7 +80,28 @@ def _load_recent_history(db: Session, *, chat_id: int, limit: int = HISTORY_MESS
     return history
 
 
-def _load_latest_partial_draft(db: Session, *, chat_id: int, user: User) -> Optional[dict]:
+def _draft_key(value: object) -> Optional[tuple[str, str]]:
+    if not isinstance(value, dict):
+        return None
+
+    target_module = value.get("target_module")
+    target_action = value.get("target_action")
+
+    if not isinstance(target_module, str) or not target_module.strip():
+        return None
+    if not isinstance(target_action, str) or not target_action.strip():
+        return None
+
+    return target_module.strip(), target_action.strip()
+
+
+def _load_active_partial_drafts(
+    db: Session,
+    *,
+    chat_id: int,
+    user: User,
+    limit: int = 32,
+) -> list[dict]:
     runs = (
         db.query(AgentRun)
         .filter(
@@ -89,17 +110,49 @@ def _load_latest_partial_draft(db: Session, *, chat_id: int, user: User) -> Opti
             AgentRun.created_by_user_id == user.id,
         )
         .order_by(desc(AgentRun.id))
-        .limit(8)
+        .limit(limit)
         .all()
     )
+
+    resolved_keys: set[tuple[str, str]] = set()
+    active_partials: list[dict] = []
+
     for run in runs:
         state = run.state if isinstance(run.state, dict) else {}
-        partial = state.get("partial_draft") if isinstance(state, dict) else None
-        if isinstance(partial, dict) and partial.get("target_action") and isinstance(partial.get("payload"), dict):
-            return partial
-        if state.get("pending_draft"):
-            return None
-    return None
+
+        pending_draft = state.get("pending_draft")
+        pending_key = _draft_key(pending_draft)
+
+        if pending_key is not None and pending_key not in resolved_keys:
+            resolved_keys.add(pending_key)
+
+        partial_draft = state.get("partial_draft")
+        partial_key = _draft_key(partial_draft)
+
+        if partial_key is None or partial_key in resolved_keys:
+            continue
+
+        if not isinstance(partial_draft.get("payload"), dict):
+            continue
+
+        active_partials.append(partial_draft)
+        resolved_keys.add(partial_key)
+
+    return active_partials
+
+
+def _load_latest_partial_draft(
+    db: Session,
+    *,
+    chat_id: int,
+    user: User,
+) -> Optional[dict]:
+    active_partials = _load_active_partial_drafts(
+        db,
+        chat_id=chat_id,
+        user=user,
+    )
+    return active_partials[0] if active_partials else None
 
 
 def _history_messages(state: AgentState) -> list[dict]:
@@ -189,7 +242,16 @@ async def run_turn_stream(
 
     chat_obj, is_new_chat = get_or_create_chat(db, chat_id=request.chat_id, user=user)
     history = _load_recent_history(db, chat_id=chat_obj.id)
-    active_partial_draft = _load_latest_partial_draft(db, chat_id=chat_obj.id, user=user)
+    active_partial_drafts = _load_active_partial_drafts(
+        db,
+        chat_id=chat_obj.id,
+        user=user,
+    )
+    active_partial_draft = (
+        active_partial_drafts[0]
+        if active_partial_drafts
+        else None
+    )
     input_message = add_message(db, chat_id=chat_obj.id, role=ChatRole.user, content=request.query)
 
     if is_new_chat:
@@ -266,6 +328,7 @@ async def run_turn_stream(
                     "tool_calls": [],
                     "validation_result": {},
                     "active_partial_draft": active_partial_draft,
+                    "active_partial_drafts": active_partial_drafts,
                     "plan": [],
                     "step_count": 0,
                     "retrieved_items": [],

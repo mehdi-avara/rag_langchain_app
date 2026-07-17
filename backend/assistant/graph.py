@@ -331,6 +331,154 @@ async def read_node(state: AgentState) -> AgentState:
     }
 
 
+
+_MISSING_LABELS_FA = {
+    "accepted_quantity": "مقدار پذیرفته‌شده",
+    "access method": "روش دسترسی",
+    "amount": "مبلغ",
+    "base currency": "ارز پایه",
+    "base_currency_id": "ارز پایه",
+    "card number": "شماره کارت",
+    "category": "دسته‌بندی",
+    "category_id": "دسته‌بندی",
+    "counterparty": "طرف حساب",
+    "credit card": "کارت بانکی",
+    "currency": "ارز",
+    "currency_id": "ارز",
+    "deadline_date": "تاریخ مهلت",
+    "description": "توضیحات",
+    "direction": "نوع دریافت یا پرداخت",
+    "item": "کالا",
+    "items": "اقلام",
+    "mr_id or items": "درخواست MR یا اقلام",
+    "name": "نام",
+    "needed_by_date": "تاریخ موردنیاز",
+    "phone number": "شماره تلفن",
+    "purchase phase item": "قلم مرحله خرید",
+    "reason": "دلیل درخواست",
+    "receipt date": "تاریخ رسید",
+    "received_quantity": "مقدار دریافت‌شده",
+    "rejected_quantity": "مقدار ردشده",
+    "RFQ": "درخواست RFQ",
+    "rfq_id": "درخواست RFQ",
+    "storage location": "محل نگهداری",
+    "storage_location_id": "محل نگهداری",
+    "supplier": "تأمین‌کننده",
+    "supplier_id": "تأمین‌کننده",
+    "supplier_ids": "تأمین‌کنندگان",
+    "title": "عنوان",
+    "unit": "واحد",
+    "unit_id": "واحد",
+    "warehouse": "انبار",
+    "warehouse_id": "انبار",
+}
+
+
+def _persian_field_label(value: object) -> str:
+    name = str(value or "").strip()
+    short_name = name.split(".")[-1]
+
+    if name in _MISSING_LABELS_FA:
+        return _MISSING_LABELS_FA[name]
+    if short_name in _MISSING_LABELS_FA:
+        return _MISSING_LABELS_FA[short_name]
+
+    if short_name.endswith("_ids"):
+        short_name = short_name[:-4]
+    elif short_name.endswith("_id"):
+        short_name = short_name[:-3]
+
+    return short_name.replace("_", " ") or "اطلاعات لازم"
+
+
+def _matching_partial_draft(state: AgentState, spec) -> dict | None:
+    candidates = state.get("active_partial_drafts")
+
+    if not isinstance(candidates, list):
+        candidates = []
+
+    legacy_partial = state.get("active_partial_draft")
+    if isinstance(legacy_partial, dict):
+        candidates = [*candidates, legacy_partial]
+
+    for partial in candidates:
+        if not isinstance(partial, dict):
+            continue
+        if partial.get("target_module") != spec.module:
+            continue
+        if partial.get("target_action") != spec.target_action:
+            continue
+        if not isinstance(partial.get("payload"), dict):
+            continue
+        return partial
+
+    return None
+
+
+def _localized_clarify_question(*, language: str, draft_data) -> str:
+    current_language = str(language or "en").lower()
+
+    if not current_language.startswith("fa"):
+        return (
+            draft_data.clarify_question
+            or "Could you provide the missing details?"
+        )
+
+    validation = (
+        draft_data.validation
+        if isinstance(draft_data.validation, dict)
+        else {}
+    )
+
+    references = validation.get("references")
+    pending_fields = set(validation.get("references_pending") or [])
+
+    if isinstance(references, list):
+        for reference in references:
+            if not isinstance(reference, dict):
+                continue
+
+            field = str(reference.get("field") or "")
+            status = reference.get("status")
+
+            if field not in pending_fields and status not in {
+                "ambiguous",
+                "missing",
+            }:
+                continue
+
+            label = _persian_field_label(field)
+
+            if status == "ambiguous":
+                return (
+                    f"چند گزینه برای {label} پیدا کردم. "
+                    "لطفاً گزینه درست را انتخاب کنید."
+                )
+
+            if reference.get("create_suggestion"):
+                return (
+                    f"{label} موردنظر پیدا نشد. "
+                    "آیا می‌خواهید آن را ایجاد کنید یا با عبارت دیگری جست‌وجو کنم؟"
+                )
+
+            return (
+                f"{label} موردنظر پیدا نشد. "
+                "لطفاً شناسه یا نام دقیق‌تری وارد کنید."
+            )
+
+    missing = validation.get("missing")
+
+    if isinstance(missing, list) and missing:
+        labels = [_persian_field_label(item) for item in missing]
+        return (
+            "برای ادامه هنوز این اطلاعات را نیاز دارم: "
+            + "، ".join(labels)
+            + "."
+        )
+
+    return "لطفاً اطلاعات تکمیلی موردنیاز را وارد کنید."
+
+
 async def write_node(state: AgentState) -> AgentState:
     user, db = state["user"], state["db"]
     intent = state.get("selected_task") or state["intent"]
@@ -339,8 +487,8 @@ async def write_node(state: AgentState) -> AgentState:
         return await clarify_node({**state, "clarify_question": "Could you clarify what you want to change?"})
     toolset = registry.get_toolset(spec.module)
     slots = dict(state.get("slots") or {})
-    active_partial = state.get("active_partial_draft") or {}
-    if active_partial.get("target_action") == spec.target_action:
+    active_partial = _matching_partial_draft(state, spec) or {}
+    if active_partial:
         merged_slots = dict(active_partial.get("payload") or {})
         merged_slots.update(slots)
         slots = merged_slots
@@ -357,7 +505,10 @@ async def write_node(state: AgentState) -> AgentState:
         {"module": spec.module, "intent": intent, "kind": "draft_builder"},
     ]
     if not draft_data.valid:
-        clarify_question = draft_data.clarify_question or "Could you provide the missing details?"
+        clarify_question = _localized_clarify_question(
+            language=state.get("language") or "en",
+            draft_data=draft_data,
+        )
         return {
             **state,
             "current_step": intent,
