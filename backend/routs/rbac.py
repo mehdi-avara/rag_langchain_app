@@ -5,9 +5,11 @@ from passlib.hash import bcrypt
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from Models.company import Company
 from Models.user import User
 from Models.rbac import Role, Permission
 from db.init_db import get_db
+from db.provision_company_defaults import provision_company_defaults
 from deps import get_current_user, require_permission
 from schemas.users import (
     AdminUserCreate,
@@ -340,6 +342,30 @@ def _ensure_not_last_active_admin(db: Session, user: User) -> None:
         )
 
 
+def _provision_defaults_for_user(
+    db: Session,
+    user: User,
+    created_by_user_id: int,
+) -> None:
+    if user.company_id is None:
+        return
+
+    company = (
+        db.query(Company)
+        .filter(Company.id == user.company_id)
+        .first()
+    )
+
+    if company is None:
+        return
+
+    provision_company_defaults(
+        db,
+        company,
+        created_by_user_id=created_by_user_id,
+    )
+
+
 @router.get("/users", response_model=list[AdminUserListOut])
 def list_company_users(
     db: Session = Depends(get_db),
@@ -382,6 +408,14 @@ def create_company_user(
     user.roles = roles
 
     db.add(user)
+    db.flush()
+
+    _provision_defaults_for_user(
+        db,
+        user,
+        created_by_user_id=current_user.id,
+    )
+
     db.commit()
     db.refresh(user)
 
@@ -484,6 +518,12 @@ def activate_company_user(
 
     user.is_active = True
     user.deactivated_at = None
+
+    _provision_defaults_for_user(
+        db,
+        user,
+        created_by_user_id=current_user.id,
+    )
 
     db.commit()
     db.refresh(user)

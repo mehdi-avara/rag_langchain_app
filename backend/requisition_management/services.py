@@ -13,6 +13,9 @@ from Models.company import Company
 from Models.user import User
 from core.exceptions.error_codes import (
     MATERIAL_REQUISITION_ACCESS_DENIED,
+    MATERIAL_REQUISITION_DEPARTMENT_ACCESS_DENIED,
+    MATERIAL_REQUISITION_DEPARTMENT_NOT_FOUND,
+    MATERIAL_REQUISITION_DEPARTMENT_REQUIRED,
     MATERIAL_REQUISITION_HAS_NO_ITEMS,
     MATERIAL_REQUISITION_INVALID_ESTIMATED_COST,
     MATERIAL_REQUISITION_INVALID_STATUS_TRANSITION,
@@ -21,6 +24,11 @@ from core.exceptions.error_codes import (
     MATERIAL_REQUISITION_NOT_FOUND,
     MATERIAL_REQUISITION_NUMBER_GENERATION_FAILED,
     USER_HAS_NO_COMPANY,
+)
+
+from organization_management.models import (
+    OrganizationDepartment,
+    OrganizationUserAssignment,
 )
 
 from .models import (
@@ -47,6 +55,83 @@ def tenant_id(current_user: User) -> int:
             "Current user does not belong to a company",
         )
     return current_user.company_id
+
+
+def _resolve_requisition_department(
+    db: Session,
+    current_user: User,
+    department_id: Optional[int],
+) -> int:
+    company_id = tenant_id(current_user)
+
+    if department_id is None:
+        assignment = (
+            db.query(OrganizationUserAssignment)
+            .join(
+                OrganizationDepartment,
+                OrganizationDepartment.id
+                == OrganizationUserAssignment.department_id,
+            )
+            .filter(
+                OrganizationUserAssignment.company_id == company_id,
+                OrganizationUserAssignment.user_id == current_user.id,
+                OrganizationUserAssignment.is_active.is_(True),
+                OrganizationDepartment.company_id == company_id,
+                OrganizationDepartment.is_active.is_(True),
+            )
+            .order_by(
+                OrganizationUserAssignment.is_primary.desc(),
+                OrganizationUserAssignment.id.asc(),
+            )
+            .first()
+        )
+
+        if assignment is None:
+            _raise(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                MATERIAL_REQUISITION_DEPARTMENT_REQUIRED,
+                "The requester has no active department assignment",
+            )
+
+        return assignment.department_id
+
+    department = (
+        db.query(OrganizationDepartment)
+        .filter(
+            OrganizationDepartment.id == department_id,
+            OrganizationDepartment.company_id == company_id,
+            OrganizationDepartment.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if department is None:
+        _raise(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            MATERIAL_REQUISITION_DEPARTMENT_NOT_FOUND,
+            "Department not found or inactive",
+        )
+
+    assignment = (
+        db.query(OrganizationUserAssignment)
+        .filter(
+            OrganizationUserAssignment.company_id == company_id,
+            OrganizationUserAssignment.user_id == current_user.id,
+            OrganizationUserAssignment.department_id == department.id,
+            OrganizationUserAssignment.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if assignment is None:
+        _raise(
+            status.HTTP_403_FORBIDDEN,
+            MATERIAL_REQUISITION_DEPARTMENT_ACCESS_DENIED,
+            "The requester is not actively assigned to this department",
+        )
+
+    return department.id
+
 
 
 def _enum_value(value: Any) -> Any:
@@ -288,7 +373,11 @@ def create_requisition(
                 company_id=company_id,
                 mr_number=_next_mr_number(db, company_id),
                 requested_by_user_id=current_user.id,
-                department_id=data.get("department_id"),
+                department_id=_resolve_requisition_department(
+                    db,
+                    current_user,
+                    data.get("department_id"),
+                ),
                 needed_by_date=data.get("needed_by_date"),
                 reason=str(data["reason"]).strip(),
                 priority=_enum_value(data.get("priority"))
@@ -366,7 +455,7 @@ def list_requisitions(
             MaterialRequisition.requested_by_user_id == requested_by_user_id
         )
 
-    if department_id:
+    if department_id is not None:
         query = query.filter(
             MaterialRequisition.department_id == department_id
         )
@@ -431,7 +520,11 @@ def update_requisition(
     _assert_draft(requisition)
 
     if "department_id" in data:
-        requisition.department_id = data["department_id"]
+        requisition.department_id = _resolve_requisition_department(
+            db,
+            current_user,
+            data["department_id"],
+        )
 
     if "needed_by_date" in data:
         requisition.needed_by_date = data["needed_by_date"]

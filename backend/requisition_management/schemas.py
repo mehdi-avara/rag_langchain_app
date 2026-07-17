@@ -116,6 +116,7 @@ class MaterialRequisitionRead(BaseModel):
     mr_number: str
     requested_by_user_id: Optional[int]
     department_id: Optional[int]
+    legacy_department_id: Optional[int]
     needed_by_date: Optional[date]
     reason: str
     priority: str

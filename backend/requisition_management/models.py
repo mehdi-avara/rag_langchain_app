@@ -48,6 +48,10 @@ class MaterialRequisition(Base):
         Index("ix_material_requisitions_mr_number", "mr_number"),
         Index("ix_material_requisitions_requested_by_user_id", "requested_by_user_id"),
         Index("ix_material_requisitions_department_id", "department_id"),
+        Index(
+            "ix_material_requisitions_legacy_department_id",
+            "legacy_department_id",
+        ),
         Index("ix_material_requisitions_status", "status"),
         Index("ix_material_requisitions_priority", "priority"),
         Index("ix_material_requisitions_needed_by_date", "needed_by_date"),
@@ -65,7 +69,16 @@ class MaterialRequisition(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    department_id = Column(Integer, nullable=True)
+    department_id = Column(
+        Integer,
+        ForeignKey(
+            "organization_departments.id",
+            name="fk_material_requisitions_department_org",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    legacy_department_id = Column(Integer, nullable=True)
     needed_by_date = Column(Date, nullable=True)
     reason = Column(Text, nullable=False)
     priority = Column(
@@ -89,6 +102,10 @@ class MaterialRequisition(Base):
 
     company = relationship("Company")
     requested_by = relationship("User", foreign_keys=[requested_by_user_id])
+    department = relationship(
+        "OrganizationDepartment",
+        foreign_keys=[department_id],
+    )
     items = relationship(
         "MaterialRequisitionItem",
         back_populates="requisition",

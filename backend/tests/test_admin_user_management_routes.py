@@ -55,6 +55,7 @@ class FakeDB:
         self.first_user = first_user
         self.first_role = first_role
         self.added = []
+        self.flushed = False
         self.committed = False
         self.refreshed = []
 
@@ -65,6 +66,13 @@ class FakeDB:
         self.added.append(obj)
         if isinstance(obj, User):
             self.users.append(obj)
+
+    def flush(self):
+        self.flushed = True
+
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                obj.id = 99
 
     def delete(self, obj):
         if obj in self.roles:
@@ -129,6 +137,7 @@ def test_create_company_user_uses_current_user_company():
     assert result.company_id == 7
     assert result.username == "new@example.com"
     assert result.is_active is True
+    assert db.flushed is True
     assert db.committed is True
 
 

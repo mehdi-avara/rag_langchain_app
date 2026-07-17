@@ -37,8 +37,12 @@ from Models import (
     Company,
     Currency,
     ItemCategory,
+    OrganizationDepartment,
+    OrganizationPosition,
+    OrganizationUserAssignment,
     StorageLocation,
     Unit,
+    User,
     Warehouse,
     Zone,
 )
@@ -73,6 +77,11 @@ DEFAULT_ZONE_CODE = "GENERAL"
 DEFAULT_ZONE_NAME = "General"
 DEFAULT_LOCATION_CODE = "DEFAULT"
 DEFAULT_LOCATION_NAME = "Default"
+
+DEFAULT_DEPARTMENT_CODE = "GENERAL"
+DEFAULT_DEPARTMENT_NAME = "General"
+DEFAULT_POSITION_CODE = "MEMBER"
+DEFAULT_POSITION_TITLE = "Member"
 
 
 # --- Building blocks --------------------------------------------------------
@@ -216,6 +225,104 @@ def _ensure_default_warehouse_chain(db: Session, company_id: int) -> None:
     )
 
 
+def _ensure_default_organization(
+    db: Session,
+    company_id: int,
+) -> tuple[OrganizationDepartment, OrganizationPosition]:
+    department = (
+        db.query(OrganizationDepartment)
+        .filter(
+            OrganizationDepartment.company_id == company_id,
+            OrganizationDepartment.code == DEFAULT_DEPARTMENT_CODE,
+        )
+        .first()
+    )
+
+    if department is None:
+        department = OrganizationDepartment(
+            company_id=company_id,
+            code=DEFAULT_DEPARTMENT_CODE,
+            name=DEFAULT_DEPARTMENT_NAME,
+            description="Default department",
+            is_active=True,
+        )
+        db.add(department)
+        db.flush()
+
+    position = (
+        db.query(OrganizationPosition)
+        .filter(
+            OrganizationPosition.company_id == company_id,
+            OrganizationPosition.code == DEFAULT_POSITION_CODE,
+        )
+        .first()
+    )
+
+    if position is None:
+        position = OrganizationPosition(
+            company_id=company_id,
+            department_id=department.id,
+            code=DEFAULT_POSITION_CODE,
+            title=DEFAULT_POSITION_TITLE,
+            description="Default organization position",
+            is_manager=False,
+            is_active=True,
+        )
+        db.add(position)
+        db.flush()
+
+    if not department.is_active:
+        return department, position
+
+    position_id = None
+
+    if (
+        position.is_active
+        and position.department_id in (None, department.id)
+    ):
+        position_id = position.id
+
+    active_assignments = (
+        db.query(OrganizationUserAssignment)
+        .filter(
+            OrganizationUserAssignment.company_id == company_id,
+            OrganizationUserAssignment.is_active.is_(True),
+        )
+        .all()
+    )
+
+    assigned_user_ids = {
+        assignment.user_id
+        for assignment in active_assignments
+    }
+
+    active_users = (
+        db.query(User)
+        .filter(
+            User.company_id == company_id,
+            User.is_active.is_(True),
+        )
+        .all()
+    )
+
+    for user in active_users:
+        if user.id in assigned_user_ids:
+            continue
+
+        db.add(
+            OrganizationUserAssignment(
+                company_id=company_id,
+                user_id=user.id,
+                department_id=department.id,
+                position_id=position_id,
+                is_primary=True,
+                is_active=True,
+            )
+        )
+
+    return department, position
+
+
 # --- Public API -------------------------------------------------------------
 
 def provision_company_defaults(
@@ -237,6 +344,7 @@ def provision_company_defaults(
     _ensure_default_category(db, company.id, created_by_user_id)
     _ensure_default_units(db, company.id, created_by_user_id)
     _ensure_default_warehouse_chain(db, company.id)
+    _ensure_default_organization(db, company.id)
 
 
 def provision_all_companies(companies: Optional[Iterable[Company]] = None) -> int:
