@@ -1,6 +1,8 @@
 """Business logic for purchase_management."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -11,6 +13,12 @@ from core.exceptions.error_codes import (
     PURCHASE_ORDER_BASE_CURRENCY_NOT_CONFIGURED,
     PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
     PURCHASE_ORDER_COMMERCIAL_TERMS_MISMATCH,
+    PURCHASE_PHASE_SPLIT_ALLOCATION_BLOCKED,
+    PURCHASE_PHASE_SPLIT_IDEMPOTENCY_CONFLICT,
+    PURCHASE_PHASE_SPLIT_IDEMPOTENCY_REQUIRED,
+    PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+    PURCHASE_PHASE_SPLIT_NOT_ALLOWED,
+    PURCHASE_PHASE_SPLIT_QUANTITY_EXCEEDS_MOVABLE,
     PURCHASE_ORDER_CURRENCY_INVALID,
     PURCHASE_ORDER_INVALID_STRUCTURE,
     PURCHASE_ORDER_LINES_REQUIRED,
@@ -42,6 +50,7 @@ from .models import (
     PurchaseOrderStatus,
     PurchasePhase,
     PurchasePhaseAllocation,
+    PurchasePhaseSplitEvent,
     PurchasePhaseItem,
     PurchasePhaseStatus,
 )
@@ -1127,6 +1136,1205 @@ def update_phase(db: Session, user: User, po_id: int, phase_id: int, **kwargs) -
     db.commit()
     db.refresh(phase)
     return phase
+
+
+def _purchase_split_request_hash(
+    data: dict,
+) -> str:
+    expected_delivery_date = data.get(
+        "expected_delivery_date"
+    )
+
+    if hasattr(expected_delivery_date, "isoformat"):
+        expected_delivery_date = (
+            expected_delivery_date.isoformat()
+        )
+
+    canonical = {
+        "title": (
+            (data.get("title") or "").strip()
+            or None
+        ),
+        "expected_delivery_date": (
+            expected_delivery_date
+        ),
+        "reason": (
+            (data.get("reason") or "").strip()
+        ),
+        "moves": sorted(
+            [
+                {
+                    "from_phase_allocation_id": int(
+                        move[
+                            "from_phase_allocation_id"
+                        ]
+                    ),
+                    "quantity": str(
+                        Decimal(
+                            str(move["quantity"])
+                        ).normalize()
+                    ),
+                }
+                for move in data.get("moves") or []
+            ],
+            key=lambda item: (
+                item[
+                    "from_phase_allocation_id"
+                ]
+            ),
+        ),
+    }
+
+    encoded = json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _normalized_idempotency_key(
+    idempotency_key: str,
+) -> str:
+    normalized = (
+        idempotency_key or ""
+    ).strip()
+
+    if not normalized:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_PHASE_SPLIT_IDEMPOTENCY_REQUIRED,
+            "Idempotency-Key header is required",
+        )
+
+    if len(normalized) > 128:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_PHASE_SPLIT_IDEMPOTENCY_REQUIRED,
+            "Idempotency-Key must not exceed "
+            "128 characters",
+        )
+
+    return normalized
+
+
+def _get_split_phase_result(
+    db: Session,
+    event: PurchasePhaseSplitEvent,
+    replayed: bool,
+) -> dict:
+    phase = (
+        db.query(PurchasePhase)
+        .options(
+            selectinload(
+                PurchasePhase.allocations
+            ),
+            selectinload(
+                PurchasePhase.items
+            ),
+        )
+        .filter(
+            PurchasePhase.id
+            == event.target_phase_id,
+            PurchasePhase.purchase_order_id
+            == event.purchase_order_id,
+        )
+        .first()
+    )
+
+    if phase is None:
+        purchase_error(
+            status.HTTP_409_CONFLICT,
+            PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+            "Split target phase was not found",
+        )
+
+    return {
+        "phase": phase,
+        "replayed": replayed,
+        "audit_event_id": event.id,
+    }
+
+
+def get_purchase_order_split_candidates(
+    db: Session,
+    user: User,
+    po_id: int,
+    source_phase_id: Optional[int] = None,
+    query_text: Optional[str] = None,
+) -> list[dict]:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    query = (
+        db.query(
+            PurchasePhaseAllocation,
+            PurchasePhase,
+            PurchaseOrderLine,
+        )
+        .join(
+            PurchasePhase,
+            PurchasePhase.id
+            == PurchasePhaseAllocation.phase_id,
+        )
+        .join(
+            PurchaseOrderLine,
+            PurchaseOrderLine.id
+            == PurchasePhaseAllocation
+            .purchase_order_line_id,
+        )
+        .filter(
+            PurchasePhase.purchase_order_id
+            == purchase_order.id,
+            PurchaseOrderLine.purchase_order_id
+            == purchase_order.id,
+        )
+    )
+
+    if source_phase_id is not None:
+        query = query.filter(
+            PurchasePhase.id == source_phase_id
+        )
+
+    rows = (
+        query.order_by(
+            PurchasePhase.phase_number.asc(),
+            PurchaseOrderLine.line_number.asc(),
+            PurchasePhaseAllocation.id.asc(),
+        )
+        .all()
+    )
+
+    allocation_ids = [
+        allocation.id
+        for allocation, _, _ in rows
+    ]
+
+    from goods_receipt_management        .allocation_read_service import (
+            get_allocation_receipt_usage,
+        )
+    from material_management.services import (
+        get_item_reference,
+        get_unit_or_404,
+    )
+
+    usage_by_id = (
+        get_allocation_receipt_usage(
+            db=db,
+            allocation_ids=allocation_ids,
+        )
+    )
+
+    normalized_query = (
+        (query_text or "").strip().lower()
+    )
+    item_cache = {}
+    unit_cache = {}
+    result = []
+
+    for allocation, phase, order_line in rows:
+        usage = usage_by_id.get(
+            allocation.id,
+            {
+                "posted_accepted_quantity": (
+                    Decimal("0")
+                ),
+                "receipt_line_count": 0,
+                "non_posted_line_count": 0,
+            },
+        )
+
+        if usage["non_posted_line_count"] > 0:
+            continue
+
+        posted_quantity = Decimal(
+            str(
+                usage[
+                    "posted_accepted_quantity"
+                ]
+            )
+        )
+        allocated_quantity = Decimal(
+            str(allocation.allocated_quantity)
+        )
+        movable_quantity = (
+            allocated_quantity
+            - posted_quantity
+        )
+
+        if movable_quantity <= 0:
+            continue
+
+        if order_line.item_id not in item_cache:
+            item_cache[order_line.item_id] = (
+                get_item_reference(
+                    db=db,
+                    current_user=user,
+                    item_id=order_line.item_id,
+                )
+            )
+
+        if order_line.unit_id not in unit_cache:
+            unit_cache[order_line.unit_id] = (
+                get_unit_or_404(
+                    db=db,
+                    current_user=user,
+                    unit_id=order_line.unit_id,
+                )
+            )
+
+        item = item_cache[
+            order_line.item_id
+        ]
+        unit = unit_cache[
+            order_line.unit_id
+        ]
+
+        searchable = " ".join(
+            str(value or "")
+            for value in (
+                item.get("item_code"),
+                item.get("name"),
+                order_line.line_description,
+                order_line.line_number,
+                phase.phase_number,
+            )
+        ).lower()
+
+        if (
+            normalized_query
+            and normalized_query not in searchable
+        ):
+            continue
+
+        result.append(
+            {
+                "from_phase_allocation_id": (
+                    allocation.id
+                ),
+                "source_phase_id": phase.id,
+                "source_phase_number": (
+                    phase.phase_number
+                ),
+                "purchase_order_line_id": (
+                    order_line.id
+                ),
+                "item_id": order_line.item_id,
+                "item_code": item.get(
+                    "item_code"
+                ),
+                "item_name": item["name"],
+                "unit_code": unit.code,
+                "ordered_quantity": (
+                    order_line.ordered_quantity
+                ),
+                "allocated_quantity": (
+                    allocated_quantity
+                ),
+                "posted_received_quantity": (
+                    posted_quantity
+                ),
+                "movable_quantity": (
+                    movable_quantity
+                ),
+            }
+        )
+
+    return result
+
+
+def _refresh_split_receipt_statuses(
+    db: Session,
+    purchase_order: PurchaseOrder,
+    source_phase_ids: list[int],
+    emptied_source_phase_ids: set[int],
+) -> None:
+    from goods_receipt_management        .allocation_read_service import (
+            get_allocation_receipt_usage,
+        )
+
+    source_phases = (
+        db.query(PurchasePhase)
+        .filter(
+            PurchasePhase.id.in_(
+                source_phase_ids
+            ),
+            PurchasePhase.purchase_order_id
+            == purchase_order.id,
+        )
+        .order_by(PurchasePhase.id.asc())
+        .with_for_update()
+        .all()
+    )
+
+    remaining_source_allocations = (
+        db.query(PurchasePhaseAllocation)
+        .filter(
+            PurchasePhaseAllocation.phase_id
+            .in_(source_phase_ids)
+        )
+        .order_by(
+            PurchasePhaseAllocation.id.asc()
+        )
+        .all()
+    )
+
+    allocations_by_phase = {}
+
+    for allocation in remaining_source_allocations:
+        allocations_by_phase.setdefault(
+            allocation.phase_id,
+            [],
+        ).append(allocation)
+
+    source_usage = get_allocation_receipt_usage(
+        db=db,
+        allocation_ids=[
+            allocation.id
+            for allocation
+            in remaining_source_allocations
+        ],
+    )
+
+    for phase in source_phases:
+        phase_allocations = (
+            allocations_by_phase.get(
+                phase.id,
+                [],
+            )
+        )
+
+        if phase.id in emptied_source_phase_ids:
+            phase.status = (
+                PurchasePhaseStatus.CLOSED.value
+            )
+            continue
+
+        if not phase_allocations:
+            continue
+
+        fully_received = all(
+            Decimal(
+                str(
+                    source_usage.get(
+                        allocation.id,
+                        {},
+                    ).get(
+                        "posted_accepted_quantity",
+                        0,
+                    )
+                )
+            )
+            >= Decimal(
+                str(
+                    allocation
+                    .allocated_quantity
+                )
+            )
+            for allocation in phase_allocations
+        )
+
+        has_receipts = any(
+            Decimal(
+                str(
+                    source_usage.get(
+                        allocation.id,
+                        {},
+                    ).get(
+                        "posted_accepted_quantity",
+                        0,
+                    )
+                )
+            )
+            > 0
+            for allocation in phase_allocations
+        )
+
+        if fully_received:
+            phase.status = (
+                PurchasePhaseStatus.RECEIVED.value
+            )
+        elif has_receipts:
+            phase.status = (
+                PurchasePhaseStatus.SHIPPED.value
+            )
+        elif (
+            purchase_order.status
+            == PurchaseOrderStatus.DRAFT.value
+        ):
+            phase.status = (
+                PurchasePhaseStatus.DRAFT.value
+            )
+        elif (
+            phase.status
+            != PurchasePhaseStatus.CLOSED.value
+        ):
+            phase.status = (
+                PurchasePhaseStatus.ORDERED.value
+            )
+
+    order_allocations = (
+        db.query(PurchasePhaseAllocation)
+        .join(
+            PurchasePhase,
+            PurchasePhase.id
+            == PurchasePhaseAllocation.phase_id,
+        )
+        .filter(
+            PurchasePhase.purchase_order_id
+            == purchase_order.id
+        )
+        .order_by(
+            PurchasePhaseAllocation.id.asc()
+        )
+        .all()
+    )
+
+    order_usage = get_allocation_receipt_usage(
+        db=db,
+        allocation_ids=[
+            allocation.id
+            for allocation in order_allocations
+        ],
+    )
+
+    order_has_receipts = any(
+        Decimal(
+            str(
+                order_usage.get(
+                    allocation.id,
+                    {},
+                ).get(
+                    "posted_accepted_quantity",
+                    0,
+                )
+            )
+        )
+        > 0
+        for allocation in order_allocations
+    )
+
+    order_fully_received = (
+        bool(order_allocations)
+        and all(
+            Decimal(
+                str(
+                    order_usage.get(
+                        allocation.id,
+                        {},
+                    ).get(
+                        "posted_accepted_quantity",
+                        0,
+                    )
+                )
+            )
+            >= Decimal(
+                str(
+                    allocation
+                    .allocated_quantity
+                )
+            )
+            for allocation in order_allocations
+        )
+    )
+
+    if order_fully_received:
+        purchase_order.status = (
+            PurchaseOrderStatus.RECEIVED.value
+        )
+    elif order_has_receipts:
+        purchase_order.status = (
+            PurchaseOrderStatus
+            .PARTIALLY_RECEIVED.value
+        )
+
+
+def split_purchase_order_phase(
+    db: Session,
+    user: User,
+    po_id: int,
+    data: dict,
+    idempotency_key: str,
+) -> dict:
+    company_id = _tenant_id(user)
+    normalized_key = (
+        _normalized_idempotency_key(
+            idempotency_key
+        )
+    )
+    request_hash = (
+        _purchase_split_request_hash(data)
+    )
+
+    try:
+        purchase_order = (
+            db.query(PurchaseOrder)
+            .filter(
+                PurchaseOrder.id == po_id,
+                PurchaseOrder.company_id
+                == company_id,
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if purchase_order is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Purchase order not found",
+            )
+
+        existing_event = (
+            db.query(PurchasePhaseSplitEvent)
+            .filter(
+                PurchasePhaseSplitEvent.company_id
+                == company_id,
+                PurchasePhaseSplitEvent
+                .purchase_order_id
+                == purchase_order.id,
+                PurchasePhaseSplitEvent
+                .idempotency_key
+                == normalized_key,
+            )
+            .first()
+        )
+
+        if existing_event is not None:
+            if (
+                existing_event.request_hash
+                != request_hash
+            ):
+                purchase_error(
+                    status.HTTP_409_CONFLICT,
+                    PURCHASE_PHASE_SPLIT_IDEMPOTENCY_CONFLICT,
+                    "Idempotency-Key was already used "
+                    "with a different split request",
+                )
+
+            event_id = existing_event.id
+            db.rollback()
+
+            existing_event = (
+                db.query(PurchasePhaseSplitEvent)
+                .filter(
+                    PurchasePhaseSplitEvent.id
+                    == event_id,
+                    PurchasePhaseSplitEvent.company_id
+                    == company_id,
+                )
+                .first()
+            )
+
+            return _get_split_phase_result(
+                db=db,
+                event=existing_event,
+                replayed=True,
+            )
+
+        if purchase_order.status in {
+            PurchaseOrderStatus.CLOSED.value,
+            PurchaseOrderStatus.CANCELLED.value,
+        }:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_PHASE_SPLIT_NOT_ALLOWED,
+                "Closed or cancelled purchase "
+                "orders cannot be split",
+            )
+
+        moves = list(data.get("moves") or [])
+
+        if not moves:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+                "At least one split move is required",
+            )
+
+        move_ids = [
+            int(
+                move[
+                    "from_phase_allocation_id"
+                ]
+            )
+            for move in moves
+        ]
+
+        if len(move_ids) != len(set(move_ids)):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+                "Split moves contain duplicate "
+                "source allocations",
+            )
+
+        allocations = (
+            db.query(PurchasePhaseAllocation)
+            .filter(
+                PurchasePhaseAllocation.id.in_(
+                    move_ids
+                )
+            )
+            .order_by(
+                PurchasePhaseAllocation.id.asc()
+            )
+            .with_for_update()
+            .all()
+        )
+
+        if len(allocations) != len(move_ids):
+            purchase_error(
+                status.HTTP_404_NOT_FOUND,
+                PURCHASE_PHASE_ALLOCATION_NOT_FOUND,
+                "One or more source allocations "
+                "were not found",
+            )
+
+        allocations_by_id = {
+            allocation.id: allocation
+            for allocation in allocations
+        }
+        source_phase_ids = sorted(
+            {
+                allocation.phase_id
+                for allocation in allocations
+            }
+        )
+        line_ids = sorted(
+            {
+                allocation
+                .purchase_order_line_id
+                for allocation in allocations
+            }
+        )
+
+        source_phases = (
+            db.query(PurchasePhase)
+            .filter(
+                PurchasePhase.id.in_(
+                    source_phase_ids
+                )
+            )
+            .order_by(PurchasePhase.id.asc())
+            .with_for_update()
+            .all()
+        )
+        lines = (
+            db.query(PurchaseOrderLine)
+            .filter(
+                PurchaseOrderLine.id.in_(
+                    line_ids
+                )
+            )
+            .order_by(
+                PurchaseOrderLine.id.asc()
+            )
+            .with_for_update()
+            .all()
+        )
+
+        phases_by_id = {
+            phase.id: phase
+            for phase in source_phases
+        }
+        lines_by_id = {
+            line.id: line
+            for line in lines
+        }
+
+        if (
+            len(phases_by_id)
+            != len(source_phase_ids)
+            or len(lines_by_id)
+            != len(line_ids)
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+                "A source phase or purchase-order "
+                "line was not found",
+            )
+
+        for allocation in allocations:
+            phase = phases_by_id[
+                allocation.phase_id
+            ]
+            line = lines_by_id[
+                allocation
+                .purchase_order_line_id
+            ]
+
+            if (
+                phase.purchase_order_id
+                != purchase_order.id
+                or line.purchase_order_id
+                != purchase_order.id
+            ):
+                purchase_error(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+                    "Every source allocation must "
+                    "belong to the purchase order",
+                )
+
+        all_phases = (
+            db.query(PurchasePhase)
+            .filter(
+                PurchasePhase.purchase_order_id
+                == purchase_order.id
+            )
+            .order_by(PurchasePhase.id.asc())
+            .with_for_update()
+            .all()
+        )
+
+        next_phase_number = (
+            max(
+                (
+                    phase.phase_number
+                    for phase in all_phases
+                ),
+                default=0,
+            )
+            + 1
+        )
+
+        all_source_allocations = (
+            db.query(PurchasePhaseAllocation)
+            .filter(
+                PurchasePhaseAllocation.phase_id
+                .in_(source_phase_ids)
+            )
+            .order_by(
+                PurchasePhaseAllocation.id.asc()
+            )
+            .with_for_update()
+            .all()
+        )
+
+        from goods_receipt_management            .allocation_read_service import (
+                get_allocation_receipt_usage,
+            )
+
+        usage_by_id = (
+            get_allocation_receipt_usage(
+                db=db,
+                allocation_ids=move_ids,
+            )
+        )
+
+        prepared_moves = []
+        delete_ids_by_phase = {}
+        target_quantity_by_line = {}
+
+        for move in moves:
+            allocation_id = int(
+                move[
+                    "from_phase_allocation_id"
+                ]
+            )
+            quantity = Decimal(
+                str(move["quantity"])
+            )
+            allocation = allocations_by_id[
+                allocation_id
+            ]
+            usage = usage_by_id.get(
+                allocation_id,
+                {
+                    "posted_accepted_quantity": (
+                        Decimal("0")
+                    ),
+                    "receipt_line_count": 0,
+                    "non_posted_line_count": 0,
+                },
+            )
+
+            if quantity <= 0:
+                purchase_error(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+                    "Split quantities must be "
+                    "greater than zero",
+                )
+
+            if usage[
+                "non_posted_line_count"
+            ] > 0:
+                purchase_error(
+                    status.HTTP_409_CONFLICT,
+                    PURCHASE_PHASE_SPLIT_ALLOCATION_BLOCKED,
+                    "The source allocation has an "
+                    "unposted receipt and cannot be "
+                    "rescheduled",
+                )
+
+            allocated_quantity = Decimal(
+                str(
+                    allocation
+                    .allocated_quantity
+                )
+            )
+            posted_quantity = Decimal(
+                str(
+                    usage[
+                        "posted_accepted_quantity"
+                    ]
+                )
+            )
+
+            if posted_quantity > allocated_quantity:
+                purchase_error(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    PURCHASE_PHASE_ALLOCATION_OVER_RECEIPT,
+                    "Posted quantity exceeds the "
+                    "source allocation",
+                )
+
+            movable_quantity = (
+                allocated_quantity
+                - posted_quantity
+            )
+
+            if quantity > movable_quantity:
+                purchase_error(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    PURCHASE_PHASE_SPLIT_QUANTITY_EXCEEDS_MOVABLE,
+                    "Split quantity exceeds the "
+                    "movable allocation quantity",
+                )
+
+            new_source_quantity = (
+                allocated_quantity
+                - quantity
+            )
+            delete_source = (
+                new_source_quantity == 0
+                and posted_quantity == 0
+                and usage[
+                    "receipt_line_count"
+                ] == 0
+            )
+
+            if (
+                new_source_quantity
+                < posted_quantity
+            ):
+                purchase_error(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    PURCHASE_PHASE_SPLIT_QUANTITY_EXCEEDS_MOVABLE,
+                    "Received quantity cannot be "
+                    "moved",
+                )
+
+            if delete_source:
+                delete_ids_by_phase.setdefault(
+                    allocation.phase_id,
+                    set(),
+                ).add(allocation.id)
+
+            target_quantity_by_line[
+                allocation
+                .purchase_order_line_id
+            ] = (
+                target_quantity_by_line.get(
+                    allocation
+                    .purchase_order_line_id,
+                    Decimal("0"),
+                )
+                + quantity
+            )
+
+            prepared_moves.append(
+                {
+                    "allocation": allocation,
+                    "moved_quantity": quantity,
+                    "old_source_quantity": (
+                        allocated_quantity
+                    ),
+                    "new_source_quantity": (
+                        new_source_quantity
+                    ),
+                    "posted_quantity": (
+                        posted_quantity
+                    ),
+                    "delete_source": (
+                        delete_source
+                    ),
+                }
+            )
+
+        allocations_by_phase = {}
+
+        for allocation in all_source_allocations:
+            allocations_by_phase.setdefault(
+                allocation.phase_id,
+                [],
+            ).append(allocation)
+
+        emptied_source_phase_ids = {
+            phase_id
+            for phase_id, delete_ids
+            in delete_ids_by_phase.items()
+            if len(delete_ids)
+            >= len(
+                allocations_by_phase.get(
+                    phase_id,
+                    [],
+                )
+            )
+        }
+
+        phase_status = (
+            PurchasePhaseStatus.DRAFT.value
+            if purchase_order.status
+            == PurchaseOrderStatus.DRAFT.value
+            else PurchasePhaseStatus.ORDERED.value
+        )
+
+        target_phase = PurchasePhase(
+            purchase_order_id=(
+                purchase_order.id
+            ),
+            phase_number=next_phase_number,
+            title=(
+                (data.get("title") or "").strip()
+                or f"Phase {next_phase_number}"
+            ),
+            description=None,
+            status=phase_status,
+            currency_id=(
+                purchase_order.currency_id
+            ),
+            exchange_rate_used=(
+                purchase_order.exchange_rate_used
+            ),
+            expected_delivery_date=data[
+                "expected_delivery_date"
+            ],
+        )
+        db.add(target_phase)
+        db.flush()
+
+        for prepared_move in prepared_moves:
+            allocation = prepared_move[
+                "allocation"
+            ]
+
+            if prepared_move[
+                "delete_source"
+            ]:
+                db.delete(allocation)
+            else:
+                allocation.allocated_quantity = (
+                    prepared_move[
+                        "new_source_quantity"
+                    ]
+                )
+
+        target_allocations = {}
+
+        for line_id, quantity in sorted(
+            target_quantity_by_line.items()
+        ):
+            target_allocation = (
+                PurchasePhaseAllocation(
+                    phase_id=target_phase.id,
+                    purchase_order_line_id=(
+                        line_id
+                    ),
+                    allocated_quantity=quantity,
+                )
+            )
+            db.add(target_allocation)
+            db.flush()
+
+            target_allocations[
+                line_id
+            ] = target_allocation
+
+        db.flush()
+
+        _refresh_split_receipt_statuses(
+            db=db,
+            purchase_order=purchase_order,
+            source_phase_ids=(
+                source_phase_ids
+            ),
+            emptied_source_phase_ids=(
+                emptied_source_phase_ids
+            ),
+        )
+
+        allocation_totals = dict(
+            db.query(
+                PurchasePhaseAllocation
+                .purchase_order_line_id,
+                func.sum(
+                    PurchasePhaseAllocation
+                    .allocated_quantity
+                ),
+            )
+            .filter(
+                PurchasePhaseAllocation
+                .purchase_order_line_id
+                .in_(line_ids)
+            )
+            .group_by(
+                PurchasePhaseAllocation
+                .purchase_order_line_id
+            )
+            .all()
+        )
+
+        for line_id in line_ids:
+            line = lines_by_id[line_id]
+            total = Decimal(
+                str(
+                    allocation_totals.get(
+                        line_id,
+                        0,
+                    )
+                )
+            )
+
+            if total != Decimal(
+                str(line.ordered_quantity)
+            ):
+                purchase_error(
+                    status.HTTP_409_CONFLICT,
+                    PURCHASE_PHASE_SPLIT_INVALID_MOVE,
+                    "Split changed the total "
+                    "allocated quantity",
+                )
+
+        move_details = []
+
+        for prepared_move in prepared_moves:
+            source_allocation = (
+                prepared_move["allocation"]
+            )
+            target_allocation = (
+                target_allocations[
+                    source_allocation
+                    .purchase_order_line_id
+                ]
+            )
+
+            move_details.append(
+                {
+                    "from_phase_id": (
+                        source_allocation.phase_id
+                    ),
+                    "from_phase_allocation_id": (
+                        source_allocation.id
+                    ),
+                    "purchase_order_line_id": (
+                        source_allocation
+                        .purchase_order_line_id
+                    ),
+                    "old_source_quantity": str(
+                        prepared_move[
+                            "old_source_quantity"
+                        ]
+                    ),
+                    "moved_quantity": str(
+                        prepared_move[
+                            "moved_quantity"
+                        ]
+                    ),
+                    "new_source_quantity": str(
+                        prepared_move[
+                            "new_source_quantity"
+                        ]
+                    ),
+                    "posted_received_quantity": str(
+                        prepared_move[
+                            "posted_quantity"
+                        ]
+                    ),
+                    "source_allocation_removed": (
+                        prepared_move[
+                            "delete_source"
+                        ]
+                    ),
+                    "source_phase_closed": (
+                        source_allocation.phase_id
+                        in emptied_source_phase_ids
+                    ),
+                    "target_phase_id": (
+                        target_phase.id
+                    ),
+                    "target_phase_allocation_id": (
+                        target_allocation.id
+                    ),
+                }
+            )
+
+        event = PurchasePhaseSplitEvent(
+            company_id=company_id,
+            purchase_order_id=(
+                purchase_order.id
+            ),
+            target_phase_id=target_phase.id,
+            idempotency_key=normalized_key,
+            request_hash=request_hash,
+            reason=(
+                (data.get("reason") or "").strip()
+            ),
+            actor_user_id=user.id,
+            details_json={
+                "purchase_order_id": (
+                    purchase_order.id
+                ),
+                "target_phase_id": (
+                    target_phase.id
+                ),
+                "target_phase_number": (
+                    target_phase.phase_number
+                ),
+                "reason": (
+                    (data.get("reason") or "")
+                    .strip()
+                ),
+                "closed_source_phase_ids": (
+                    sorted(
+                        emptied_source_phase_ids
+                    )
+                ),
+                "moves": move_details,
+            },
+        )
+        db.add(event)
+        db.flush()
+        db.commit()
+
+        event_id = event.id
+
+        event = (
+            db.query(PurchasePhaseSplitEvent)
+            .filter(
+                PurchasePhaseSplitEvent.id
+                == event_id,
+                PurchasePhaseSplitEvent.company_id
+                == company_id,
+            )
+            .first()
+        )
+
+        return _get_split_phase_result(
+            db=db,
+            event=event,
+            replayed=False,
+        )
+
+    except Exception:
+        db.rollback()
+        raise
 
 
 # ── PurchasePhaseItem CRUD ────────────────────────────────────────────────────

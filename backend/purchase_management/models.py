@@ -27,6 +27,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from db.base import Base
@@ -367,6 +368,11 @@ class PurchaseOrderLine(Base):
 class PurchasePhase(Base):
     __tablename__ = "purchase_phases"
     __table_args__ = (
+        UniqueConstraint(
+            "purchase_order_id",
+            "phase_number",
+            name="uq_purchase_phases_order_phase_number",
+        ),
         Index(
             "ix_purchase_phases_purchase_order_id",
             "purchase_order_id",
@@ -495,6 +501,90 @@ class PurchasePhaseAllocation(Base):
     purchase_order_line = relationship(
         "PurchaseOrderLine",
         back_populates="allocations",
+    )
+
+
+class PurchasePhaseSplitEvent(Base):
+    __tablename__ = "purchase_phase_split_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "purchase_order_id",
+            "idempotency_key",
+            name="uq_purchase_phase_split_events_scope_key",
+        ),
+        Index(
+            "ix_purchase_phase_split_events_company_created",
+            "company_id",
+            "created_at",
+        ),
+        Index(
+            "ix_purchase_phase_split_events_order_created",
+            "purchase_order_id",
+            "created_at",
+        ),
+        Index(
+            "ix_purchase_phase_split_events_target_phase_id",
+            "target_phase_id",
+        ),
+        Index(
+            "ix_purchase_phase_split_events_actor_user_id",
+            "actor_user_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    company_id = Column(
+        Integer,
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    purchase_order_id = Column(
+        Integer,
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_phase_id = Column(
+        Integer,
+        ForeignKey("purchase_phases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    idempotency_key = Column(
+        String(128),
+        nullable=False,
+    )
+    request_hash = Column(
+        String(64),
+        nullable=False,
+    )
+    reason = Column(Text, nullable=False)
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    details_json = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    purchase_order = relationship(
+        "PurchaseOrder",
+        foreign_keys=[purchase_order_id],
+    )
+    target_phase = relationship(
+        "PurchasePhase",
+        foreign_keys=[target_phase_id],
+    )
+    actor_user = relationship(
+        "User",
+        foreign_keys=[actor_user_id],
     )
 
 

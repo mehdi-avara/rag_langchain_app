@@ -148,6 +148,72 @@ class PurchasePhaseRead(BaseModel):
     items: list[PurchasePhaseItemRead] = Field(default_factory=list)
 
 
+class PurchasePhaseSplitMove(BaseModel):
+    from_phase_allocation_id: int = Field(..., gt=0)
+    quantity: Decimal = Field(..., gt=0)
+
+
+class PurchasePhaseSplitRequest(BaseModel):
+    title: Optional[str] = Field(
+        None,
+        max_length=255,
+    )
+    expected_delivery_date: datetime
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+    )
+    moves: list[PurchasePhaseSplitMove] = Field(
+        ...,
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def validate_split_request(self):
+        self.title = (
+            (self.title or "").strip()
+            or None
+        )
+        self.reason = self.reason.strip()
+
+        allocation_ids = [
+            move.from_phase_allocation_id
+            for move in self.moves
+        ]
+
+        if len(allocation_ids) != len(
+            set(allocation_ids)
+        ):
+            raise ValueError(
+                "moves must not repeat "
+                "from_phase_allocation_id"
+            )
+
+        return self
+
+
+class PurchasePhaseSplitCandidate(BaseModel):
+    from_phase_allocation_id: int
+    source_phase_id: int
+    source_phase_number: int
+    purchase_order_line_id: int
+    item_id: int
+    item_code: Optional[str]
+    item_name: str
+    unit_code: str
+    ordered_quantity: Decimal
+    allocated_quantity: Decimal
+    posted_received_quantity: Decimal
+    movable_quantity: Decimal
+
+
+class PurchasePhaseSplitResult(BaseModel):
+    phase: PurchasePhaseRead
+    replayed: bool
+    audit_event_id: int
+
+
 class PurchaseOrderCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
     supplier_id: int = Field(..., gt=0)
