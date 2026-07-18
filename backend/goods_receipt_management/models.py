@@ -103,8 +103,17 @@ class GoodsReceiptItem(Base):
             "purchase_phase_item_id",
             name="uq_grn_items_phase_item",
         ),
+        UniqueConstraint(
+            "goods_receipt_note_id",
+            "purchase_phase_allocation_id",
+            name="uq_grn_items_phase_allocation",
+        ),
         Index("ix_grn_items_grn_id", "goods_receipt_note_id"),
         Index("ix_grn_items_phase_item_id", "purchase_phase_item_id"),
+        Index(
+            "ix_grn_items_phase_allocation_id",
+            "purchase_phase_allocation_id",
+        ),
         Index("ix_grn_items_item_id", "item_id"),
         Index("ix_grn_items_storage_location_id", "storage_location_id"),
         Index("ix_grn_items_currency_id", "currency_id"),
@@ -121,6 +130,14 @@ class GoodsReceiptItem(Base):
         Integer,
         ForeignKey("purchase_phase_items.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+    purchase_phase_allocation_id = Column(
+        Integer,
+        ForeignKey(
+            "purchase_phase_allocations.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
     )
     item_id = Column(
         Integer,

@@ -91,7 +91,9 @@ from warehouse_management.models import (
 
 from purchase_management.models import (
     PurchaseOrder,
+    PurchaseOrderLine,
     PurchasePhase,
+    PurchasePhaseAllocation,
     PurchasePhaseItem,
     PurchaseOrderCost,
     PurchaseOrderReceiptLink,
@@ -205,7 +207,9 @@ __all__ = [
     "StockCount",
     "StockCountLine",
     "PurchaseOrder",
+    "PurchaseOrderLine",
     "PurchasePhase",
+    "PurchasePhaseAllocation",
     "PurchasePhaseItem",
     "PurchaseOrderCost",
     "PurchaseOrderReceiptLink",
