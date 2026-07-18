@@ -1,18 +1,16 @@
-# Phase 1.2 Edit - PO Lines and Flexible Delivery Phases
+# Phase 1.2 Edit - Normalized PO Lines and Delivery Splits
 
 Phase 1 is already finished. This file defines the Phase 1.2 changes that must
 be implemented on top of the existing commerce flow.
 
 ## 1. Required Business Behavior
 
-A purchase order must contain at least one product. A PO header without a
-product is not a valid purchase order.
+A purchase order must contain at least one product. A header without a product
+is not a valid PO.
 
-Every PO starts with at least one delivery phase. At creation time, all ordered
-quantities can be assigned to the first phase. Users must be able to add another
-phase later and move all or part of an unreceived quantity to that phase.
-
-Example:
+Every PO is created with one automatic delivery phase. Initially, the full
+ordered quantity of every PO line is allocated to Phase 1. Later, a user can
+split unreceived quantities into a newly created phase.
 
 ```text
 PO line: Pump, ordered quantity 10
@@ -20,102 +18,270 @@ PO line: Pump, ordered quantity 10
 At creation:
   Phase 1 -> Pump: 10
 
-Supplier later confirms split delivery:
-  Phase 1 -> Pump: 4, expected sooner
-  Phase 2 -> Pump: 6, expected later
+After split:
+  Phase 1 -> Pump: 4
+  Phase 2 -> Pump: 6
 
-PO total remains Pump: 10
+PO ordered quantity remains 10
 ```
 
-A phase is a delivery schedule. It must not become the only record of what was
-commercially ordered.
+## 2. Normalization Rule
 
-## 2. Target Data Model
+Each business fact has exactly one owner:
 
-The current implementation stores products only as `PurchasePhaseItem` rows:
+```text
+PO source and supplier       -> PurchaseOrder
+Ordered item and price       -> PurchaseOrderLine
+Delivery date and phase      -> PurchasePhase
+Quantity assigned to phase   -> PurchasePhaseAllocation
+Quantity actually received   -> posted warehouse receipt lines
+```
+
+A foreign key is a relationship, not duplicated business data. Derived display
+fields may appear in API responses, but they must not be stored again in the
+phase or allocation tables.
+
+Copying an approved MR or winning quotation into a PO creates a new commercial
+fact. The MR contains a requested quantity, the quotation contains an offered
+price, and the PO line contains the quantity and price actually ordered. Equal
+values across those documents do not mean they have the same business meaning.
+
+Audit records are also not a second source of current state. They are immutable
+history describing who performed an operation and when.
+
+## 3. Target Data Model
 
 ```text
 PurchaseOrder
+  -> PurchaseOrderLine
   -> PurchasePhase
-      -> PurchasePhaseItem
-```
-
-That is sufficient for a fixed delivery schedule, but it mixes the commercial
-PO line with its phase allocation. Phase 1.2 should introduce a stable PO line:
-
-```text
-PurchaseOrder
-  -> PurchaseOrderLine                 commercial commitment
-  -> PurchasePhase                     delivery group
-      -> PurchasePhaseItem             quantity allocated to a phase
+      -> PurchasePhaseAllocation
           -> PurchaseOrderLine
 ```
 
-Minimum `PurchaseOrderLine` fields:
+### 3.1 PurchaseOrder
+
+`PurchaseOrder` owns header-level and source-document facts:
+
+```text
+id
+company_id
+reference_number
+title nullable
+supplier_id
+source_rfq_id nullable
+source_material_requisition_id nullable
+status
+approval_status
+description nullable
+created_by_user_id
+approved_by_user_id nullable
+created_at
+updated_at
+```
+
+Source rules:
+
+```text
+Manual PO:
+  source_rfq_id = null
+  source_material_requisition_id = null
+
+RFQ-based PO:
+  source_rfq_id = RFQ.id
+  source_material_requisition_id = null
+
+Direct-MR PO:
+  source_rfq_id = null
+  source_material_requisition_id = MaterialRequisition.id
+```
+
+Add a database check constraint that prevents both source fields from being set
+at the same time.
+
+For an RFQ-based PO, the selected winning quotation is reached through the RFQ.
+After a PO is created, the RFQ winner must be immutable. Do not also store
+`winning_quotation_response_id` on the PO, and do not store RFQ, MR, quotation,
+or source-line IDs on PO lines, phases, or allocations.
+
+If the RFQ was created from an MR, the source chain is resolved as:
+
+```text
+PurchaseOrder.source_rfq_id
+  -> RFQ.mr_id
+      -> MaterialRequisition
+```
+
+Do not copy the RFQ's `mr_id` onto the PO.
+
+`supplier_name` is not part of the normalized target model because the PO has a
+real `supplier_id`. Existing free-text supplier data must be migrated before the
+legacy field is removed.
+
+### 3.2 PurchaseOrderLine
+
+`PurchaseOrderLine` is the only owner of ordered-product and commercial line
+facts:
 
 ```text
 id
 purchase_order_id
+line_number
 item_id
-item_code
-item_name
-item_description nullable
 ordered_quantity
-unit
+unit_id
+line_description nullable
 unit_price
 currency_id
 unit_price_base
-base_currency_id
 exchange_rate_used
-line_total
-line_total_base
-source_type                       manual | mr | rfq
-material_requisition_item_id      nullable FK
-rfq_item_id                       nullable FK
-quotation_response_item_id        nullable FK
 notes nullable
 created_at
 updated_at
 ```
 
-Add `purchase_order_line_id` as a required FK on `PurchasePhaseItem` after
-migrating existing data. `PurchasePhaseItem.quantity` becomes the quantity of
-that PO line assigned to that phase. Existing item and price snapshot fields may
-remain temporarily for backward-compatible reads, but the PO line is the source
-of the commercial quantity and price.
+Rules:
 
-Use database foreign keys for source rows in the shared database. Purchase code
-must resolve source details through the owning module's service/interface and
-must not import another module's SQLAlchemy models.
+- `item_id` is a real FK to the shared Item catalog.
+- `unit_id` is the unit used for this purchase. It is not assumed to remain the
+  same as the Item catalog's default unit.
+- `line_description` contains only PO-specific specifications or commercial
+  wording. It must not copy `Item.description` automatically.
+- `item_code`, `item_name`, `item_description`, and `unit_code` are resolved for
+  display through `material_management` and unit services. They are not stored
+  on the PO line.
+- `source_type`, `rfq_item_id`, `quotation_response_item_id`, and
+  `material_requisition_item_id` are not stored on the PO line. Source ownership
+  is at the PO header.
+- `line_total` and `line_total_base` are calculated values and are not stored.
 
-## 3. PO Creation Rules
+Calculations:
 
-### 3.1 PO Created From RFQ
+```text
+line_total = ordered_quantity * unit_price
+line_total_base = ordered_quantity * unit_price_base
+```
 
-Keep:
+Use Decimal arithmetic and the shared currency rounding rules. Each line price
+keeps the canonical money fields: transaction amount, currency, base amount,
+and frozen exchange rate. `base_currency_id` is resolved from the company and
+is not repeated on every line.
+
+The current business rule requires all lines of one PO to use the same currency
+and exchange rate. Validate that invariant in the creation and amendment
+services. The PO total and currency summary are derived from its lines instead
+of stored again on the PO header.
+
+### 3.3 PurchasePhase
+
+`PurchasePhase` owns only delivery grouping and scheduling facts:
+
+```text
+id
+purchase_order_id
+phase_number
+title
+description nullable
+status
+expected_delivery_date nullable
+created_at
+updated_at
+```
+
+Do not store these fields on a phase:
+
+```text
+item_id
+MR/RFQ/quotation IDs
+supplier information
+currency_id
+exchange_rate_used
+price or totals
+```
+
+Those facts already belong to the PO or PO line. Actual receipt dates are
+derived from posted receipt lines; do not store a second `actual_delivery_date`
+unless a future workflow defines it as a separate manually confirmed event.
+
+### 3.4 PurchasePhaseAllocation
+
+Rename the Phase 1 concept `PurchasePhaseItem` to
+`PurchasePhaseAllocation`. It is an allocation, not another product record.
+
+```text
+id
+phase_id
+purchase_order_line_id
+allocated_quantity
+created_at
+updated_at
+```
+
+Do not store `item_id` on the allocation. Although `item_id + quantity` appears
+simple, it repeats the item already owned by `PurchaseOrderLine` and becomes
+ambiguous if a PO contains more than one line for the same Item. Resolve it as:
+
+```text
+PurchasePhaseAllocation.purchase_order_line_id
+  -> PurchaseOrderLine.item_id
+```
+
+Do not store item names, item codes, unit, price, currency, source IDs, totals,
+or `received_quantity` on the allocation.
+
+The received quantity is calculated from posted warehouse receipt lines linked
+to the allocation:
+
+```text
+received_quantity = SUM(posted receipt line quantities for allocation)
+movable_quantity = allocated_quantity - received_quantity
+```
+
+Required constraints:
+
+- Unique `(phase_id, purchase_order_line_id)`.
+- `allocated_quantity > 0`.
+- Phase and PO line must belong to the same PO.
+- Sum of allocations for a PO line must equal its ordered quantity before
+  submission and after every completed split.
+
+Because the same-parent rule spans two FKs, enforce it in the purchase service
+inside the transaction and add a database trigger in the Alembic migration for
+defense in depth. Do not repeat `purchase_order_id` on the allocation merely to
+make this check easier.
+
+## 4. Creation Flows
+
+All creation paths write the PO, at least one PO line, Phase 1, and all Phase 1
+allocations in one database transaction. A failure rolls back everything.
+
+### 4.1 PO Created From RFQ
 
 ```text
 POST /purchase/orders/from-rfq/{rfq_id}
 ```
 
-The backend must create everything in one database transaction:
+Required source state:
+
+- RFQ is closed and has one selected winning quotation.
+- Winning quotation covers every selected RFQ line.
+- RFQ is not already linked to another active PO.
+
+The service reads the RFQ through `rfq_management` and creates:
 
 ```text
-winning quotation response
-  -> PurchaseOrder
-  -> one PurchaseOrderLine per winning quotation item
-  -> Phase 1
-  -> one Phase 1 allocation per PO line
+PurchaseOrder.source_rfq_id = rfq_id
+PurchaseOrder.supplier_id = winning supplier
+PurchaseOrderLine rows = products, quantities, units, and accepted prices
+Phase 1 = automatic initial delivery
+Phase 1 allocations = full ordered quantity of every PO line
 ```
 
-The products, quantities, units, prices, currencies, supplier, and source links
-come from the winning quotation response. The frontend must not enter unrelated
-products for this creation path.
+The PO line values become the commercial source of truth. Later changes to the
+RFQ or quotation must not rewrite the PO. The selected RFQ winner becomes locked
+after PO creation.
 
-### 3.2 Manual PO Without RFQ
-
-The manual creation request must include at least one line selected from the
-shared Item catalog:
+### 4.2 Manual PO
 
 ```text
 POST /purchase/orders
@@ -127,100 +293,91 @@ Example request:
 {
   "title": "Manual pump purchase",
   "supplier_id": 55,
-  "currency_id": 1,
-  "base_currency_id": 1,
-  "exchange_rate_used": 1,
+  "expected_delivery_date": "2026-08-01T00:00:00",
   "lines": [
     {
       "item_id": 99,
       "ordered_quantity": 10,
+      "unit_id": 1,
+      "line_description": "API 610 process pump",
       "unit_price": 1200,
       "currency_id": 1,
       "unit_price_base": 1200,
-      "base_currency_id": 1,
       "exchange_rate_used": 1
     }
-  ],
-  "initial_phase": {
-    "title": "Initial delivery",
-    "expected_delivery_date": null
-  }
+  ]
 }
 ```
 
-The backend creates the PO, its lines, Phase 1, and Phase 1 allocations in one
-transaction. `lines` must have at least one entry and each ordered quantity must
-be greater than zero.
+`expected_delivery_date` is a command input used to create Phase 1. It is not
+stored on both the PO and phase.
 
-### 3.3 Direct Purchase From MR
+The request must contain at least one line. Every Item and unit is validated
+through its owning service. Product names and descriptions are never accepted
+as substitutes for `item_id`.
 
-If an approved MR goes to direct purchase without an RFQ, the PO lines must be
-created from the approved MR lines. Users may select which approved MR lines are
-included, but they must not add unrelated catalog items through this path.
-
-Recommended endpoint:
+### 4.3 Direct Purchase From MR
 
 ```text
 POST /purchase/orders/from-mr/{mr_id}
 ```
 
-It follows the same transaction rule: create the PO, at least one PO line, the
-initial phase, and phase allocations together.
+The MR must be approved and eligible for direct purchase. The request selects
+one or more approved MR products and supplies the commercial fields not owned by
+the MR, such as supplier and accepted unit price.
 
-### 3.4 Breaking-Change Notice
+The resulting PO stores only `source_material_requisition_id = mr_id` at the
+header. It does not repeat MR IDs on lines, phases, or allocations.
 
-The current `POST /purchase/orders` accepts a header without products. Requiring
-`lines` changes that request contract and is a breaking API change. Backend and
-frontend deployment must be coordinated. If a staged rollout is required, add a
-new atomic creation endpoint first, migrate the frontend, and then deprecate the
-header-only behavior. The final Phase 1.2 behavior must not leave a valid PO with
-zero products.
+After commit, requisition status changes are requested through the existing
+Celery event boundary. Purchase code must not write requisition tables directly.
 
-## 4. Submission Validation
+### 4.4 Breaking-Change Notice
 
-Creation validation is mandatory, but submission must also defend against old,
-migrated, or partially edited data.
+This is a breaking change to the current header-only manual PO endpoint and the
+current phase-item model. Backend and frontend deployment must be coordinated.
+If a staged rollout is required, add versioned creation/read contracts, migrate
+the frontend, migrate existing data, and only then remove legacy fields.
 
-Before a PO can be submitted for approval, the backend must verify:
+## 5. Submission and Amendment Validation
+
+Before submission for approval, verify:
 
 ```text
-PO has at least one PurchaseOrderLine
-PO has at least one PurchasePhase
-every PO line has ordered_quantity > 0
-every phase allocation has quantity > 0
-sum(phase allocations for each PO line) == PO line ordered_quantity
+PO has at least one line
+PO has exactly one valid source mode: manual, RFQ, or direct MR
+PO has at least one phase
+every line has ordered_quantity > 0
+every line has valid money fields
+all lines use the PO's required common currency and exchange rate
+every phase contains at least one allocation
+every allocation has allocated_quantity > 0
+sum(allocations for each line) == line.ordered_quantity
 ```
 
-If any rule fails, submission returns a catalogued validation error and leaves
-the PO in draft status.
+Changing only phase delivery dates or splitting an unchanged ordered quantity
+does not change the commercial PO. Adding a line, changing ordered quantity,
+unit, price, currency, supplier, or source after approval is an amendment and
+must trigger the configured reapproval workflow.
 
-## 5. Flexible Phase Management
+## 6. Automatic Initial Phase
 
-Users can initially keep all products in one phase. Later they can split that
-delivery into a new phase because products will arrive on different dates or in
-partial deliveries.
-
-### 5.1 Automatic Initial Phase
-
-Every PO creation path automatically creates the initial phase. The frontend
-does not need a second request to create Phase 1.
-
-Backend defaults:
+Every creation path automatically creates Phase 1. The frontend does not call a
+separate phase-creation route.
 
 ```text
 phase_number = 1
-title = "Initial delivery" unless supplied
+title = "Initial delivery"
 status = draft
-currency/exchange rate = inherited from the PO
+expected_delivery_date = creation command value or calculated supplier date
 allocations = full ordered quantity of every PO line
 ```
 
-This applies to manual, RFQ-based, and direct-MR purchase orders.
+There is no public empty-phase creation flow in Phase 1.2.
 
-### 5.2 One-Step Split Into a New Phase
+## 7. One-Step Delivery Split
 
-The normal user action is **Split delivery**. It creates the next phase and
-moves selected unreceived quantities in one backend transaction:
+Splitting is the only Phase 1.2 operation that creates another phase:
 
 ```text
 POST /purchase/orders/{po_id}/phases/split
@@ -235,85 +392,60 @@ Example request:
   "reason": "Supplier confirmed a split delivery",
   "moves": [
     {
-      "from_phase_item_id": 501,
+      "from_phase_allocation_id": 501,
       "quantity": 6
-    },
-    {
-      "from_phase_item_id": 502,
-      "quantity": 2
     }
   ]
 }
 ```
 
-`moves` must contain at least one row. The backend automatically assigns the
-next phase number and uses a generated title such as `Phase 2` when no title is
-provided.
-
-The operation must:
-
-1. Validate every move before writing anything.
-2. Create the new phase.
-3. Reduce each source allocation by the requested movable quantity.
-4. Create the matching allocation in the new phase.
-5. Keep every PO line's total allocated quantity unchanged.
-6. Recalculate phase and PO delivery statuses where required.
-7. Write one audit event for the split and its individual quantity moves.
-8. Return the new phase and updated source phases.
-
-If any item cannot be moved, the entire request rolls back, including creation
-of the new phase. The route should support an idempotency key so a retry or
-double click cannot create duplicate phases.
-
-The user enters only the quantity to move. The frontend must not ask the user to
-manually calculate and save both the old and new quantities.
-
-Example:
+The user enters only the quantity to move. The backend calculates the remaining
+source quantity.
 
 ```text
-Before: Phase 1 -> Pump = 10
-User enters: move 6
-After:  Phase 1 -> Pump = 4
-        Phase 2 -> Pump = 6
+Before:
+  Phase 1 allocation -> PO line 77 -> quantity 10
+
+Move:
+  quantity 6
+
+After:
+  Phase 1 allocation -> PO line 77 -> quantity 4
+  Phase 2 allocation -> PO line 77 -> quantity 6
 ```
 
-### 5.3 Split and History Rules
+The split transaction must:
 
-The maximum transferable quantity is:
+1. Lock the PO, source allocations, and PO lines.
+2. Read posted received quantities through the warehouse service.
+3. Validate every requested move before writing anything.
+4. Create the next numbered phase.
+5. Reduce source allocation quantities.
+6. Create new allocations pointing to the same PO lines.
+7. Keep each PO line's total allocation unchanged.
+8. Recalculate workflow statuses where required.
+9. Write an audit event containing phase IDs, allocation IDs, quantities,
+   reason, user, and timestamp.
+10. Commit all changes together.
+
+If any move fails, the entire transaction rolls back, including the new phase.
+Use an idempotency key so retries and double clicks cannot create duplicate
+phases.
+
+Maximum movable quantity:
 
 ```text
-source allocation quantity - source received quantity
+movable_quantity = allocated_quantity - posted_received_quantity
 ```
 
-An allocation linked to a posted receipt or a shipment that can no longer be
-rescheduled must not be moved. A received quantity is historical fact and must
-never be moved to another phase.
+Received quantities and allocations linked to non-reschedulable shipments
+cannot be moved. If all unreceived quantity is moved and the source allocation
+has received quantity, reduce it only to the received quantity. If it has no
+receipts or operational links, a full move may remove the source allocation.
 
-If the full unreceived quantity is moved, the source allocation may be removed
-only when its `received_quantity` is zero and it has no receipt or shipment
-links. Otherwise, retain the source allocation for history.
+Closed and cancelled POs cannot be split.
 
-Closed and cancelled POs cannot be split or rescheduled.
-
-Changing only the expected delivery date or reallocating an unchanged ordered
-quantity does not change the commercial PO total. Adding a new PO line,
-increasing quantity, changing price, changing currency, or changing supplier
-after approval is a PO amendment and must trigger the configured reapproval
-workflow.
-
-## 6. PO-Scoped Split Candidates
-
-The global material endpoint:
-
-```text
-POST /materials/search
-```
-
-is appropriate while creating a manual PO. It must not be used for splitting an
-existing PO because a split can only move products already allocated to that
-PO.
-
-Add:
+## 8. Split Candidates
 
 ```text
 GET /purchase/orders/{po_id}/split-candidates
@@ -326,139 +458,135 @@ source_phase_id
 q
 ```
 
-The candidates are movable allocations from the PO's existing phases,
-regardless of whether their PO lines came from an MR, RFQ, or manual purchase.
-
-Example response:
+The response is a projection assembled from PO lines, phase allocations, the
+Item service, and posted warehouse receipts. Display fields in this response are
+not duplicated storage columns.
 
 ```json
 [
   {
-    "from_phase_item_id": 501,
+    "from_phase_allocation_id": 501,
     "source_phase_id": 10,
     "source_phase_number": 1,
     "purchase_order_line_id": 77,
-    "source_type": "rfq",
-    "material_requisition_item_id": 10,
-    "rfq_item_id": 20,
-    "quotation_response_item_id": 30,
     "item_id": 99,
     "item_code": "PUMP-001",
     "item_name": "Centrifugal Pump",
-    "item_description": "Pump description from material catalog",
     "unit_code": "pcs",
     "ordered_quantity": 10,
-    "source_allocated_quantity": 10,
-    "source_received_quantity": 0,
-    "movable_quantity": 10,
-    "unit_price": 1200,
-    "currency_id": 1,
-    "supplier_id": 55,
-    "supplier_name": "Supplier A"
+    "allocated_quantity": 10,
+    "posted_received_quantity": 0,
+    "movable_quantity": 10
   }
 ]
 ```
 
-Rules:
+Do not return or store MR, RFQ, quotation, supplier, price, or currency data for
+each phase allocation. The PO detail endpoint already exposes header and line
+commercial information.
 
-- `movable_quantity = source_allocated_quantity - source_received_quantity`.
-- The split request identifies each source using `from_phase_item_id`.
-- A split can move no more than `movable_quantity` into the new phase.
-- The frontend must display ordered, source-allocated, source-received, and
-  movable quantities separately.
-- Item display fields are resolved through the `material_management` service or
-  interface.
+## 9. Frontend Behavior
 
-## 7. Recipe / Template Support
+### 9.1 Create PO
 
-A recipe is not currently implemented. If customers need repeated delivery
-structures, it can be added as an optional Phase 1.2 feature.
+The manual PO form has a required line table. The Create PO button remains
+disabled until at least one valid Item, quantity, unit, and price is present.
 
-Applying a recipe expands into phase allocations only after validating every
-entry against the PO's own lines returned by:
+For RFQ-created POs, show winning quotation lines as read-only source data. For
+direct-MR POs, show approved MR products and ask only for missing commercial
+information. The backend remains authoritative and creates normalized PO lines.
 
-```text
-GET /purchase/orders/{po_id}/split-candidates
-```
+### 9.2 Manage Phases
 
-A recipe must use the same split service and must not create a new PO product or
-bypass MR/RFQ source restrictions.
-
-## 8. Frontend Behavior
-
-### 8.1 Create PO
-
-The manual PO form contains a required product-line table. The Create PO button
-is disabled until at least one valid product with quantity greater than zero is
-present.
-
-For RFQ-created POs, show the winning quotation lines as read-only creation
-inputs. For direct-MR POs, show only selected approved MR lines. In both cases,
-the backend remains the authority and copies the source data.
-
-### 8.2 Manage Phases
-
-After creation, show:
+Show PO commercial lines separately from phase allocations:
 
 ```text
-PO product totals
-Phase 1 allocations and expected date
-Phase 2 allocations and expected date
-received and movable quantities
+Products tab:
+  PO line, Item, ordered quantity, unit, price
+
+Deliveries tab:
+  Phase, expected date, allocated quantity, received quantity, movable quantity
 ```
 
-Provide these actions according to status and permission:
+Available phase actions:
 
 ```text
 Split delivery
-Edit phase delivery date/title
+Edit phase title or expected delivery date
 ```
 
-The primary Split delivery dialog asks for the new delivery date, optional
-title, reason, and quantity to move for each selected product. It calls the
-one-step split endpoint, so the user never needs to create a phase first or edit
-two item counts.
+The Split delivery dialog asks for a new delivery date, optional title, reason,
+and quantities to move. It never asks the user to edit both source and target
+counts.
 
-The dialog must show the maximum movable quantity and must not offer received
-quantity.
+## 10. Recipe / Template Support
 
-## 9. Migration and Compatibility
+A delivery recipe is optional and is not currently implemented. If added, it
+must call the same normalized split service. It may create delivery schedules,
+but it cannot create new PO products, prices, source links, or arbitrary phase
+items.
 
-Migration must create one `PurchaseOrderLine` for each logical existing PO
-product and link existing `PurchasePhaseItem` rows to it. If the same product
-appears in multiple phases with the same commercial terms, migration may group
-those phase items into one PO line and set ordered quantity to their quantity
-sum. Rows with different prices, currencies, units, or source references remain
-separate PO lines.
+## 11. Cross-Module Rules
 
-Make `purchase_order_line_id` nullable only during migration. Backfill and
-verify all rows before changing it to non-null. Keep existing response fields
-during a deprecation period so current frontend reads do not fail.
+- Material display and validation use `material_management` services.
+- RFQ reads use `rfq_management` services.
+- MR reads use `requisition_management` services.
+- Posted receipt totals use the warehouse receipt service.
+- No purchase module code imports another module's SQLAlchemy models, routes, or
+  Pydantic schemas.
+- Cross-module state changes are emitted through Celery events.
+- Every new route is permission-protected and its permission is seeded.
+- All errors use the shared catalogued error codes.
 
-## 10. Acceptance Criteria
+## 12. Migration and Compatibility
+
+The migration must be staged and reversible:
+
+1. Add `purchase_order_lines`.
+2. Add normalized PO source fields and constraints.
+3. Build one PO line for each existing logical commercial line. Group old phase
+   items only when PO, Item, unit, unit price, currency, and exchange rate are
+   identical; otherwise keep separate PO lines.
+4. Rename or replace `purchase_phase_items` with
+   `purchase_phase_allocations` containing only phase FK, PO-line FK, and
+   allocated quantity.
+5. Link existing receipt lines to the new allocation IDs and reconcile their
+   posted totals against legacy `received_quantity` before removing that column.
+6. Remove source, Item, unit, price, currency, total, and snapshot fields from
+   phase allocations after backfill verification.
+7. Remove phase-level currency and exchange-rate fields.
+8. Move all line money facts to PO lines, then remove duplicated PO-header money
+   fields from the target contract.
+9. Migrate valid free-text suppliers to `supplier_id`, then remove
+   `supplier_name` from the target contract.
+10. Expose derived legacy response fields during a frontend deprecation period;
+    do not keep duplicate database columns merely to preserve response shape.
+
+Alembic owns every schema change. Register the new model and include migration
+tests for populated databases. Do not drop a legacy column until all rows are
+backfilled and verified.
+
+## 13. Acceptance Criteria
 
 Phase 1.2 is complete when:
 
-- Manual PO creation rejects an empty `lines` list.
-- RFQ creation automatically creates PO lines and initial phase allocations.
-- Direct-MR creation uses approved MR lines and cannot add unrelated products.
-- PO creation is atomic and never leaves a header-only PO after failure.
-- Submission rejects a PO with no products, no phase, or allocation mismatch.
-- Every PO creation path automatically creates Phase 1 and its allocations.
-- One Split delivery action atomically creates a new phase and moves one or more
-  selected quantities.
-- A failed split does not leave an empty phase or partially moved quantities.
-- Retrying the same split request cannot create a duplicate phase.
-- A user can split an unreceived quantity between two or more phases.
-- Adding or moving a phase allocation never changes the PO ordered total.
-- Received quantities and posted receipt history cannot be moved or deleted.
-- Phase changes are permission-protected and audited.
-- PO-scoped candidates expose ordered, allocated, received, unassigned, and
-  movable quantities.
-- Approved commercial changes trigger the configured amendment/reapproval flow.
-- Migration preserves existing PO, phase, item, source, and receipt history.
-- Tests cover empty creation, RFQ creation, manual creation, direct-MR creation,
-  automatic Phase 1, one-step split creation, split rollback and idempotency,
-  full and partial splits, over-split rejection, received-line protection,
-  concurrent split protection, submission validation, and migration results.
-
+- Manual PO creation rejects an empty line list.
+- RFQ and direct-MR creation store source IDs only on the PO header.
+- RFQ-based POs do not duplicate MR IDs from their RFQ.
+- PO lines do not store source-document IDs or Item catalog display copies.
+- PO line totals are calculated, not stored independently.
+- Phase rows contain no product, source, supplier, or money fields.
+- Phase allocations contain only phase reference, PO-line reference, allocated
+  quantity, and technical timestamps/ID.
+- Received quantity is derived from posted warehouse receipt lines.
+- Every PO creation path atomically creates Phase 1 and complete allocations.
+- Submission rejects allocation totals that differ from ordered quantities.
+- One split action atomically creates a phase and moves selected unreceived
+  quantities without changing PO lines.
+- A failed split leaves no new phase or partial quantity changes.
+- Received quantities cannot be moved or deleted.
+- Split retries are idempotent and concurrent splits cannot over-allocate.
+- Existing PO, source, receipt, and approval history survives migration.
+- Tests cover model constraints, all creation paths, source normalization,
+  calculated totals, automatic Phase 1, split success, rollback, idempotency,
+  concurrency, receipt protection, permissions, and migration results.
