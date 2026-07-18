@@ -238,11 +238,12 @@ def purchase_kpis(
                 po.approval_status,
                 COALESCE(
                     (
-                        SELECT SUM(phase_item.line_total_base)
-                        FROM purchase_phases phase
-                        JOIN purchase_phase_items phase_item
-                          ON phase_item.phase_id = phase.id
-                        WHERE phase.purchase_order_id = po.id
+                        SELECT SUM(
+                                line.ordered_quantity
+                                * line.unit_price_base
+                            )
+                            FROM purchase_order_lines line
+                            WHERE line.purchase_order_id = po.id
                     ),
                     0
                 ) + COALESCE(
@@ -555,11 +556,12 @@ def purchase_report(
                     po.created_at,
                     COALESCE(
                         (
-                            SELECT SUM(phase_item.line_total_base)
-                            FROM purchase_phases phase
-                            JOIN purchase_phase_items phase_item
-                              ON phase_item.phase_id = phase.id
-                            WHERE phase.purchase_order_id = po.id
+                            SELECT SUM(
+                                line.ordered_quantity
+                                * line.unit_price_base
+                            )
+                            FROM purchase_order_lines line
+                            WHERE line.purchase_order_id = po.id
                         ),
                         0
                     ) + COALESCE(
@@ -712,17 +714,52 @@ def purchase_report(
         rows = _rows(
             db,
             f"""
+            WITH ordered_totals AS (
+                SELECT
+                    line.purchase_order_id,
+                    SUM(
+                        line.ordered_quantity
+                    ) AS ordered_quantity
+                FROM purchase_order_lines line
+                GROUP BY line.purchase_order_id
+            ),
+            received_totals AS (
+                SELECT
+                    line.purchase_order_id,
+                    SUM(
+                        receipt_item.accepted_quantity
+                    ) AS received_quantity
+                FROM goods_receipt_items receipt_item
+                JOIN goods_receipt_notes receipt_note
+                  ON receipt_note.id
+                     = receipt_item.goods_receipt_note_id
+                JOIN purchase_phase_allocations allocation
+                  ON allocation.id
+                     = receipt_item.purchase_phase_allocation_id
+                JOIN purchase_order_lines line
+                  ON line.id
+                     = allocation.purchase_order_line_id
+                WHERE receipt_note.status = 'posted'
+                GROUP BY line.purchase_order_id
+            )
             SELECT
                 po.reference_number AS label,
-                COALESCE(SUM(phase_item.quantity), 0) AS ordered_quantity,
-                COALESCE(SUM(phase_item.received_quantity), 0) AS received_quantity
+                COALESCE(
+                    ordered_totals.ordered_quantity,
+                    0
+                ) AS ordered_quantity,
+                COALESCE(
+                    received_totals.received_quantity,
+                    0
+                ) AS received_quantity
             FROM purchase_orders po
-            LEFT JOIN purchase_phases phase
-              ON phase.purchase_order_id = po.id
-            LEFT JOIN purchase_phase_items phase_item
-              ON phase_item.phase_id = phase.id
+            LEFT JOIN ordered_totals
+              ON ordered_totals.purchase_order_id
+                 = po.id
+            LEFT JOIN received_totals
+              ON received_totals.purchase_order_id
+                 = po.id
             WHERE {order_filter}
-            GROUP BY po.id, po.reference_number
             ORDER BY po.reference_number ASC
             """,
             params,

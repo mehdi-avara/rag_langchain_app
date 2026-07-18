@@ -21,7 +21,7 @@ from core.exceptions.error_codes import (
     GOODS_RECEIPT_NOT_EDITABLE,
     GOODS_RECEIPT_NOT_FOUND,
     GOODS_RECEIPT_NUMBER_GENERATION_FAILED,
-    GOODS_RECEIPT_PHASE_ITEM_ALREADY_EXISTS,
+    GOODS_RECEIPT_PHASE_ALLOCATION_ALREADY_EXISTS,
     GOODS_RECEIPT_POSTED_ONLY,
     GOODS_RECEIPT_REJECTION_REASON_REQUIRED,
     USER_HAS_NO_COMPANY,
@@ -209,23 +209,27 @@ def phase_reference_for_grn(
     )
 
 
-def phase_item_reference_for_grn(
+def phase_allocation_reference_for_grn(
     db: Session,
     current_user: User,
     purchase_order_id: int,
     purchase_phase_id: int,
-    purchase_phase_item_id: int,
+    purchase_phase_allocation_id: int,
 ) -> dict[str, Any]:
     from purchase_management.services import (
-        get_phase_item_reference_for_goods_receipt,
+        get_phase_allocation_reference_for_goods_receipt,
     )
 
-    return get_phase_item_reference_for_goods_receipt(
-        db=db,
-        current_user=current_user,
-        purchase_order_id=purchase_order_id,
-        purchase_phase_id=purchase_phase_id,
-        purchase_phase_item_id=purchase_phase_item_id,
+    return (
+        get_phase_allocation_reference_for_goods_receipt(
+            db=db,
+            current_user=current_user,
+            purchase_order_id=purchase_order_id,
+            purchase_phase_id=purchase_phase_id,
+            purchase_phase_allocation_id=(
+                purchase_phase_allocation_id
+            ),
+        )
     )
 
 
@@ -253,64 +257,51 @@ def build_goods_receipt_item(
 ) -> GoodsReceiptItem:
     validate_quantities(data)
 
-    source = phase_item_reference_for_grn(
+    source = phase_allocation_reference_for_grn(
         db=db,
         current_user=current_user,
         purchase_order_id=purchase_order_id,
         purchase_phase_id=purchase_phase_id,
-        purchase_phase_item_id=data["purchase_phase_item_id"],
+        purchase_phase_allocation_id=data[
+            "purchase_phase_allocation_id"
+        ],
     )
 
-    accepted_quantity = Decimal(str(data["accepted_quantity"]))
     supplied_item_id = data.get("item_id")
-    resolved_item_id = source["item_id"]
-    item_code = source["item_code"]
-    item_name = source["item_name"]
-    unit_code = source["unit_code"]
 
-    if source["item_id"] is None:
-        if supplied_item_id is None and accepted_quantity > 0:
-            raise_error(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                GOODS_RECEIPT_LEGACY_ITEM_MAPPING_REQUIRED,
-                "A legacy free-text purchase line needs item_id when accepting stock",
-            )
-
-        if supplied_item_id is not None:
-            material = resolve_material_reference(
-                db=db,
-                current_user=current_user,
-                item_id=supplied_item_id,
-            )
-            resolved_item_id = material["id"]
-            item_code = material["item_code"]
-            item_name = material["name"]
-            unit_code = material["unit_code"]
-
-    elif supplied_item_id is not None and supplied_item_id != source["item_id"]:
+    if (
+        supplied_item_id is not None
+        and supplied_item_id != source["item_id"]
+    ):
         raise_error(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             GOODS_RECEIPT_ITEM_MISMATCH,
-            "item_id must match the referenced purchase phase item",
+            "item_id must match the referenced "
+            "purchase phase allocation",
         )
 
     return GoodsReceiptItem(
         goods_receipt_note_id=goods_receipt_note_id,
-        purchase_phase_item_id=source["id"],
-        item_id=resolved_item_id,
-        item_code=item_code,
-        item_name=item_name,
-        unit_code=unit_code,
+        purchase_phase_item_id=None,
+        purchase_phase_allocation_id=source["id"],
+        item_id=source["item_id"],
+        item_code=source["item_code"],
+        item_name=source["item_name"],
+        unit_code=source["unit_code"],
         received_quantity=data["received_quantity"],
         accepted_quantity=data["accepted_quantity"],
         rejected_quantity=data["rejected_quantity"],
         rejection_reason=data.get("rejection_reason"),
-        storage_location_id=data.get("storage_location_id"),
+        storage_location_id=data.get(
+            "storage_location_id"
+        ),
         unit_cost=source["unit_price"],
         currency_id=source["currency_id"],
         unit_cost_base=source["unit_price_base"],
         base_currency_id=source["base_currency_id"],
-        exchange_rate_used=source["exchange_rate_used"],
+        exchange_rate_used=source[
+            "exchange_rate_used"
+        ],
         notes=data.get("notes"),
     )
 
@@ -371,11 +362,11 @@ def create_goods_receipt(
             if "uq_grn_company_number" in text:
                 continue
 
-            if "uq_grn_items_phase_item" in text:
+            if "uq_grn_items_phase_allocation" in text:
                 raise_error(
                     status.HTTP_409_CONFLICT,
-                    GOODS_RECEIPT_PHASE_ITEM_ALREADY_EXISTS,
-                    "A purchase phase item can appear only once in a goods receipt",
+                    GOODS_RECEIPT_PHASE_ALLOCATION_ALREADY_EXISTS,
+                    "A purchase phase allocation can appear only once in a goods receipt",
                 )
 
             raise
@@ -542,9 +533,10 @@ def add_goods_receipt_item(
     exists = (
         db.query(GoodsReceiptItem.id)
         .filter(
-            GoodsReceiptItem.goods_receipt_note_id == goods_receipt.id,
-            GoodsReceiptItem.purchase_phase_item_id
-            == data["purchase_phase_item_id"],
+            GoodsReceiptItem.goods_receipt_note_id
+            == goods_receipt.id,
+            GoodsReceiptItem.purchase_phase_allocation_id
+            == data["purchase_phase_allocation_id"],
         )
         .first()
     )
@@ -552,16 +544,21 @@ def add_goods_receipt_item(
     if exists is not None:
         raise_error(
             status.HTTP_409_CONFLICT,
-            GOODS_RECEIPT_PHASE_ITEM_ALREADY_EXISTS,
-            "A purchase phase item can appear only once in a goods receipt",
+            GOODS_RECEIPT_PHASE_ALLOCATION_ALREADY_EXISTS,
+            "A purchase phase allocation can appear "
+            "only once in a goods receipt",
         )
 
     goods_receipt_item = build_goods_receipt_item(
         db=db,
         current_user=current_user,
         goods_receipt_note_id=goods_receipt.id,
-        purchase_order_id=goods_receipt.purchase_order_id,
-        purchase_phase_id=goods_receipt.purchase_phase_id,
+        purchase_order_id=(
+            goods_receipt.purchase_order_id
+        ),
+        purchase_phase_id=(
+            goods_receipt.purchase_phase_id
+        ),
         data=data,
     )
 
@@ -586,10 +583,14 @@ def update_goods_receipt_item(
     )
     assert_draft(goods_receipt)
 
-    goods_receipt_item = get_goods_receipt_item_or_404(
-        db=db,
-        goods_receipt=goods_receipt,
-        goods_receipt_item_id=goods_receipt_item_id,
+    goods_receipt_item = (
+        get_goods_receipt_item_or_404(
+            db=db,
+            goods_receipt=goods_receipt,
+            goods_receipt_item_id=(
+                goods_receipt_item_id
+            ),
+        )
     )
 
     merged_values = {
@@ -610,57 +611,60 @@ def update_goods_receipt_item(
             goods_receipt_item.rejection_reason,
         ),
     }
+
     validate_quantities(merged_values)
 
-    if "item_id" in data:
-        source = phase_item_reference_for_grn(
-            db=db,
-            current_user=current_user,
-            purchase_order_id=goods_receipt.purchase_order_id,
-            purchase_phase_id=goods_receipt.purchase_phase_id,
-            purchase_phase_item_id=goods_receipt_item.purchase_phase_item_id,
-        )
-
-        if source["item_id"] is not None:
-            if data["item_id"] != source["item_id"]:
-                raise_error(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    GOODS_RECEIPT_ITEM_MISMATCH,
-                    "item_id must match the referenced purchase phase item",
-                )
-        else:
-            if data["item_id"] is None:
-                raise_error(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    GOODS_RECEIPT_LEGACY_ITEM_MAPPING_REQUIRED,
-                    "item_id cannot be cleared for a legacy purchase phase item",
-                )
-
-            material = resolve_material_reference(
-                db=db,
-                current_user=current_user,
-                item_id=data["item_id"],
-            )
-            goods_receipt_item.item_id = material["id"]
-            goods_receipt_item.item_code = material["item_code"]
-            goods_receipt_item.item_name = material["name"]
-            goods_receipt_item.unit_code = material["unit_code"]
+    source = phase_allocation_reference_for_grn(
+        db=db,
+        current_user=current_user,
+        purchase_order_id=(
+            goods_receipt.purchase_order_id
+        ),
+        purchase_phase_id=(
+            goods_receipt.purchase_phase_id
+        ),
+        purchase_phase_allocation_id=(
+            goods_receipt_item
+            .purchase_phase_allocation_id
+        ),
+    )
 
     if (
-        goods_receipt_item.item_id is None
-        and Decimal(str(merged_values["accepted_quantity"])) > 0
+        "item_id" in data
+        and data["item_id"] != source["item_id"]
     ):
         raise_error(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            GOODS_RECEIPT_LEGACY_ITEM_MAPPING_REQUIRED,
-            "A legacy free-text purchase line needs item_id when accepting stock",
+            GOODS_RECEIPT_ITEM_MISMATCH,
+            "item_id must match the referenced "
+            "purchase phase allocation",
         )
+
+    goods_receipt_item.item_id = source["item_id"]
+    goods_receipt_item.item_code = source["item_code"]
+    goods_receipt_item.item_name = source["item_name"]
+    goods_receipt_item.unit_code = source["unit_code"]
+    goods_receipt_item.unit_cost = source["unit_price"]
+    goods_receipt_item.currency_id = source[
+        "currency_id"
+    ]
+    goods_receipt_item.unit_cost_base = source[
+        "unit_price_base"
+    ]
+    goods_receipt_item.base_currency_id = source[
+        "base_currency_id"
+    ]
+    goods_receipt_item.exchange_rate_used = source[
+        "exchange_rate_used"
+    ]
 
     for field, value in merged_values.items():
         setattr(goods_receipt_item, field, value)
 
     if "storage_location_id" in data:
-        goods_receipt_item.storage_location_id = data["storage_location_id"]
+        goods_receipt_item.storage_location_id = data[
+            "storage_location_id"
+        ]
 
     if "notes" in data:
         goods_receipt_item.notes = data["notes"]
@@ -787,7 +791,8 @@ def post_goods_receipt(
         raise_error(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             GOODS_RECEIPT_HAS_NO_ITEMS,
-            "A goods receipt note must contain at least one item before posting",
+            "A goods receipt note must contain "
+            "at least one item before posting",
         )
 
     validate_warehouse_references_for_post(
@@ -799,42 +804,75 @@ def post_goods_receipt(
     for goods_receipt_item in goods_receipt.items:
         validate_quantities(
             {
-                "received_quantity": goods_receipt_item.received_quantity,
-                "accepted_quantity": goods_receipt_item.accepted_quantity,
-                "rejected_quantity": goods_receipt_item.rejected_quantity,
-                "rejection_reason": goods_receipt_item.rejection_reason,
+                "received_quantity": (
+                    goods_receipt_item.received_quantity
+                ),
+                "accepted_quantity": (
+                    goods_receipt_item.accepted_quantity
+                ),
+                "rejected_quantity": (
+                    goods_receipt_item.rejected_quantity
+                ),
+                "rejection_reason": (
+                    goods_receipt_item.rejection_reason
+                ),
             }
         )
 
         if (
-            Decimal(str(goods_receipt_item.accepted_quantity)) > 0
+            Decimal(
+                str(
+                    goods_receipt_item.accepted_quantity
+                )
+            )
+            > 0
             and goods_receipt_item.item_id is None
         ):
             raise_error(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 GOODS_RECEIPT_LEGACY_ITEM_MAPPING_REQUIRED,
-                "Accepted receipt items require a material item reference",
+                "Accepted receipt items require "
+                "a material item reference",
             )
 
-    from purchase_management.services import apply_goods_receipt
-
-    apply_goods_receipt(
-        db=db,
-        current_user=current_user,
-        purchase_order_id=goods_receipt.purchase_order_id,
-        purchase_phase_id=goods_receipt.purchase_phase_id,
-        receipt_date=goods_receipt.receipt_date,
-        receipt_items=[
-            {
-                "purchase_phase_item_id": item.purchase_phase_item_id,
-                "accepted_quantity": item.accepted_quantity,
-            }
-            for item in goods_receipt.items
-        ],
+    from purchase_management.services import (
+        apply_goods_receipt,
     )
 
-    goods_receipt.status = GoodsReceiptStatus.POSTED.value
-    db.commit()
+    try:
+        goods_receipt.status = (
+            GoodsReceiptStatus.POSTED.value
+        )
+        db.flush()
+
+        apply_goods_receipt(
+            db=db,
+            current_user=current_user,
+            purchase_order_id=(
+                goods_receipt.purchase_order_id
+            ),
+            purchase_phase_id=(
+                goods_receipt.purchase_phase_id
+            ),
+            receipt_date=goods_receipt.receipt_date,
+            receipt_items=[
+                {
+                    "purchase_phase_allocation_id": (
+                        item.purchase_phase_allocation_id
+                    ),
+                    "accepted_quantity": (
+                        item.accepted_quantity
+                    ),
+                }
+                for item in goods_receipt.items
+            ],
+        )
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
     dispatch_warehouse_grn_event(goods_receipt.id)
 
@@ -872,7 +910,8 @@ def get_posted_goods_receipt_for_warehouse(
         grn_query(db)
         .filter(
             GoodsReceiptNote.id == goods_receipt_id,
-            GoodsReceiptNote.status == GoodsReceiptStatus.POSTED.value,
+            GoodsReceiptNote.status
+            == GoodsReceiptStatus.POSTED.value,
         )
         .first()
     )
@@ -888,25 +927,42 @@ def get_posted_goods_receipt_for_warehouse(
         "id": goods_receipt.id,
         "company_id": goods_receipt.company_id,
         "grn_number": goods_receipt.grn_number,
-        "purchase_order_id": goods_receipt.purchase_order_id,
-        "purchase_phase_id": goods_receipt.purchase_phase_id,
+        "purchase_order_id": (
+            goods_receipt.purchase_order_id
+        ),
+        "purchase_phase_id": (
+            goods_receipt.purchase_phase_id
+        ),
         "receipt_date": goods_receipt.receipt_date,
         "warehouse_id": goods_receipt.warehouse_id,
         "items": [
             {
                 "id": item.id,
-                "purchase_phase_item_id": item.purchase_phase_item_id,
+                "purchase_phase_item_id": (
+                    item.purchase_phase_item_id
+                ),
+                "purchase_phase_allocation_id": (
+                    item.purchase_phase_allocation_id
+                ),
                 "item_id": item.item_id,
                 "item_code": item.item_code,
                 "item_name": item.item_name,
                 "unit_code": item.unit_code,
-                "accepted_quantity": item.accepted_quantity,
-                "storage_location_id": item.storage_location_id,
+                "accepted_quantity": (
+                    item.accepted_quantity
+                ),
+                "storage_location_id": (
+                    item.storage_location_id
+                ),
                 "unit_cost": item.unit_cost,
                 "currency_id": item.currency_id,
                 "unit_cost_base": item.unit_cost_base,
-                "base_currency_id": item.base_currency_id,
-                "exchange_rate_used": item.exchange_rate_used,
+                "base_currency_id": (
+                    item.base_currency_id
+                ),
+                "exchange_rate_used": (
+                    item.exchange_rate_used
+                ),
             }
             for item in goods_receipt.items
             if Decimal(str(item.accepted_quantity)) > 0

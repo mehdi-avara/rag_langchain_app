@@ -4,12 +4,23 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import Models
 
-from goods_receipt_management.models import GoodsReceiptItem, GoodsReceiptNote
-from purchase_management.models import PurchaseOrder, PurchasePhase, PurchasePhaseItem
+from goods_receipt_management.models import (
+    GoodsReceiptItem,
+    GoodsReceiptNote,
+    GoodsReceiptStatus,
+)
+from material_management.models import Item, Unit
+from purchase_management.models import (
+    PurchaseOrder,
+    PurchaseOrderLine,
+    PurchasePhase,
+    PurchasePhaseAllocation,
+)
 from requisition_management.models import (
     MaterialRequisition,
     MaterialRequisitionStatusHistory,
@@ -78,6 +89,22 @@ def _extract_entity_id_from_node_id(node_id: str) -> int | None:
             return int(part)
 
     return None
+
+
+def _allocation_receipt_state(
+    allocated_quantity: Decimal,
+    received_quantity: Decimal,
+) -> str:
+    allocated = Decimal(str(allocated_quantity))
+    received = Decimal(str(received_quantity))
+
+    if received >= allocated:
+        return "received"
+
+    if received > 0:
+        return "partially_received"
+
+    return "pending"
 
 
 class BusinessFlowBuilder:
@@ -814,31 +841,46 @@ class BusinessFlowBuilder:
 
         phases = (
             self.db.query(PurchasePhase)
-            .filter(PurchasePhase.purchase_order_id == po.id)
-            .order_by(PurchasePhase.phase_number.asc(), PurchasePhase.id.asc())
+            .filter(
+                PurchasePhase.purchase_order_id == po.id
+            )
+            .order_by(
+                PurchasePhase.phase_number.asc(),
+                PurchasePhase.id.asc(),
+            )
             .all()
         )
 
-        phase_item_node_by_id: dict[int, str] = {}
+        phase_node_by_id: dict[int, str] = {}
 
         for phase in phases:
             phase_node_id = f"phase:{phase.id}"
+            phase_node_by_id[phase.id] = phase_node_id
 
             self.node(
                 id=phase_node_id,
                 kind="phase",
                 state=phase.status,
-                title=phase.title or f"Phase {phase.phase_number}",
+                title=(
+                    phase.title
+                    or f"Phase {phase.phase_number}"
+                ),
                 description=phase.description,
                 source="record",
                 created_at=phase.created_at,
                 details=_details(
                     phase_id=phase.id,
                     po_id=po.id,
-                    purchase_order_id=phase.purchase_order_id,
+                    purchase_order_id=(
+                        phase.purchase_order_id
+                    ),
                     phase_number=phase.phase_number,
-                    expected_delivery_date=phase.expected_delivery_date,
-                    actual_delivery_date=phase.actual_delivery_date,
+                    expected_delivery_date=(
+                        phase.expected_delivery_date
+                    ),
+                    actual_delivery_date=(
+                        phase.actual_delivery_date
+                    ),
                 ),
             )
 
@@ -847,66 +889,372 @@ class BusinessFlowBuilder:
                 phase_node_id,
                 label="Delivery phase",
                 source="record",
-                details=_details(phase_id=phase.id),
+                details=_details(
+                    phase_id=phase.id
+                ),
             )
 
-            items = (
-                self.db.query(PurchasePhaseItem)
-                .filter(PurchasePhaseItem.phase_id == phase.id)
-                .order_by(PurchasePhaseItem.id.asc())
-                .all()
+        line_rows = (
+            self.db.query(
+                PurchaseOrderLine,
+                Item,
+                Unit,
+            )
+            .join(
+                Item,
+                Item.id == PurchaseOrderLine.item_id,
+            )
+            .join(
+                Unit,
+                Unit.id == PurchaseOrderLine.unit_id,
+            )
+            .filter(
+                PurchaseOrderLine.purchase_order_id
+                == po.id
+            )
+            .order_by(
+                PurchaseOrderLine.line_number.asc(),
+                PurchaseOrderLine.id.asc(),
+            )
+            .all()
+        )
+
+        allocation_rows = (
+            self.db.query(
+                PurchasePhaseAllocation,
+                PurchasePhase,
+                PurchaseOrderLine,
+                Item,
+                Unit,
+            )
+            .join(
+                PurchasePhase,
+                PurchasePhase.id
+                == PurchasePhaseAllocation.phase_id,
+            )
+            .join(
+                PurchaseOrderLine,
+                PurchaseOrderLine.id
+                == (
+                    PurchasePhaseAllocation
+                    .purchase_order_line_id
+                ),
+            )
+            .join(
+                Item,
+                Item.id == PurchaseOrderLine.item_id,
+            )
+            .join(
+                Unit,
+                Unit.id == PurchaseOrderLine.unit_id,
+            )
+            .filter(
+                PurchasePhase.purchase_order_id
+                == po.id
+            )
+            .order_by(
+                PurchasePhase.phase_number.asc(),
+                PurchaseOrderLine.line_number.asc(),
+                PurchasePhaseAllocation.id.asc(),
+            )
+            .all()
+        )
+
+        allocation_ids = [
+            allocation.id
+            for (
+                allocation,
+                _,
+                _,
+                _,
+                _,
+            ) in allocation_rows
+        ]
+
+        posted_totals: dict[int, Decimal] = {}
+
+        if allocation_ids:
+            posted_totals = {
+                allocation_id: Decimal(
+                    str(received_quantity)
+                )
+                for (
+                    allocation_id,
+                    received_quantity,
+                ) in (
+                    self.db.query(
+                        GoodsReceiptItem
+                        .purchase_phase_allocation_id,
+                        func.coalesce(
+                            func.sum(
+                                GoodsReceiptItem
+                                .accepted_quantity
+                            ),
+                            0,
+                        ),
+                    )
+                    .join(
+                        GoodsReceiptNote,
+                        GoodsReceiptNote.id
+                        == (
+                            GoodsReceiptItem
+                            .goods_receipt_note_id
+                        ),
+                    )
+                    .filter(
+                        GoodsReceiptItem
+                        .purchase_phase_allocation_id
+                        .in_(allocation_ids),
+                        GoodsReceiptNote.status
+                        == GoodsReceiptStatus.POSTED.value,
+                    )
+                    .group_by(
+                        GoodsReceiptItem
+                        .purchase_phase_allocation_id
+                    )
+                    .all()
+                )
+            }
+
+        received_by_line: dict[int, Decimal] = {}
+
+        for (
+            allocation,
+            _,
+            order_line,
+            _,
+            _,
+        ) in allocation_rows:
+            received_by_line[
+                order_line.id
+            ] = (
+                received_by_line.get(
+                    order_line.id,
+                    Decimal("0"),
+                )
+                + posted_totals.get(
+                    allocation.id,
+                    Decimal("0"),
+                )
             )
 
-            for item in items:
-                po_item_node_id = f"po_item:{item.id}"
-                phase_item_node_by_id[item.id] = po_item_node_id
+        line_node_by_id: dict[int, str] = {}
 
-                self.node(
-                    id=po_item_node_id,
-                    kind="po_item",
-                    state="current",
-                    title=item.item_name,
-                    description=item.notes,
+        for order_line, item, unit in line_rows:
+            line_node_id = (
+                f"po_line:{order_line.id}"
+            )
+            line_node_by_id[
+                order_line.id
+            ] = line_node_id
+
+            line_total = (
+                Decimal(
+                    str(order_line.ordered_quantity)
+                )
+                * Decimal(
+                    str(order_line.unit_price)
+                )
+            )
+
+            self.node(
+                id=line_node_id,
+                kind="po_line",
+                state="current",
+                title=(
+                    order_line.line_description
+                    or item.name
+                ),
+                description=order_line.notes,
+                source="record",
+                created_at=order_line.created_at,
+                details=_details(
+                    purchase_order_line_id=(
+                        order_line.id
+                    ),
+                    po_id=po.id,
+                    line_number=(
+                        order_line.line_number
+                    ),
+                    item_id=order_line.item_id,
+                    item_code=item.item_code,
+                    item_name=item.name,
+                    unit_id=order_line.unit_id,
+                    unit_code=unit.code,
+                    ordered_quantity=(
+                        order_line.ordered_quantity
+                    ),
+                    received_quantity=(
+                        received_by_line.get(
+                            order_line.id,
+                            Decimal("0"),
+                        )
+                    ),
+                    unit_price=order_line.unit_price,
+                    currency_id=(
+                        order_line.currency_id
+                    ),
+                    unit_price_base=(
+                        order_line.unit_price_base
+                    ),
+                    exchange_rate_used=(
+                        order_line.exchange_rate_used
+                    ),
+                    line_total=line_total,
+                ),
+            )
+
+            self.connect(
+                po_node_id,
+                line_node_id,
+                label="Commercial PO line",
+                source="record",
+                details=_details(
+                    purchase_order_line_id=(
+                        order_line.id
+                    ),
+                ),
+            )
+
+        allocation_node_by_id: dict[int, str] = {}
+
+        for (
+            allocation,
+            phase,
+            order_line,
+            item,
+            unit,
+        ) in allocation_rows:
+            allocation_node_id = (
+                f"po_allocation:{allocation.id}"
+            )
+            allocation_node_by_id[
+                allocation.id
+            ] = allocation_node_id
+
+            received_quantity = (
+                posted_totals.get(
+                    allocation.id,
+                    Decimal("0"),
+                )
+            )
+
+            self.node(
+                id=allocation_node_id,
+                kind="po_allocation",
+                state=_allocation_receipt_state(
+                    allocation.allocated_quantity,
+                    received_quantity,
+                ),
+                title=(
+                    f"{item.item_code or item.name} "
+                    f"— phase {phase.phase_number}"
+                ),
+                description=(
+                    order_line.line_description
+                    or item.name
+                ),
+                source="record",
+                created_at=getattr(
+                    allocation,
+                    "created_at",
+                    None,
+                ),
+                details=_details(
+                    purchase_phase_allocation_id=(
+                        allocation.id
+                    ),
+                    purchase_order_line_id=(
+                        order_line.id
+                    ),
+                    po_id=po.id,
+                    phase_id=phase.id,
+                    phase_number=phase.phase_number,
+                    line_number=(
+                        order_line.line_number
+                    ),
+                    item_id=order_line.item_id,
+                    item_code=item.item_code,
+                    item_name=item.name,
+                    unit_id=order_line.unit_id,
+                    unit_code=unit.code,
+                    allocated_quantity=(
+                        allocation.allocated_quantity
+                    ),
+                    received_quantity=(
+                        received_quantity
+                    ),
+                ),
+            )
+
+            phase_node_id = phase_node_by_id.get(
+                phase.id
+            )
+
+            if phase_node_id:
+                self.connect(
+                    phase_node_id,
+                    allocation_node_id,
+                    label="Phase allocation",
                     source="record",
-                    created_at=item.created_at,
                     details=_details(
-                        phase_item_id=item.id,
-                        po_id=po.id,
-                        phase_id=item.phase_id,
-                        item_id=item.item_id,
-                        item_code=item.item_code,
-                        quantity=item.quantity,
-                        received_quantity=item.received_quantity,
-                        unit=item.unit,
-                        unit_price=item.unit_price,
-                        line_total=item.line_total,
+                        purchase_phase_allocation_id=(
+                            allocation.id
+                        ),
+                        phase_id=phase.id,
                     ),
                 )
 
+            line_node_id = line_node_by_id.get(
+                order_line.id
+            )
+
+            if line_node_id:
                 self.connect(
-                    phase_node_id,
-                    po_item_node_id,
-                    label="PO line item",
+                    line_node_id,
+                    allocation_node_id,
+                    label="Allocated to phase",
                     source="record",
-                    details=_details(phase_item_id=item.id),
+                    details=_details(
+                        purchase_phase_allocation_id=(
+                            allocation.id
+                        ),
+                        purchase_order_line_id=(
+                            order_line.id
+                        ),
+                    ),
                 )
 
-        self.add_grns_for_po(po, phase_item_node_by_id=phase_item_node_by_id)
+        self.add_grns_for_po(
+            po,
+            allocation_node_by_id=(
+                allocation_node_by_id
+            ),
+        )
 
     def add_grns_for_po(
         self,
         po: PurchaseOrder,
-        phase_item_node_by_id: dict[int, str] | None = None,
+        allocation_node_by_id: (
+            dict[int, str] | None
+        ) = None,
     ) -> None:
-        phase_item_node_by_id = phase_item_node_by_id or {}
+        allocation_node_by_id = (
+            allocation_node_by_id or {}
+        )
 
         grns = (
             self.db.query(GoodsReceiptNote)
             .filter(
-                GoodsReceiptNote.company_id == self.company_id,
-                GoodsReceiptNote.purchase_order_id == po.id,
+                GoodsReceiptNote.company_id
+                == self.company_id,
+                GoodsReceiptNote.purchase_order_id
+                == po.id,
             )
-            .order_by(GoodsReceiptNote.created_at.asc(), GoodsReceiptNote.id.asc())
+            .order_by(
+                GoodsReceiptNote.created_at.asc(),
+                GoodsReceiptNote.id.asc(),
+            )
             .all()
         )
 
@@ -914,14 +1262,18 @@ class BusinessFlowBuilder:
             self.add_grn(
                 grn,
                 include_upstream=False,
-                phase_item_node_by_id=phase_item_node_by_id,
+                allocation_node_by_id=(
+                    allocation_node_by_id
+                ),
             )
 
     def add_grn(
         self,
         grn: GoodsReceiptNote,
         include_upstream: bool = True,
-        phase_item_node_by_id: dict[int, str] | None = None,
+        allocation_node_by_id: (
+            dict[int, str] | None
+        ) = None,
     ) -> None:
         grn_node_id = f"grn:{grn.id}"
 
@@ -932,15 +1284,23 @@ class BusinessFlowBuilder:
             title=grn.grn_number,
             description=grn.notes,
             source="record",
-            actor_user_id=grn.received_by_user_id,
+            actor_user_id=(
+                grn.received_by_user_id
+            ),
             created_at=grn.created_at,
             details=_details(
                 grn_id=grn.id,
                 grn_number=grn.grn_number,
-                purchase_order_id=grn.purchase_order_id,
-                purchase_phase_id=grn.purchase_phase_id,
+                purchase_order_id=(
+                    grn.purchase_order_id
+                ),
+                purchase_phase_id=(
+                    grn.purchase_phase_id
+                ),
                 receipt_date=grn.receipt_date,
-                delivery_note_number=grn.delivery_note_number,
+                delivery_note_number=(
+                    grn.delivery_note_number
+                ),
                 warehouse_id=grn.warehouse_id,
             ),
         )
@@ -953,21 +1313,33 @@ class BusinessFlowBuilder:
             source="record",
             entity_type="grn",
             entity_id=grn.id,
-            actor_user_id=grn.received_by_user_id,
+            actor_user_id=(
+                grn.received_by_user_id
+            ),
             created_at=grn.created_at,
-            details=_details(grn_number=grn.grn_number),
+            details=_details(
+                grn_number=grn.grn_number
+            ),
         )
 
         if include_upstream:
-            po = self.get_po(grn.purchase_order_id)
-            self.add_po(po, include_upstream=True)
+            po = self.get_po(
+                grn.purchase_order_id
+            )
+            self.add_po(
+                po,
+                include_upstream=True,
+            )
 
         self.connect(
             f"po:{grn.purchase_order_id}",
             grn_node_id,
             label="Goods receipt",
             source="record",
-            details=_details(grn_id=grn.id, po_id=grn.purchase_order_id),
+            details=_details(
+                grn_id=grn.id,
+                po_id=grn.purchase_order_id,
+            ),
         )
 
         if grn.purchase_phase_id:
@@ -976,13 +1348,22 @@ class BusinessFlowBuilder:
                 grn_node_id,
                 label="Received against phase",
                 source="record",
-                details=_details(grn_id=grn.id, phase_id=grn.purchase_phase_id),
+                details=_details(
+                    grn_id=grn.id,
+                    phase_id=grn.purchase_phase_id,
+                ),
             )
 
         items = (
             self.db.query(GoodsReceiptItem)
-            .filter(GoodsReceiptItem.goods_receipt_note_id == grn.id)
-            .order_by(GoodsReceiptItem.id.asc())
+            .filter(
+                GoodsReceiptItem
+                .goods_receipt_note_id
+                == grn.id
+            )
+            .order_by(
+                GoodsReceiptItem.id.asc()
+            )
             .all()
         )
 
@@ -990,26 +1371,45 @@ class BusinessFlowBuilder:
 
         for item in items:
             grn_item_ids.append(item.id)
-            grn_item_node_id = f"grn_item:{item.id}"
+            grn_item_node_id = (
+                f"grn_item:{item.id}"
+            )
 
             self.node(
                 id=grn_item_node_id,
                 kind="grn_item",
                 state="received",
                 title=item.item_name,
-                description=item.notes or item.rejection_reason,
+                description=(
+                    item.notes
+                    or item.rejection_reason
+                ),
                 source="record",
                 created_at=item.created_at,
                 details=_details(
                     grn_item_id=item.id,
                     grn_id=grn.id,
-                    purchase_phase_item_id=item.purchase_phase_item_id,
+                    purchase_phase_item_id=(
+                        item.purchase_phase_item_id
+                    ),
+                    purchase_phase_allocation_id=(
+                        item
+                        .purchase_phase_allocation_id
+                    ),
                     item_id=item.item_id,
                     item_code=item.item_code,
-                    received_quantity=item.received_quantity,
-                    accepted_quantity=item.accepted_quantity,
-                    rejected_quantity=item.rejected_quantity,
-                    storage_location_id=item.storage_location_id,
+                    received_quantity=(
+                        item.received_quantity
+                    ),
+                    accepted_quantity=(
+                        item.accepted_quantity
+                    ),
+                    rejected_quantity=(
+                        item.rejected_quantity
+                    ),
+                    storage_location_id=(
+                        item.storage_location_id
+                    ),
                     unit_cost=item.unit_cost,
                 ),
             )
@@ -1019,19 +1419,31 @@ class BusinessFlowBuilder:
                 grn_item_node_id,
                 label="GRN line item",
                 source="record",
-                details=_details(grn_item_id=item.id),
+                details=_details(
+                    grn_item_id=item.id
+                ),
             )
 
-            po_item_node_id = (phase_item_node_by_id or {}).get(item.purchase_phase_item_id)
+            allocation_node_id = (
+                allocation_node_by_id or {}
+            ).get(
+                item.purchase_phase_allocation_id
+            )
 
-            if po_item_node_id:
+            if allocation_node_id:
                 self.connect(
-                    po_item_node_id,
+                    allocation_node_id,
                     grn_item_node_id,
-                    label="Received line",
+                    label="Received allocation",
                     source="record",
                     details=_details(
-                        phase_item_id=item.purchase_phase_item_id,
+                        purchase_phase_allocation_id=(
+                            item
+                            .purchase_phase_allocation_id
+                        ),
+                        purchase_phase_item_id=(
+                            item.purchase_phase_item_id
+                        ),
                         grn_item_id=item.id,
                     ),
                 )
@@ -1039,29 +1451,52 @@ class BusinessFlowBuilder:
         movements = (
             self.db.query(StockMovement)
             .filter(
-                StockMovement.company_id == self.company_id,
-                StockMovement.reference_type == "grn",
-                StockMovement.reference_id == grn.id,
+                StockMovement.company_id
+                == self.company_id,
+                StockMovement.reference_type
+                == "grn",
+                StockMovement.reference_id
+                == grn.id,
             )
-            .order_by(StockMovement.movement_date.asc(), StockMovement.id.asc())
+            .order_by(
+                StockMovement.movement_date.asc(),
+                StockMovement.id.asc(),
+            )
             .all()
         )
 
         for movement in movements:
-            self.add_stock_movement(movement, include_upstream=False)
+            self.add_stock_movement(
+                movement,
+                include_upstream=False,
+            )
 
-        if grn.status == "posted" and not movements:
-            waiting_node_id = f"waiting:stock:grn:{grn.id}"
+        if (
+            grn.status
+            == GoodsReceiptStatus.POSTED.value
+            and not movements
+        ):
+            waiting_node_id = (
+                f"waiting:stock:grn:{grn.id}"
+            )
 
             self.node(
                 id=waiting_node_id,
                 kind="blocked",
                 state="waiting",
                 title="Warehouse movement pending",
-                description="GRN is posted, but no warehouse stock movement was found yet. Celery or backfill may still be pending.",
+                description=(
+                    "GRN is posted, but no warehouse "
+                    "stock movement was found yet. "
+                    "Celery or backfill may still be "
+                    "pending."
+                ),
                 source="record",
                 is_inferred=False,
-                details=_details(grn_id=grn.id, grn_item_ids=grn_item_ids),
+                details=_details(
+                    grn_id=grn.id,
+                    grn_item_ids=grn_item_ids,
+                ),
             )
 
             self.connect(
@@ -1069,7 +1504,9 @@ class BusinessFlowBuilder:
                 waiting_node_id,
                 label="Waiting for stock movement",
                 source="record",
-                details=_details(grn_id=grn.id),
+                details=_details(
+                    grn_id=grn.id
+                ),
             )
 
     def add_stock_movement(

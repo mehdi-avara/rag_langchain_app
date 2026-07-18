@@ -19,6 +19,8 @@ from core.exceptions.error_codes import (
     PURCHASE_ORDER_RFQ_ALREADY_LINKED,
     PURCHASE_ORDER_RFQ_INVALID_WINNER,
     PURCHASE_ORDER_SUPPLIER_REQUIRED,
+    PURCHASE_PHASE_ALLOCATION_NOT_FOUND,
+    PURCHASE_PHASE_ALLOCATION_OVER_RECEIPT,
     PURCHASE_PHASE_ITEM_NOT_FOUND,
     PURCHASE_PHASE_ITEM_OVER_RECEIPT,
     PURCHASE_PHASE_NOT_RECEIVABLE,
@@ -1363,6 +1365,119 @@ def get_phase_item_reference_for_goods_receipt(
     }
 
 
+def get_phase_allocation_reference_for_goods_receipt(
+    db: Session,
+    current_user: User,
+    purchase_order_id: int,
+    purchase_phase_id: int,
+    purchase_phase_allocation_id: int,
+) -> dict:
+    phase = _get_phase_or_404(
+        db=db,
+        user=current_user,
+        po_id=purchase_order_id,
+        phase_id=purchase_phase_id,
+    )
+
+    row = (
+        db.query(
+            PurchasePhaseAllocation,
+            PurchaseOrderLine,
+        )
+        .join(
+            PurchaseOrderLine,
+            PurchaseOrderLine.id
+            == PurchasePhaseAllocation.purchase_order_line_id,
+        )
+        .filter(
+            PurchasePhaseAllocation.id
+            == purchase_phase_allocation_id,
+            PurchasePhaseAllocation.phase_id
+            == phase.id,
+            PurchaseOrderLine.purchase_order_id
+            == purchase_order_id,
+        )
+        .first()
+    )
+
+    if row is None:
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_ALLOCATION_NOT_FOUND,
+            "Purchase phase allocation not found",
+        )
+
+    allocation, order_line = row
+
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=purchase_order_id,
+        user=current_user,
+    )
+
+    from goods_receipt_management.models import (
+        GoodsReceiptItem,
+        GoodsReceiptNote,
+        GoodsReceiptStatus,
+    )
+    from material_management.services import (
+        get_item_reference,
+        get_unit_or_404,
+    )
+
+    item_reference = get_item_reference(
+        db=db,
+        current_user=current_user,
+        item_id=order_line.item_id,
+    )
+    unit = get_unit_or_404(
+        db=db,
+        current_user=current_user,
+        unit_id=order_line.unit_id,
+    )
+
+    received_quantity = (
+        db.query(
+            func.coalesce(
+                func.sum(
+                    GoodsReceiptItem.accepted_quantity
+                ),
+                0,
+            )
+        )
+        .join(
+            GoodsReceiptNote,
+            GoodsReceiptNote.id
+            == GoodsReceiptItem.goods_receipt_note_id,
+        )
+        .filter(
+            GoodsReceiptItem.purchase_phase_allocation_id
+            == allocation.id,
+            GoodsReceiptNote.status
+            == GoodsReceiptStatus.POSTED.value,
+        )
+        .scalar()
+        or Decimal("0")
+    )
+
+    return {
+        "id": allocation.id,
+        "purchase_order_line_id": order_line.id,
+        "item_id": order_line.item_id,
+        "item_code": item_reference["item_code"],
+        "item_name": item_reference["name"],
+        "unit_id": order_line.unit_id,
+        "unit_code": unit.code,
+        "quantity": allocation.allocated_quantity,
+        "received_quantity": received_quantity,
+        "unit_price": order_line.unit_price,
+        "currency_id": order_line.currency_id,
+        "unit_price_base": order_line.unit_price_base,
+        "base_currency_id": purchase_order.base_currency_id,
+        "exchange_rate_used": order_line.exchange_rate_used,
+    }
+
+
 def apply_goods_receipt(
     db: Session,
     current_user: User,
@@ -1371,11 +1486,18 @@ def apply_goods_receipt(
     receipt_date: date,
     receipt_items: list[dict],
 ) -> None:
+    from goods_receipt_management.models import (
+        GoodsReceiptItem,
+        GoodsReceiptNote,
+        GoodsReceiptStatus,
+    )
+
     purchase_order = (
         db.query(PurchaseOrder)
         .filter(
             PurchaseOrder.id == purchase_order_id,
-            PurchaseOrder.company_id == _tenant_id(current_user),
+            PurchaseOrder.company_id
+            == _tenant_id(current_user),
         )
         .with_for_update()
         .first()
@@ -1395,14 +1517,16 @@ def apply_goods_receipt(
         purchase_error(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             PURCHASE_ORDER_NOT_RECEIVABLE,
-            "Purchase order cannot receive goods in its current status",
+            "Purchase order cannot receive goods "
+            "in its current status",
         )
 
     phase = (
         db.query(PurchasePhase)
         .filter(
             PurchasePhase.id == purchase_phase_id,
-            PurchasePhase.purchase_order_id == purchase_order.id,
+            PurchasePhase.purchase_order_id
+            == purchase_order.id,
         )
         .with_for_update()
         .first()
@@ -1421,105 +1545,265 @@ def apply_goods_receipt(
         purchase_error(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             PURCHASE_PHASE_NOT_RECEIVABLE,
-            "Purchase phase cannot receive goods in its current status",
+            "Purchase phase cannot receive goods "
+            "in its current status",
         )
 
-    phase_item_ids = [
-        receipt_item["purchase_phase_item_id"]
-        for receipt_item in receipt_items
+    allocation_ids = [
+        item["purchase_phase_allocation_id"]
+        for item in receipt_items
     ]
 
-    phase_items = (
-        db.query(PurchasePhaseItem)
+    if len(allocation_ids) != len(set(allocation_ids)):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_PHASE_ALLOCATION_NOT_FOUND,
+            "Receipt items contain duplicate allocations",
+        )
+
+    allocation_rows = (
+        db.query(
+            PurchasePhaseAllocation,
+            PurchaseOrderLine,
+        )
+        .join(
+            PurchaseOrderLine,
+            PurchaseOrderLine.id
+            == PurchasePhaseAllocation.purchase_order_line_id,
+        )
         .filter(
-            PurchasePhaseItem.phase_id == phase.id,
-            PurchasePhaseItem.id.in_(phase_item_ids),
+            PurchasePhaseAllocation.phase_id
+            == phase.id,
+            PurchasePhaseAllocation.id.in_(
+                allocation_ids
+            ),
+            PurchaseOrderLine.purchase_order_id
+            == purchase_order.id,
         )
         .with_for_update()
         .all()
     )
 
-    phase_items_by_id = {
-        phase_item.id: phase_item
-        for phase_item in phase_items
+    allocations_by_id = {
+        allocation.id: allocation
+        for allocation, _ in allocation_rows
     }
 
-    if len(phase_items_by_id) != len(set(phase_item_ids)):
+    if len(allocations_by_id) != len(set(allocation_ids)):
         purchase_error(
             status.HTTP_404_NOT_FOUND,
-            PURCHASE_PHASE_ITEM_NOT_FOUND,
-            "One or more purchase phase items were not found",
+            PURCHASE_PHASE_ALLOCATION_NOT_FOUND,
+            "One or more purchase phase allocations "
+            "were not found",
         )
 
-    for receipt_item in receipt_items:
-        phase_item = phase_items_by_id[
-            receipt_item["purchase_phase_item_id"]
-        ]
-        accepted_quantity = Decimal(str(receipt_item["accepted_quantity"]))
-        new_received_quantity = (
-            Decimal(str(phase_item.received_quantity))
-            + accepted_quantity
+    posted_totals = dict(
+        db.query(
+            GoodsReceiptItem.purchase_phase_allocation_id,
+            func.sum(
+                GoodsReceiptItem.accepted_quantity
+            ),
         )
-
-        if new_received_quantity > Decimal(str(phase_item.quantity)):
-            purchase_error(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                PURCHASE_PHASE_ITEM_OVER_RECEIPT,
-                "Accepted quantity exceeds the remaining purchase phase quantity",
-            )
-
-    for receipt_item in receipt_items:
-        phase_item = phase_items_by_id[
-            receipt_item["purchase_phase_item_id"]
-        ]
-        phase_item.received_quantity = (
-            Decimal(str(phase_item.received_quantity))
-            + Decimal(str(receipt_item["accepted_quantity"]))
+        .join(
+            GoodsReceiptNote,
+            GoodsReceiptNote.id
+            == GoodsReceiptItem.goods_receipt_note_id,
         )
-
-    all_phase_items = (
-        db.query(PurchasePhaseItem)
-        .filter(PurchasePhaseItem.phase_id == phase.id)
+        .filter(
+            GoodsReceiptItem.purchase_phase_allocation_id.in_(
+                allocation_ids
+            ),
+            GoodsReceiptNote.status
+            == GoodsReceiptStatus.POSTED.value,
+        )
+        .group_by(
+            GoodsReceiptItem.purchase_phase_allocation_id
+        )
         .all()
     )
 
-    if all_phase_items and all(
-        Decimal(str(item.received_quantity))
-        >= Decimal(str(item.quantity))
-        for item in all_phase_items
-    ):
+    for allocation_id in allocation_ids:
+        allocation = allocations_by_id[allocation_id]
+        received_quantity = Decimal(
+            str(posted_totals.get(allocation_id, 0))
+        )
+
+        if received_quantity > Decimal(
+            str(allocation.allocated_quantity)
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_PHASE_ALLOCATION_OVER_RECEIPT,
+                "Posted accepted quantity exceeds "
+                "the phase allocation quantity",
+            )
+
+    phase_allocations = (
+        db.query(PurchasePhaseAllocation)
+        .filter(
+            PurchasePhaseAllocation.phase_id
+            == phase.id
+        )
+        .all()
+    )
+
+    phase_allocation_ids = [
+        allocation.id
+        for allocation in phase_allocations
+    ]
+
+    phase_totals = dict(
+        db.query(
+            GoodsReceiptItem.purchase_phase_allocation_id,
+            func.sum(
+                GoodsReceiptItem.accepted_quantity
+            ),
+        )
+        .join(
+            GoodsReceiptNote,
+            GoodsReceiptNote.id
+            == GoodsReceiptItem.goods_receipt_note_id,
+        )
+        .filter(
+            GoodsReceiptItem.purchase_phase_allocation_id.in_(
+                phase_allocation_ids
+            ),
+            GoodsReceiptNote.status
+            == GoodsReceiptStatus.POSTED.value,
+        )
+        .group_by(
+            GoodsReceiptItem.purchase_phase_allocation_id
+        )
+        .all()
+    )
+
+    phase_is_complete = (
+        bool(phase_allocations)
+        and all(
+            Decimal(
+                str(
+                    phase_totals.get(
+                        allocation.id,
+                        0,
+                    )
+                )
+            )
+            >= Decimal(
+                str(allocation.allocated_quantity)
+            )
+            for allocation in phase_allocations
+        )
+    )
+
+    phase_has_receipts = any(
+        Decimal(
+            str(
+                phase_totals.get(
+                    allocation.id,
+                    0,
+                )
+            )
+        )
+        > 0
+        for allocation in phase_allocations
+    )
+
+    if phase_is_complete:
         phase.status = PurchasePhaseStatus.RECEIVED.value
         phase.actual_delivery_date = datetime.combine(
             receipt_date,
             datetime.min.time(),
         )
-    elif any(
-        Decimal(str(item.received_quantity)) > 0
-        for item in all_phase_items
-    ) and phase.status == PurchasePhaseStatus.ORDERED.value:
+    elif (
+        phase_has_receipts
+        and phase.status
+        == PurchasePhaseStatus.ORDERED.value
+    ):
         phase.status = PurchasePhaseStatus.SHIPPED.value
 
-    all_purchase_items = (
-        db.query(PurchasePhaseItem)
+    order_allocations = (
+        db.query(PurchasePhaseAllocation)
         .join(
             PurchasePhase,
-            PurchasePhaseItem.phase_id == PurchasePhase.id,
+            PurchasePhase.id
+            == PurchasePhaseAllocation.phase_id,
         )
-        .filter(PurchasePhase.purchase_order_id == purchase_order.id)
+        .filter(
+            PurchasePhase.purchase_order_id
+            == purchase_order.id
+        )
         .all()
     )
 
-    if all_purchase_items and all(
-        Decimal(str(item.received_quantity))
-        >= Decimal(str(item.quantity))
-        for item in all_purchase_items
-    ):
-        purchase_order.status = PurchaseOrderStatus.RECEIVED.value
-    elif any(
-        Decimal(str(item.received_quantity)) > 0
-        for item in all_purchase_items
-    ):
-        purchase_order.status = PurchaseOrderStatus.PARTIALLY_RECEIVED.value
+    order_allocation_ids = [
+        allocation.id
+        for allocation in order_allocations
+    ]
+
+    order_totals = dict(
+        db.query(
+            GoodsReceiptItem.purchase_phase_allocation_id,
+            func.sum(
+                GoodsReceiptItem.accepted_quantity
+            ),
+        )
+        .join(
+            GoodsReceiptNote,
+            GoodsReceiptNote.id
+            == GoodsReceiptItem.goods_receipt_note_id,
+        )
+        .filter(
+            GoodsReceiptItem.purchase_phase_allocation_id.in_(
+                order_allocation_ids
+            ),
+            GoodsReceiptNote.status
+            == GoodsReceiptStatus.POSTED.value,
+        )
+        .group_by(
+            GoodsReceiptItem.purchase_phase_allocation_id
+        )
+        .all()
+    )
+
+    order_is_complete = (
+        bool(order_allocations)
+        and all(
+            Decimal(
+                str(
+                    order_totals.get(
+                        allocation.id,
+                        0,
+                    )
+                )
+            )
+            >= Decimal(
+                str(allocation.allocated_quantity)
+            )
+            for allocation in order_allocations
+        )
+    )
+
+    order_has_receipts = any(
+        Decimal(
+            str(
+                order_totals.get(
+                    allocation.id,
+                    0,
+                )
+            )
+        )
+        > 0
+        for allocation in order_allocations
+    )
+
+    if order_is_complete:
+        purchase_order.status = (
+            PurchaseOrderStatus.RECEIVED.value
+        )
+    elif order_has_receipts:
+        purchase_order.status = (
+            PurchaseOrderStatus.PARTIALLY_RECEIVED.value
+        )
 
 
 # ── PurchaseOrderCost ─────────────────────────────────────────────────────────

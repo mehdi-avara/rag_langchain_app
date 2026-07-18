@@ -260,8 +260,22 @@ def rfq_items_from_slots(slots: dict) -> Optional[list[dict]]:
 
 def goods_receipt_items_from_slots(slots: dict) -> Optional[list[dict]]:
     return _build_items(slots, (
-        ("purchase_phase_item_id", "int", ("phase_item_id",)),
-        ("purchase_phase_item_query", "str", ("phase_item_query", "po_item", "purchase_item")),
+        (
+            "purchase_phase_allocation_id",
+            "int",
+            ("allocation_id",),
+        ),
+        (
+            "purchase_phase_allocation_query",
+            "str",
+            (
+                "allocation_query",
+                "purchase_phase_item_query",
+                "phase_item_query",
+                "po_item",
+                "purchase_item",
+            ),
+        ),
         ("item_id", "int", ("material_item_id",)),
         ("item_query", "str", ("item_name", "item", "material_item", "part", "part_name")),
         ("received_quantity", "decimal", ("received_qty", "quantity", "qty")),
@@ -281,14 +295,31 @@ def rfq_required(payload: dict, slots: dict) -> list[str]:
 
 def goods_receipt_required(payload: dict, slots: dict) -> list[str]:
     missing: list[str] = []
+
     for item in payload.get("items") or []:
         if not isinstance(item, dict):
             continue
-        if not item.get("purchase_phase_item_id") and not item.get("purchase_phase_item_query"):
-            missing.append("purchase phase item")
-        for field in ("received_quantity", "accepted_quantity", "rejected_quantity"):
+
+        if (
+            not item.get(
+                "purchase_phase_allocation_id"
+            )
+            and not item.get(
+                "purchase_phase_allocation_query"
+            )
+        ):
+            missing.append(
+                "purchase phase allocation"
+            )
+
+        for field in (
+            "received_quantity",
+            "accepted_quantity",
+            "rejected_quantity",
+        ):
             if item.get(field) in (None, ""):
                 missing.append(field)
+
     return missing
 
 
@@ -648,7 +679,7 @@ def _reference_label(field: str) -> str:
         "from_location_id": "source storage location",
         "to_location_id": "storage location",
         "purchase_phase_id": "purchase phase",
-        "purchase_phase_item_id": "purchase phase item",
+        "purchase_phase_allocation_id": "purchase phase allocation",
     }
     if name in labels:
         return labels[name]

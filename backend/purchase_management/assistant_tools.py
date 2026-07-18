@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from sqlalchemy import or_
 
+from material_management.models import Item, Unit
+
 from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
 from shared.assistant_resources import register_shared_assistant_resources
 from shared.commerce_assistant import ConfiguredCommerceToolSet, PayloadField, ReferenceFieldSpec, SearchSpec, WriteSpec
 
 from . import assistant_prompt
-from .models import PurchaseOrder, PurchaseOrderStatus, PurchasePhase, PurchasePhaseItem
+from .models import (
+    PurchaseOrder,
+    PurchaseOrderLine,
+    PurchaseOrderStatus,
+    PurchasePhase,
+    PurchasePhaseAllocation,
+)
 from .search.service import search_purchase_order_hits
 from .services import _tenant_id
 
@@ -61,57 +69,158 @@ def _purchase_phase_to_candidate(row) -> Candidate:
     )
 
 
-def _search_purchase_phase_items_for_resolution(db, current_user, query_text, ids=None, limit=10):
+def _search_purchase_phase_allocations_for_resolution(
+    db,
+    current_user,
+    query_text,
+    ids=None,
+    limit=10,
+):
     query = (
-        db.query(PurchaseOrder, PurchasePhase, PurchasePhaseItem)
-        .join(PurchasePhase, PurchasePhase.purchase_order_id == PurchaseOrder.id)
-        .join(PurchasePhaseItem, PurchasePhaseItem.phase_id == PurchasePhase.id)
-        .filter(PurchaseOrder.company_id == _tenant_id(current_user))
+        db.query(
+            PurchaseOrder,
+            PurchasePhase,
+            PurchasePhaseAllocation,
+            PurchaseOrderLine,
+            Item,
+            Unit,
+        )
+        .join(
+            PurchasePhase,
+            PurchasePhase.purchase_order_id
+            == PurchaseOrder.id,
+        )
+        .join(
+            PurchasePhaseAllocation,
+            PurchasePhaseAllocation.phase_id
+            == PurchasePhase.id,
+        )
+        .join(
+            PurchaseOrderLine,
+            PurchaseOrderLine.id
+            == PurchasePhaseAllocation.purchase_order_line_id,
+        )
+        .join(
+            Item,
+            Item.id == PurchaseOrderLine.item_id,
+        )
+        .join(
+            Unit,
+            Unit.id == PurchaseOrderLine.unit_id,
+        )
+        .filter(
+            PurchaseOrder.company_id
+            == _tenant_id(current_user)
+        )
     )
+
     if ids is not None:
-        query = query.filter(PurchasePhaseItem.id.in_(ids))
+        query = query.filter(
+            PurchasePhaseAllocation.id.in_(ids)
+        )
+
     text = (query_text or "").strip()
+
     if text:
         pattern = f"%{text}%"
-        query = query.filter(or_(
-            PurchaseOrder.reference_number.ilike(pattern),
-            PurchasePhase.title.ilike(pattern),
-            PurchasePhaseItem.item_name.ilike(pattern),
-            PurchasePhaseItem.item_code.ilike(pattern),
-        ))
-    return query.order_by(PurchaseOrder.created_at.desc(), PurchasePhase.phase_number.asc()).limit(limit).all()
+        query = query.filter(
+            or_(
+                PurchaseOrder.reference_number.ilike(
+                    pattern
+                ),
+                PurchasePhase.title.ilike(pattern),
+                PurchaseOrderLine.line_description.ilike(
+                    pattern
+                ),
+                Item.name.ilike(pattern),
+                Item.item_code.ilike(pattern),
+                Unit.code.ilike(pattern),
+            )
+        )
+
+    return (
+        query.order_by(
+            PurchaseOrder.created_at.desc(),
+            PurchasePhase.phase_number.asc(),
+            PurchaseOrderLine.line_number.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
 
 
-def _purchase_phase_item_to_candidate(row) -> Candidate:
-    po, phase, item = row
-    label = f"{po.reference_number} - phase {phase.phase_number} - {item.item_code or item.item_name}"
+def _purchase_phase_allocation_to_candidate(row) -> Candidate:
+    (
+        purchase_order,
+        phase,
+        allocation,
+        order_line,
+        item,
+        unit,
+    ) = row
+
+    label = (
+        f"{purchase_order.reference_number} - "
+        f"phase {phase.phase_number} - "
+        f"{item.item_code or item.name}"
+    )
+
     return Candidate(
-        id=item.id,
-        match_text=item.item_name or item.item_code or "",
+        id=allocation.id,
+        match_text=(
+            order_line.line_description
+            or item.name
+            or item.item_code
+            or ""
+        ),
         label=label,
         data={
-            "purchase_order_id": po.id,
+            "purchase_order_id": purchase_order.id,
             "purchase_phase_id": phase.id,
-            "purchase_phase_item_id": item.id,
-            "reference_number": po.reference_number,
+            "purchase_phase_allocation_id": (
+                allocation.id
+            ),
+            "purchase_order_line_id": (
+                order_line.id
+            ),
+            "reference_number": (
+                purchase_order.reference_number
+            ),
             "phase_number": phase.phase_number,
-            "item_name": item.item_name,
+            "line_number": order_line.line_number,
+            "item_id": order_line.item_id,
+            "item_name": item.name,
             "item_code": item.item_code,
+            "unit_id": order_line.unit_id,
+            "unit_code": unit.code,
+            "allocated_quantity": (
+                allocation.allocated_quantity
+            ),
         },
     )
 
 
 def register_purchase_resources() -> None:
-    register_resource(ResourceSpec(
-        key="purchase_phase",
-        read_permission=P_READ,
-        provider=FunctionSearchProvider(_search_purchase_phases_for_resolution, _purchase_phase_to_candidate),
-    ))
-    register_resource(ResourceSpec(
-        key="purchase_phase_item",
-        read_permission=P_READ,
-        provider=FunctionSearchProvider(_search_purchase_phase_items_for_resolution, _purchase_phase_item_to_candidate),
-    ))
+    register_resource(
+        ResourceSpec(
+            key="purchase_phase",
+            read_permission=P_READ,
+            provider=FunctionSearchProvider(
+                _search_purchase_phases_for_resolution,
+                _purchase_phase_to_candidate,
+            ),
+        )
+    )
+    register_resource(
+        ResourceSpec(
+            key="purchase_phase_allocation",
+            read_permission=P_READ,
+            provider=FunctionSearchProvider(
+                _search_purchase_phase_allocations_for_resolution,
+                _purchase_phase_allocation_to_candidate,
+            ),
+        )
+    )
 
 
 def _purchase_order_required(payload: dict, slots: dict) -> list[str]:
