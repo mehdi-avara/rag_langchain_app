@@ -3,9 +3,53 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class PurchaseOrderLineCreate(BaseModel):
+    item_id: int = Field(..., gt=0)
+    ordered_quantity: Decimal = Field(..., gt=0)
+    unit_id: int = Field(..., gt=0)
+    line_description: Optional[str] = None
+    unit_price: Decimal = Field(..., ge=0)
+    currency_id: int = Field(..., gt=0)
+    exchange_rate_used: Decimal = Field(..., gt=0)
+    notes: Optional[str] = None
+
+
+class PurchasePhaseAllocationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    phase_id: int
+    purchase_order_line_id: int
+    allocated_quantity: Decimal
+    created_at: datetime
+    updated_at: datetime
+
+
+class PurchaseOrderLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    purchase_order_id: int
+    line_number: int
+    item_id: int
+    ordered_quantity: Decimal
+    unit_id: int
+    line_description: Optional[str]
+    unit_price: Decimal
+    currency_id: int
+    unit_price_base: Decimal
+    exchange_rate_used: Decimal
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    allocations: list[PurchasePhaseAllocationRead] = Field(
+        default_factory=list
+    )
 
 
 class PurchasePhaseItemCreate(BaseModel):
@@ -15,9 +59,9 @@ class PurchasePhaseItemCreate(BaseModel):
     quantity: Decimal = Field(..., gt=0)
     unit: Optional[str] = Field(None, max_length=30)
     unit_price: Decimal = Field(Decimal("0"), ge=0)
-    currency_id: int
+    currency_id: int = Field(..., gt=0)
     unit_price_base: Decimal = Field(Decimal("0"), ge=0)
-    base_currency_id: int
+    base_currency_id: int = Field(..., gt=0)
     exchange_rate_used: Decimal = Field(Decimal("1"), gt=0)
     notes: Optional[str] = None
 
@@ -35,14 +79,16 @@ class PurchasePhaseItemUpdate(BaseModel):
     quantity: Optional[Decimal] = Field(None, gt=0)
     unit: Optional[str] = Field(None, max_length=30)
     unit_price: Optional[Decimal] = Field(None, ge=0)
-    currency_id: Optional[int] = None
+    currency_id: Optional[int] = Field(None, gt=0)
     unit_price_base: Optional[Decimal] = Field(None, ge=0)
-    base_currency_id: Optional[int] = None
+    base_currency_id: Optional[int] = Field(None, gt=0)
     exchange_rate_used: Optional[Decimal] = Field(None, gt=0)
     notes: Optional[str] = None
 
 
 class PurchasePhaseItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     phase_id: int
     item_id: Optional[int]
@@ -62,29 +108,28 @@ class PurchasePhaseItemRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class PurchasePhaseCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
-    currency_id: Optional[int] = None
-    exchange_rate_used: Optional[Decimal] = None
+    currency_id: Optional[int] = Field(None, gt=0)
+    exchange_rate_used: Optional[Decimal] = Field(None, gt=0)
     expected_delivery_date: Optional[datetime] = None
 
 
 class PurchasePhaseUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
     status: Optional[str] = None
-    currency_id: Optional[int] = None
-    exchange_rate_used: Optional[Decimal] = None
+    currency_id: Optional[int] = Field(None, gt=0)
+    exchange_rate_used: Optional[Decimal] = Field(None, gt=0)
     expected_delivery_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
 
 
 class PurchasePhaseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     purchase_order_id: int
     phase_number: int
@@ -97,44 +142,68 @@ class PurchasePhaseRead(BaseModel):
     actual_delivery_date: Optional[datetime]
     created_at: datetime
     updated_at: datetime
-    items: List[PurchasePhaseItemRead] = []
-
-    class Config:
-        from_attributes = True
+    allocations: list[PurchasePhaseAllocationRead] = Field(
+        default_factory=list
+    )
+    items: list[PurchasePhaseItemRead] = Field(default_factory=list)
 
 
 class PurchaseOrderCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
-    supplier_id: Optional[int] = Field(None, gt=0)
-    supplier_name: Optional[str] = Field(None, max_length=255)
-    currency_id: int
-    base_currency_id: int
-    exchange_rate_used: Decimal = Field(Decimal("1"), gt=0)
+    supplier_id: int = Field(..., gt=0)
     description: Optional[str] = None
+    expected_delivery_date: Optional[datetime] = None
+    lines: list[PurchaseOrderLineCreate] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_commercial_terms(self):
+        currency_ids = {line.currency_id for line in self.lines}
+        exchange_rates = {
+            Decimal(str(line.exchange_rate_used))
+            for line in self.lines
+        }
+
+        if len(currency_ids) != 1:
+            raise ValueError(
+                "All purchase-order lines must use the same currency"
+            )
+
+        if len(exchange_rates) != 1:
+            raise ValueError(
+                "All purchase-order lines must use the same exchange rate"
+            )
+
+        return self
 
 
 class PurchaseOrderUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=255)
     supplier_id: Optional[int] = Field(None, gt=0)
-    supplier_name: Optional[str] = None
-    currency_id: Optional[int] = None
-    base_currency_id: Optional[int] = None
-    exchange_rate_used: Optional[Decimal] = None
+    supplier_name: Optional[str] = Field(None, max_length=255)
+    currency_id: Optional[int] = Field(None, gt=0)
+    base_currency_id: Optional[int] = Field(None, gt=0)
+    exchange_rate_used: Optional[Decimal] = Field(None, gt=0)
     description: Optional[str] = None
     status: Optional[str] = None
 
 
 class PurchaseOrderApproval(BaseModel):
-    action: str = Field(..., description="submit | approve | reject")
+    action: str = Field(
+        ...,
+        description="submit | approve | reject",
+    )
     note: Optional[str] = None
 
 
 class PurchaseOrderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     company_id: int
     reference_number: str
     title: Optional[str]
     rfq_id: Optional[int]
+    source_material_requisition_id: Optional[int]
     winning_quotation_response_id: Optional[int]
     supplier_id: Optional[int]
     supplier_name: Optional[str]
@@ -148,24 +217,30 @@ class PurchaseOrderRead(BaseModel):
     approved_by_user_id: Optional[int]
     created_at: datetime
     updated_at: datetime
-    phases: List[PurchasePhaseRead] = []
-
-    class Config:
-        from_attributes = True
+    lines: list[PurchaseOrderLineRead] = Field(default_factory=list)
+    phases: list[PurchasePhaseRead] = Field(default_factory=list)
 
 
 class PurchaseOrderCostCreate(BaseModel):
-    cost_type: str = Field(..., description="freight | customs | tax | insurance | other")
+    cost_type: str = Field(
+        ...,
+        description="freight | customs | tax | insurance | other",
+    )
     description: Optional[str] = None
     amount: Decimal = Field(..., ge=0)
-    currency_id: int
+    currency_id: int = Field(..., gt=0)
     amount_base: Decimal = Field(..., ge=0)
-    base_currency_id: int
+    base_currency_id: int = Field(..., gt=0)
     exchange_rate_used: Decimal = Field(Decimal("1"), gt=0)
-    allocation_method: str = Field("per_value", description="per_item | per_value | manual")
+    allocation_method: str = Field(
+        "per_value",
+        description="per_item | per_value | manual",
+    )
 
 
 class PurchaseOrderCostRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     purchase_order_id: int
     cost_type: str
@@ -179,23 +254,19 @@ class PurchaseOrderCostRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class ReceiptLinkCreate(BaseModel):
-    financial_receipt_id: int
+    financial_receipt_id: int = Field(..., gt=0)
 
 
 class ReceiptLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     purchase_order_id: int
     financial_receipt_id: int
     linked_at: datetime
     linked_by_user_id: Optional[int]
-
-    class Config:
-        from_attributes = True
 
 
 class PurchaseOrderSummary(BaseModel):

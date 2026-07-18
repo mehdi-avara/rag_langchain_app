@@ -3,21 +3,30 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import List, Optional
 
 from fastapi import HTTPException, status
 from core.exceptions.error_codes import (
+    PURCHASE_ORDER_BASE_CURRENCY_NOT_CONFIGURED,
+    PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
+    PURCHASE_ORDER_COMMERCIAL_TERMS_MISMATCH,
+    PURCHASE_ORDER_CURRENCY_INVALID,
+    PURCHASE_ORDER_INVALID_STRUCTURE,
+    PURCHASE_ORDER_LINES_REQUIRED,
     PURCHASE_ORDER_NOT_RECEIVABLE,
+    PURCHASE_ORDER_REFERENCE_GENERATION_FAILED,
     PURCHASE_ORDER_RFQ_ALREADY_LINKED,
     PURCHASE_ORDER_RFQ_INVALID_WINNER,
+    PURCHASE_ORDER_SUPPLIER_REQUIRED,
     PURCHASE_PHASE_ITEM_NOT_FOUND,
     PURCHASE_PHASE_ITEM_OVER_RECEIPT,
     PURCHASE_PHASE_NOT_RECEIVABLE,
+    USER_HAS_NO_COMPANY,
 )
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from Models import User
 
@@ -26,9 +35,11 @@ from .models import (
     PurchaseApprovalStatus,
     PurchaseOrder,
     PurchaseOrderCost,
+    PurchaseOrderLine,
     PurchaseOrderReceiptLink,
     PurchaseOrderStatus,
     PurchasePhase,
+    PurchasePhaseAllocation,
     PurchasePhaseItem,
     PurchasePhaseStatus,
 )
@@ -53,6 +64,15 @@ def _next_reference_number(db: Session, company_id: int) -> str:
 # ── Tenant helper ─────────────────────────────────────────────────────────────
 
 def _tenant_id(user: User) -> int:
+    if user.company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": USER_HAS_NO_COMPANY,
+                "message": "Current user does not belong to a company",
+            },
+        )
+
     return user.company_id
 
 
@@ -105,15 +125,42 @@ def _mark_requisition_ordered_from_purchase_order(
 
 # ── PurchaseOrder CRUD ────────────────────────────────────────────────────────
 
-def get_po_or_404(db: Session, po_id: int, user: User) -> PurchaseOrder:
-    po = (
-        db.query(PurchaseOrder)
-        .filter(PurchaseOrder.id == po_id, PurchaseOrder.company_id == _tenant_id(user))
+def _purchase_order_query(db: Session):
+    return db.query(PurchaseOrder).options(
+        selectinload(PurchaseOrder.lines).selectinload(
+            PurchaseOrderLine.allocations
+        ),
+        selectinload(PurchaseOrder.phases).selectinload(
+            PurchasePhase.allocations
+        ),
+        selectinload(PurchaseOrder.phases).selectinload(
+            PurchasePhase.items
+        ),
+        selectinload(PurchaseOrder.costs),
+    )
+
+
+def get_po_or_404(
+    db: Session,
+    po_id: int,
+    user: User,
+) -> PurchaseOrder:
+    purchase_order = (
+        _purchase_order_query(db)
+        .filter(
+            PurchaseOrder.id == po_id,
+            PurchaseOrder.company_id == _tenant_id(user),
+        )
         .first()
     )
-    if not po:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
-    return po
+
+    if purchase_order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Purchase order not found",
+        )
+
+    return purchase_order
 
 
 def list_purchase_orders(
@@ -124,12 +171,29 @@ def list_purchase_orders(
     page: int = 1,
     size: int = 20,
 ) -> List[PurchaseOrder]:
-    q = db.query(PurchaseOrder).filter(PurchaseOrder.company_id == _tenant_id(user))
+    query = _purchase_order_query(db).filter(
+        PurchaseOrder.company_id == _tenant_id(user)
+    )
+
     if po_status:
-        q = q.filter(PurchaseOrder.status == po_status)
+        query = query.filter(
+            PurchaseOrder.status == po_status
+        )
+
     if approval_status:
-        q = q.filter(PurchaseOrder.approval_status == approval_status)
-    return q.order_by(PurchaseOrder.created_at.desc()).offset((page - 1) * size).limit(size).all()
+        query = query.filter(
+            PurchaseOrder.approval_status == approval_status
+        )
+
+    return (
+        query.order_by(
+            PurchaseOrder.created_at.desc(),
+            PurchaseOrder.id.desc(),
+        )
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
 
 
 def _resolve_supplier_for_purchase(
@@ -152,43 +216,319 @@ def _resolve_supplier_for_purchase(
     return supplier.id, supplier.name
 
 
+PRICE_QUANTUM = Decimal("0.0000000001")
+RATE_QUANTUM = Decimal("0.0000000001")
+
+
+def _quantize_decimal(value, decimal_places: int) -> Decimal:
+    quantum = Decimal("1").scaleb(-decimal_places)
+    return Decimal(str(value)).quantize(
+        quantum,
+        rounding=ROUND_HALF_UP,
+    )
+
+
+def _get_company_base_currency_reference(
+    db: Session,
+    company_id: int,
+):
+    from Models.company import Company
+    from shared.currency.services import (
+        get_currency_by_code,
+        get_currency_or_404,
+    )
+
+    company = (
+        db.query(Company)
+        .filter(Company.id == company_id)
+        .first()
+    )
+
+    if company is None:
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_ORDER_BASE_CURRENCY_NOT_CONFIGURED,
+            "Company was not found",
+        )
+
+    if company.base_currency_id is not None:
+        currency = get_currency_or_404(
+            db=db,
+            currency_id=company.base_currency_id,
+        )
+    else:
+        currency = get_currency_by_code(
+            db=db,
+            code=company.base_currency,
+        )
+
+    if currency is None or not currency.is_active:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_BASE_CURRENCY_NOT_CONFIGURED,
+            "Company base currency is not configured",
+        )
+
+    return currency
+
+
+def _prepare_purchase_order_lines(
+    db: Session,
+    user: User,
+    lines: list[dict],
+    base_currency,
+) -> list[dict]:
+    from material_management.services import (
+        get_item_reference,
+        get_unit_or_404,
+    )
+    from shared.currency.services import get_currency_or_404
+
+    if not lines:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_LINES_REQUIRED,
+            "A purchase order must contain at least one line",
+        )
+
+    prepared_lines = []
+    expected_currency_id = None
+    expected_exchange_rate = None
+
+    for line_number, line in enumerate(lines, start=1):
+        item = get_item_reference(
+            db=db,
+            current_user=user,
+            item_id=line["item_id"],
+        )
+        unit = get_unit_or_404(
+            db=db,
+            current_user=user,
+            unit_id=line["unit_id"],
+        )
+
+        if unit.id != item["unit_id"]:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_INVALID_STRUCTURE,
+                "Purchase-order line unit does not match the material unit",
+            )
+
+        currency = get_currency_or_404(
+            db=db,
+            currency_id=line["currency_id"],
+        )
+
+        if not currency.is_active:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_CURRENCY_INVALID,
+                "Purchase-order line currency is inactive",
+            )
+
+        ordered_quantity = Decimal(
+            str(line["ordered_quantity"])
+        )
+        exchange_rate = Decimal(
+            str(line["exchange_rate_used"])
+        ).quantize(
+            RATE_QUANTUM,
+            rounding=ROUND_HALF_UP,
+        )
+        unit_price = _quantize_decimal(
+            line["unit_price"],
+            currency.decimal_places,
+        )
+        unit_price_base = _quantize_decimal(
+            unit_price * exchange_rate,
+            base_currency.decimal_places,
+        )
+
+        if expected_currency_id is None:
+            expected_currency_id = currency.id
+            expected_exchange_rate = exchange_rate
+        elif (
+            expected_currency_id != currency.id
+            or expected_exchange_rate != exchange_rate
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_COMMERCIAL_TERMS_MISMATCH,
+                "All purchase-order lines must use the same currency and exchange rate",
+            )
+
+        prepared_lines.append(
+            {
+                "line_number": line_number,
+                "item_id": item["id"],
+                "ordered_quantity": ordered_quantity,
+                "unit_id": unit.id,
+                "line_description": (
+                    (line.get("line_description") or "").strip()
+                    or None
+                ),
+                "unit_price": unit_price,
+                "currency_id": currency.id,
+                "unit_price_base": unit_price_base,
+                "exchange_rate_used": exchange_rate,
+                "notes": (
+                    (line.get("notes") or "").strip()
+                    or None
+                ),
+            }
+        )
+
+    return prepared_lines
+
+
 def create_purchase_order(
     db: Session,
     user: User,
-    title: Optional[str],
-    supplier_id: Optional[int],
-    supplier_name: Optional[str],
-    currency_id: int,
-    base_currency_id: int,
-    exchange_rate_used: Decimal,
-    description: Optional[str],
+    data: dict,
 ) -> PurchaseOrder:
-    reference_number = _next_reference_number(db, _tenant_id(user))
-    resolved_supplier_id, resolved_supplier_name = _resolve_supplier_for_purchase(
-        db=db,
-        user=user,
-        supplier_id=supplier_id,
-        supplier_name=supplier_name,
+    company_id = _tenant_id(user)
+    supplier_id = data.get("supplier_id")
+
+    if supplier_id is None:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_SUPPLIER_REQUIRED,
+            "supplier_id is required",
+        )
+
+    resolved_supplier_id, resolved_supplier_name = (
+        _resolve_supplier_for_purchase(
+            db=db,
+            user=user,
+            supplier_id=supplier_id,
+            supplier_name=None,
+        )
     )
 
-    po = PurchaseOrder(
-        company_id=_tenant_id(user),
-        reference_number=reference_number,
-        title=title,
-        supplier_id=resolved_supplier_id,
-        supplier_name=resolved_supplier_name,
-        currency_id=currency_id,
-        base_currency_id=base_currency_id,
-        exchange_rate_used=exchange_rate_used,
-        description=description,
-        created_by_user_id=user.id,
-        status=PurchaseOrderStatus.DRAFT.value,
-        approval_status=PurchaseApprovalStatus.DRAFT.value,
+    base_currency = _get_company_base_currency_reference(
+        db=db,
+        company_id=company_id,
     )
-    db.add(po)
-    db.commit()
-    db.refresh(po)
-    return po
+    prepared_lines = _prepare_purchase_order_lines(
+        db=db,
+        user=user,
+        lines=data.get("lines") or [],
+        base_currency=base_currency,
+    )
+    first_line = prepared_lines[0]
+
+    for _ in range(5):
+        try:
+            reference_number = _next_reference_number(
+                db=db,
+                company_id=company_id,
+            )
+
+            purchase_order = PurchaseOrder(
+                company_id=company_id,
+                reference_number=reference_number,
+                title=(
+                    (data.get("title") or "").strip()
+                    or None
+                ),
+                rfq_id=None,
+                source_material_requisition_id=None,
+                winning_quotation_response_id=None,
+                supplier_id=resolved_supplier_id,
+                supplier_name=resolved_supplier_name,
+                currency_id=first_line["currency_id"],
+                base_currency_id=base_currency.id,
+                exchange_rate_used=first_line[
+                    "exchange_rate_used"
+                ],
+                description=(
+                    (data.get("description") or "").strip()
+                    or None
+                ),
+                created_by_user_id=user.id,
+                status=PurchaseOrderStatus.DRAFT.value,
+                approval_status=PurchaseApprovalStatus.DRAFT.value,
+            )
+            db.add(purchase_order)
+            db.flush()
+
+            phase = PurchasePhase(
+                purchase_order_id=purchase_order.id,
+                phase_number=1,
+                title="Phase 1",
+                description="Initial delivery phase",
+                status=PurchasePhaseStatus.DRAFT.value,
+                currency_id=first_line["currency_id"],
+                exchange_rate_used=first_line[
+                    "exchange_rate_used"
+                ],
+                expected_delivery_date=data.get(
+                    "expected_delivery_date"
+                ),
+            )
+            db.add(phase)
+            db.flush()
+
+            for line_data in prepared_lines:
+                order_line = PurchaseOrderLine(
+                    purchase_order_id=purchase_order.id,
+                    line_number=line_data["line_number"],
+                    item_id=line_data["item_id"],
+                    ordered_quantity=line_data[
+                        "ordered_quantity"
+                    ],
+                    unit_id=line_data["unit_id"],
+                    line_description=line_data[
+                        "line_description"
+                    ],
+                    unit_price=line_data["unit_price"],
+                    currency_id=line_data["currency_id"],
+                    unit_price_base=line_data[
+                        "unit_price_base"
+                    ],
+                    exchange_rate_used=line_data[
+                        "exchange_rate_used"
+                    ],
+                    notes=line_data["notes"],
+                )
+                db.add(order_line)
+                db.flush()
+
+                db.add(
+                    PurchasePhaseAllocation(
+                        phase_id=phase.id,
+                        purchase_order_line_id=order_line.id,
+                        allocated_quantity=line_data[
+                            "ordered_quantity"
+                        ],
+                    )
+                )
+
+            db.commit()
+
+            return get_po_or_404(
+                db=db,
+                po_id=purchase_order.id,
+                user=user,
+            )
+
+        except IntegrityError as exc:
+            db.rollback()
+
+            if "uq_po_company_reference" in str(exc.orig):
+                continue
+
+            raise
+
+        except Exception:
+            db.rollback()
+            raise
+
+    purchase_error(
+        status.HTTP_409_CONFLICT,
+        PURCHASE_ORDER_REFERENCE_GENERATION_FAILED,
+        "Could not generate a unique purchase order reference",
+    )
 
 
 def create_purchase_order_from_rfq(
@@ -362,6 +702,23 @@ def update_purchase_order(db: Session, user: User, po_id: int, **kwargs) -> Purc
     if po.status == PurchaseOrderStatus.CANCELLED.value:
         raise HTTPException(status_code=422, detail="Cannot edit a cancelled purchase order")
 
+    if (
+        list(getattr(po, "lines", []) or [])
+        and any(
+            field in kwargs
+            for field in (
+                "currency_id",
+                "base_currency_id",
+                "exchange_rate_used",
+            )
+        )
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
+            "Commercial header fields are derived from normalized purchase-order lines",
+        )
+
     missing = object()
     supplied_supplier_id = kwargs.pop("supplier_id", missing)
     supplied_supplier_name = kwargs.pop("supplier_name", missing)
@@ -402,33 +759,171 @@ def cancel_purchase_order(db: Session, user: User, po_id: int) -> PurchaseOrder:
     return po
 
 
-def process_approval(db: Session, user: User, po_id: int, action: str, note: Optional[str]) -> PurchaseOrder:
+def _assert_purchase_order_ready_for_submission(
+    purchase_order: PurchaseOrder,
+) -> None:
+    lines = list(getattr(purchase_order, "lines", []) or [])
+    phases = list(getattr(purchase_order, "phases", []) or [])
+
+    if purchase_order.supplier_id is None:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            "Purchase order requires a supplier",
+        )
+
+    if not lines:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            "Purchase order requires at least one normalized line",
+        )
+
+    if not phases:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            "Purchase order requires at least one delivery phase",
+        )
+
+    phase_ids = {phase.id for phase in phases}
+    currency_ids = {line.currency_id for line in lines}
+    exchange_rates = {
+        Decimal(str(line.exchange_rate_used))
+        for line in lines
+    }
+
+    if len(currency_ids) != 1 or len(exchange_rates) != 1:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            "Purchase-order lines contain inconsistent commercial terms",
+        )
+
+    first_line = lines[0]
+
+    if (
+        purchase_order.currency_id != first_line.currency_id
+        or Decimal(str(purchase_order.exchange_rate_used))
+        != Decimal(str(first_line.exchange_rate_used))
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            "Purchase-order header terms do not match its normalized lines",
+        )
+
+    for line in lines:
+        allocations = list(
+            getattr(line, "allocations", []) or []
+        )
+
+        if not allocations:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_INVALID_STRUCTURE,
+                f"Purchase-order line {line.line_number} has no delivery allocation",
+            )
+
+        if any(
+            allocation.phase_id not in phase_ids
+            for allocation in allocations
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_INVALID_STRUCTURE,
+                f"Purchase-order line {line.line_number} has an invalid phase allocation",
+            )
+
+        allocated_quantity = sum(
+            (
+                Decimal(str(allocation.allocated_quantity))
+                for allocation in allocations
+            ),
+            Decimal("0"),
+        )
+
+        if allocated_quantity != Decimal(
+            str(line.ordered_quantity)
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_INVALID_STRUCTURE,
+                f"Purchase-order line {line.line_number} allocation total does not equal ordered quantity",
+            )
+
+
+def process_approval(
+    db: Session,
+    user: User,
+    po_id: int,
+    action: str,
+    note: Optional[str],
+) -> PurchaseOrder:
     po = get_po_or_404(db, po_id, user)
+
     if action == "submit":
-        if po.approval_status != PurchaseApprovalStatus.DRAFT.value:
-            raise HTTPException(status_code=422, detail="Only draft orders can be submitted for approval")
-        po.approval_status = PurchaseApprovalStatus.PENDING.value
+        if (
+            po.approval_status
+            != PurchaseApprovalStatus.DRAFT.value
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Only draft orders can be submitted "
+                    "for approval"
+                ),
+            )
+
+        _assert_purchase_order_ready_for_submission(po)
+        po.approval_status = (
+            PurchaseApprovalStatus.PENDING.value
+        )
+
     elif action == "approve":
-        if po.approval_status != PurchaseApprovalStatus.PENDING.value:
-            raise HTTPException(status_code=422, detail="Only pending orders can be approved")
-        po.approval_status = PurchaseApprovalStatus.APPROVED.value
+        if (
+            po.approval_status
+            != PurchaseApprovalStatus.PENDING.value
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Only pending orders can be approved",
+            )
+
+        po.approval_status = (
+            PurchaseApprovalStatus.APPROVED.value
+        )
         po.status = PurchaseOrderStatus.ORDERED.value
         po.approved_by_user_id = user.id
+
         for phase in po.phases:
             if phase.status == PurchasePhaseStatus.DRAFT.value:
                 phase.status = PurchasePhaseStatus.ORDERED.value
+
     elif action == "reject":
-        if po.approval_status not in (PurchaseApprovalStatus.PENDING.value,):
-            raise HTTPException(status_code=422, detail="Only pending orders can be rejected")
+        if (
+            po.approval_status
+            != PurchaseApprovalStatus.PENDING.value
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Only pending orders can be rejected",
+            )
+
         po.approval_status = PurchaseApprovalStatus.REJECTED.value
+
     else:
-        raise HTTPException(status_code=422, detail=f"Unknown approval action: {action}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown approval action: {action}",
+        )
+
     db.commit()
     db.refresh(po)
     return po
 
 
-# ── PurchasePhase CRUD ────────────────────────────────────────────────────────
+# ── PurchasePhase CRUD# ── PurchasePhase CRUD ────────────────────────────────────────────────────────
 
 def list_phases(db: Session, user: User, po_id: int) -> List[PurchasePhase]:
     po = get_po_or_404(db, po_id, user)
@@ -932,20 +1427,60 @@ def add_receipt_link(
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
-def get_summary(db: Session, user: User, po_id: int) -> dict:
+def get_summary(
+    db: Session,
+    user: User,
+    po_id: int,
+) -> dict:
     po = get_po_or_404(db, po_id, user)
-    item_count = 0
-    total_in_currency = Decimal("0")
-    total_in_base = Decimal("0")
+    normalized_lines = list(po.lines or [])
 
-    for phase in po.phases:
-        for item in phase.items:
-            item_count += 1
-            total_in_currency += Decimal(str(item.line_total))
-            total_in_base += Decimal(str(item.line_total_base))
+    if normalized_lines:
+        item_count = len(normalized_lines)
+        total_in_currency = sum(
+            (
+                Decimal(str(line.ordered_quantity))
+                * Decimal(str(line.unit_price))
+                for line in normalized_lines
+            ),
+            Decimal("0"),
+        )
+        total_in_base = sum(
+            (
+                Decimal(str(line.ordered_quantity))
+                * Decimal(str(line.unit_price_base))
+                for line in normalized_lines
+            ),
+            Decimal("0"),
+        )
+    else:
+        legacy_items = [
+            item
+            for phase in po.phases
+            for item in phase.items
+        ]
+        item_count = len(legacy_items)
+        total_in_currency = sum(
+            (
+                Decimal(str(item.line_total))
+                for item in legacy_items
+            ),
+            Decimal("0"),
+        )
+        total_in_base = sum(
+            (
+                Decimal(str(item.line_total_base))
+                for item in legacy_items
+            ),
+            Decimal("0"),
+        )
 
     additional_costs_base = sum(
-        Decimal(str(c.amount_base)) for c in po.costs
+        (
+            Decimal(str(cost.amount_base))
+            for cost in po.costs
+        ),
+        Decimal("0"),
     )
 
     return {
@@ -962,7 +1497,7 @@ def get_summary(db: Session, user: User, po_id: int) -> dict:
     }
 
 
-# ── Embedding ─────────────────────────────────────────────────────────────────
+# ── Embedding# ── Embedding ─────────────────────────────────────────────────────────────────
 
 def ensure_po_embeddings(db: Session, user: User, po_ids: Optional[List[int]] = None) -> None:
     """Generate missing description embeddings for PurchaseOrders."""
@@ -1016,6 +1551,7 @@ def export_purchase_order_rows(
     query = (
         db.query(PurchaseOrder)
         .options(
+            selectinload(PurchaseOrder.lines),
             selectinload(PurchaseOrder.phases).selectinload(
                 PurchasePhase.items
             ),
@@ -1055,18 +1591,32 @@ def export_purchase_order_rows(
     result: list[dict] = []
 
     for order in orders:
+        normalized_lines = list(order.lines or [])
         phase_items = [
             item
             for phase in order.phases or []
             for item in phase.items or []
         ]
-        total_in_base = sum(
-            (
-                Decimal(str(item.line_total_base or 0))
-                for item in phase_items
-            ),
-            Decimal("0"),
-        )
+
+        if normalized_lines:
+            item_count = len(normalized_lines)
+            total_in_base = sum(
+                (
+                    Decimal(str(line.ordered_quantity))
+                    * Decimal(str(line.unit_price_base))
+                    for line in normalized_lines
+                ),
+                Decimal("0"),
+            )
+        else:
+            item_count = len(phase_items)
+            total_in_base = sum(
+                (
+                    Decimal(str(item.line_total_base or 0))
+                    for item in phase_items
+                ),
+                Decimal("0"),
+            )
         additional_costs_base = sum(
             (
                 Decimal(str(cost.amount_base or 0))
@@ -1084,7 +1634,7 @@ def export_purchase_order_rows(
                 "approval_status": order.approval_status,
                 "rfq_id": order.rfq_id,
                 "phase_count": len(order.phases or []),
-                "item_count": len(phase_items),
+                "item_count": item_count,
                 "total_in_base": total_in_base,
                 "additional_costs_base": additional_costs_base,
                 "grand_total_base": (

@@ -249,12 +249,43 @@ def _purchase_order(
     status=PurchaseOrderStatus.DRAFT.value,
     approval_status=PurchaseApprovalStatus.DRAFT.value,
     phases=None,
+    lines=None,
 ):
+    default_phase = SimpleNamespace(
+        id=21,
+        status=PurchasePhaseStatus.DRAFT.value,
+    )
+    default_line = SimpleNamespace(
+        line_number=1,
+        ordered_quantity=Decimal("2"),
+        currency_id=1,
+        exchange_rate_used=Decimal("1"),
+        allocations=[
+            SimpleNamespace(
+                phase_id=21,
+                allocated_quantity=Decimal("2"),
+            )
+        ],
+    )
+
     return SimpleNamespace(
+        supplier_id=14,
+        currency_id=1,
+        base_currency_id=1,
+        exchange_rate_used=Decimal("1"),
         status=status,
         approval_status=approval_status,
         approved_by_user_id=None,
-        phases=[] if phases is None else phases,
+        phases=(
+            [default_phase]
+            if phases is None
+            else phases
+        ),
+        lines=(
+            [default_line]
+            if lines is None
+            else lines
+        ),
     )
 
 
@@ -426,4 +457,34 @@ def test_cancelled_purchase_order_cannot_be_updated(monkeypatch):
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "Cannot edit a cancelled purchase order"
+    assert db.commits == 0
+
+
+
+def test_submit_rejects_empty_legacy_purchase_order(monkeypatch):
+    purchase_order = _purchase_order(
+        phases=[],
+        lines=[],
+    )
+    db = FakeSession()
+    user = SimpleNamespace(id=11)
+
+    _patch_purchase_order_lookup(
+        monkeypatch,
+        purchase_order,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        purchase_services.process_approval(
+            db=db,
+            user=user,
+            po_id=7,
+            action="submit",
+            note=None,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == (
+        "PURCHASE_ORDER_INVALID_STRUCTURE"
+    )
     assert db.commits == 0
