@@ -79,6 +79,61 @@ Build Phase 2 in this order:
 Asset foundation must come before work orders. Work orders need a reliable way to
 identify both the plant position and the physical equipment.
 
+### 3.1 Backend Package And URL Layout
+
+Phase 2 should appear to frontend users as one Maintenance product area, but it
+should not be implemented as one giant backend module.
+
+Use this layout:
+
+```text
+User-facing URL namespace:
+  /maintenance/assets
+  /maintenance/work-orders
+  /maintenance/defects
+  /maintenance/pm
+  /maintenance/inspections
+  /maintenance/dashboard
+
+Backend ownership:
+  backend/maintenance/asset_management/
+  backend/maintenance/work_order_management/
+  backend/maintenance/defect_management/
+  backend/maintenance/pm_management/
+  backend/maintenance/inspection_management/
+  backend/maintenance/reporting/
+```
+
+Each backend module owns its own:
+
+```text
+models.py
+schemas.py
+services.py
+permissions.py
+routes/
+search/
+assistant_tools.py
+tests/
+Alembic migration
+```
+
+The API router can mount each module under the shared `/maintenance` prefix:
+
+```text
+backend/maintenance/asset_management routes       -> /maintenance/assets
+backend/maintenance/work_order_management routes  -> /maintenance/work-orders
+backend/maintenance/defect_management routes      -> /maintenance/defects
+backend/maintenance/pm_management routes          -> /maintenance/pm
+backend/maintenance/inspection_management routes  -> /maintenance/inspections
+backend/maintenance/reporting routes              -> /maintenance/dashboard, /maintenance/kpi, /maintenance/reports/...
+```
+
+This gives frontend a single maintenance section while preserving clean module
+boundaries and future extraction options. The maintenance folder is only a code
+organization parent; each submodule still owns its own models, services, routes,
+permissions, tests, and migrations.
+
 ## 4. Asset Management
 
 ### 4.1 Purpose
@@ -89,54 +144,47 @@ It does not replace `tag_management`. Tags are existing functional positions.
 Asset management links physical units to those positions through installation
 history.
 
-### 4.2 Asset Hierarchy
+### 4.2 Tag Hierarchy Vs Asset Hierarchy
 
-Use this hierarchy for equipment organization:
+The plant/process structure belongs to `tag_management`, not to
+`asset_management`.
+
+Use the existing tag hierarchy to represent:
 
 ```text
-Plant
-  -> AssetSystem / Unit
-      -> Asset / Equipment
-          -> Component / Sub-component
+Plant / Site
+  -> Unit / Area
+      -> System
+          -> Functional Position / Tag
 ```
 
-The tag hierarchy remains separate and should continue to represent functional
-positions.
+Example:
+
+```text
+Refinery
+  -> Crude Unit
+      -> Pumping System
+          -> P-1001A
+          -> P-1001B
+```
+
+Asset management should not duplicate `Plant` or `AssetSystem` tables unless a
+future customer has a separate asset-only grouping requirement. For this project,
+the source of truth for plant/unit/system/position is the tag tree.
+
+Asset hierarchy is only for physical equipment and its sub-components:
+
+```text
+Pump SN-88921
+  -> Motor SN-M771
+  -> Coupling SN-C221
+  -> Seal Assembly
+  -> Bearing Housing
+```
+
+The two hierarchies connect through `AssetInstallation`.
 
 ### 4.3 Models
-
-#### Plant
-
-```text
-Plant
-  id
-  company_id
-  code
-  name
-  plant_type: refinery / platform / pipeline / terminal / other
-  location
-  description
-  is_active
-  created_at
-  updated_at
-```
-
-#### AssetSystem
-
-```text
-AssetSystem
-  id
-  company_id
-  plant_id FK -> plants.id
-  parent_system_id FK -> asset_systems.id nullable
-  code
-  name
-  system_type: process / utility / fire_gas / instrument / electrical / other
-  description
-  is_active
-  created_at
-  updated_at
-```
 
 #### Asset
 
@@ -156,7 +204,6 @@ Asset
   asset_type: rotating / static / electrical / instrument / civil / piping / tool / other
   criticality: A / B / C
   lifecycle_status: in_stock / installed / standby / under_maintenance / removed / overhauled / decommissioned / scrapped
-  asset_system_id FK -> asset_systems.id nullable
   parent_asset_id FK -> assets.id nullable
   installation_date nullable
   warranty_expiry nullable
@@ -170,6 +217,7 @@ Notes:
 - `item_id` connects the asset back to the material catalog and procurement/warehouse flow.
 - `model_id` connects the asset to the equipment model type.
 - `source_stock_serial_id` connects the asset to the serialized stock unit it came from.
+- `parent_asset_id` is only for physical component hierarchy, not plant hierarchy.
 - Do not store `tag_id` as the only source of installation truth on `Asset`.
   Use `AssetInstallation`.
 
@@ -223,14 +271,23 @@ AssetSpecification
 
 #### AssetSpare
 
-Connects an asset or asset model to valid spare items.
+Connects a physical asset or an equipment model to valid spare items.
+
+There are two different model concepts here:
+
+- `applies_to_model_id` means "this spare is valid for this equipment model"
+- the spare item can have its own `Item.model_id`, resolved through `item_id`
+
+Do not duplicate the spare item's own model on `AssetSpare`. If the spare part
+itself has a manufacturer/model, store that on the `Item` in material
+management.
 
 ```text
 AssetSpare
   id
   company_id
   asset_id FK -> assets.id nullable
-  model_id FK -> managed_models.id nullable
+  applies_to_model_id FK -> managed_models.id nullable
   item_id FK -> material_management.items.id
   qty_required nullable
   recommended_stock_qty nullable
@@ -242,8 +299,11 @@ AssetSpare
 
 Rules:
 
-- Either `asset_id` or `model_id` must be present.
+- Either `asset_id` or `applies_to_model_id` must be present.
+- Do not provide both `asset_id` and `applies_to_model_id` on the same row.
 - `item_id` is the spare part or consumable to request/buy/stock.
+- If `item_id` points to an item that has its own `Item.model_id`, that is the
+  spare item's model, not the model this spare applies to.
 - Use the material service to resolve item display fields.
 
 #### AssetDocument
@@ -282,29 +342,29 @@ AssetHistory
 Use these route groups:
 
 ```text
-GET    /assets
-POST   /assets
-GET    /assets/{asset_id}
-PATCH  /assets/{asset_id}
-DELETE /assets/{asset_id}
+GET    /maintenance/assets
+POST   /maintenance/assets
+GET    /maintenance/assets/{asset_id}
+PATCH  /maintenance/assets/{asset_id}
+DELETE /maintenance/assets/{asset_id}
 
-GET    /assets/tree
-GET    /assets/{asset_id}/history
-POST   /assets/{asset_id}/history
+GET    /maintenance/assets/tree
+GET    /maintenance/assets/{asset_id}/history
+POST   /maintenance/assets/{asset_id}/history
 
-GET    /assets/{asset_id}/installations
-POST   /assets/{asset_id}/install
-POST   /assets/{asset_id}/remove
+GET    /maintenance/assets/{asset_id}/installations
+POST   /maintenance/assets/{asset_id}/install
+POST   /maintenance/assets/{asset_id}/remove
 
-GET    /tags/{tag_id}/current-asset
-GET    /tags/{tag_id}/asset-history
+GET    /maintenance/assets/by-tag/{tag_id}/current
+GET    /maintenance/assets/by-tag/{tag_id}/history
 
-GET    /assets/{asset_id}/spares
-POST   /assets/{asset_id}/spares
-DELETE /assets/{asset_id}/spares/{spare_id}
+GET    /maintenance/assets/{asset_id}/spares
+POST   /maintenance/assets/{asset_id}/spares
+DELETE /maintenance/assets/{asset_id}/spares/{spare_id}
 
-POST   /assets/search
-POST   /assets/ask
+POST   /maintenance/assets/search
+POST   /maintenance/assets/ask
 ```
 
 ### 4.5 Asset Frontend
@@ -315,7 +375,8 @@ Build:
 - asset detail
 - current tag/installation card
 - installation history
-- asset tree by plant/system/component
+- asset/component tree
+- tag tree with current installed asset context
 - spare parts tab
 - documents tab
 - lifecycle timeline
@@ -398,7 +459,7 @@ Rules:
 Add an asset endpoint like:
 
 ```text
-POST /assets/from-stock-serial/{stock_serial_id}
+POST /maintenance/assets/from-stock-serial/{stock_serial_id}
 ```
 
 It creates:
@@ -414,7 +475,7 @@ Asset
 Then installation is a separate step:
 
 ```text
-POST /assets/{asset_id}/install
+POST /maintenance/assets/{asset_id}/install
 ```
 
 ## 6. Work Order Management
@@ -496,8 +557,6 @@ WorkOrder
   tag_id FK -> tag_management.system_tags.id nullable
   asset_id FK -> asset_management.assets.id nullable
   asset_installation_id FK -> asset_installations.id nullable
-  asset_system_id FK -> asset_systems.id nullable
-
   title
   description
   requested_by_user_id FK -> users.id nullable
@@ -533,7 +592,7 @@ Rules:
 - Field/site WO: `tag_id` is required. `asset_id` is optional but should be auto-filled from current installation when available.
 - Workshop WO: `asset_id` is required. `tag_id` can be null or reference the previous/current tag.
 - WO from defect: copy `tag_id`, `asset_id`, and current `asset_installation_id` from the defect context.
-- WO from PM: copy target tag/asset/system from the PM plan.
+- WO from PM: copy target tag/asset/route context from the PM plan.
 - Old work orders must never change when an asset is replaced.
 
 ### 6.6 WorkOrderTask
@@ -636,51 +695,54 @@ WorkOrderAttachment
 ### 6.11 Work Order Endpoints
 
 ```text
-GET    /work-orders
-POST   /work-orders
-GET    /work-orders/{wo_id}
-PATCH  /work-orders/{wo_id}
-DELETE /work-orders/{wo_id}
+GET    /maintenance/work-orders
+POST   /maintenance/work-orders
+GET    /maintenance/work-orders/{wo_id}
+PATCH  /maintenance/work-orders/{wo_id}
+DELETE /maintenance/work-orders/{wo_id}
 
-POST   /work-orders/{wo_id}/submit
-POST   /work-orders/{wo_id}/approve
-POST   /work-orders/{wo_id}/reject
-POST   /work-orders/{wo_id}/plan
-POST   /work-orders/{wo_id}/hold
-POST   /work-orders/{wo_id}/resume
-POST   /work-orders/{wo_id}/start
-POST   /work-orders/{wo_id}/complete
-POST   /work-orders/{wo_id}/close
-POST   /work-orders/{wo_id}/cancel
+POST   /maintenance/work-orders/{wo_id}/submit
+POST   /maintenance/work-orders/{wo_id}/approve
+POST   /maintenance/work-orders/{wo_id}/reject
+POST   /maintenance/work-orders/{wo_id}/plan
+POST   /maintenance/work-orders/{wo_id}/hold
+POST   /maintenance/work-orders/{wo_id}/resume
+POST   /maintenance/work-orders/{wo_id}/start
+POST   /maintenance/work-orders/{wo_id}/complete
+POST   /maintenance/work-orders/{wo_id}/close
+POST   /maintenance/work-orders/{wo_id}/cancel
 
-GET    /work-orders/{wo_id}/tasks
-POST   /work-orders/{wo_id}/tasks
-PATCH  /work-orders/{wo_id}/tasks/{task_id}
-DELETE /work-orders/{wo_id}/tasks/{task_id}
+GET    /maintenance/work-orders/{wo_id}/tasks
+POST   /maintenance/work-orders/{wo_id}/tasks
+PATCH  /maintenance/work-orders/{wo_id}/tasks/{task_id}
+DELETE /maintenance/work-orders/{wo_id}/tasks/{task_id}
 
-GET    /work-orders/{wo_id}/materials
-POST   /work-orders/{wo_id}/materials
-PATCH  /work-orders/{wo_id}/materials/{line_id}
-POST   /work-orders/{wo_id}/materials/{line_id}/reserve
-POST   /work-orders/{wo_id}/materials/{line_id}/issue
-POST   /work-orders/{wo_id}/materials/{line_id}/return
+GET    /maintenance/work-orders/{wo_id}/materials
+POST   /maintenance/work-orders/{wo_id}/materials
+PATCH  /maintenance/work-orders/{wo_id}/materials/{line_id}
+POST   /maintenance/work-orders/{wo_id}/materials/{line_id}/reserve
+POST   /maintenance/work-orders/{wo_id}/materials/{line_id}/issue
+POST   /maintenance/work-orders/{wo_id}/materials/{line_id}/return
+POST   /maintenance/work-orders/{wo_id}/materials/{line_id}/create-mr
+POST   /maintenance/work-orders/{wo_id}/create-mr
+POST   /maintenance/work-orders/{wo_id}/replacement/create-mr
 
-GET    /work-orders/{wo_id}/labor
-POST   /work-orders/{wo_id}/labor
-PATCH  /work-orders/{wo_id}/labor/{labor_id}
-DELETE /work-orders/{wo_id}/labor/{labor_id}
+GET    /maintenance/work-orders/{wo_id}/labor
+POST   /maintenance/work-orders/{wo_id}/labor
+PATCH  /maintenance/work-orders/{wo_id}/labor/{labor_id}
+DELETE /maintenance/work-orders/{wo_id}/labor/{labor_id}
 
-GET    /work-orders/{wo_id}/failure
-PUT    /work-orders/{wo_id}/failure
+GET    /maintenance/work-orders/{wo_id}/failure
+PUT    /maintenance/work-orders/{wo_id}/failure
 
-POST   /work-orders/{wo_id}/attachments
-GET    /work-orders/{wo_id}/attachments
-DELETE /work-orders/{wo_id}/attachments/{attachment_id}
+POST   /maintenance/work-orders/{wo_id}/attachments
+GET    /maintenance/work-orders/{wo_id}/attachments
+DELETE /maintenance/work-orders/{wo_id}/attachments/{attachment_id}
 
-GET    /work-orders/{wo_id}/job-card
-POST   /work-orders/search
-POST   /work-orders/export
-POST   /work-orders/ask
+GET    /maintenance/work-orders/{wo_id}/job-card
+POST   /maintenance/work-orders/search
+POST   /maintenance/work-orders/export
+POST   /maintenance/work-orders/ask
 ```
 
 ## 7. Defect Management
@@ -756,24 +818,24 @@ DefectComment
 ### 7.5 Defect Endpoints
 
 ```text
-GET    /defects
-POST   /defects
-GET    /defects/{defect_id}
-PATCH  /defects/{defect_id}
+GET    /maintenance/defects
+POST   /maintenance/defects
+GET    /maintenance/defects/{defect_id}
+PATCH  /maintenance/defects/{defect_id}
 
-POST   /defects/{defect_id}/acknowledge
-POST   /defects/{defect_id}/reject
-POST   /defects/{defect_id}/create-work-order
-POST   /defects/{defect_id}/link-work-order
-POST   /defects/{defect_id}/resolve
-POST   /defects/{defect_id}/close
+POST   /maintenance/defects/{defect_id}/acknowledge
+POST   /maintenance/defects/{defect_id}/reject
+POST   /maintenance/defects/{defect_id}/create-work-order
+POST   /maintenance/defects/{defect_id}/link-work-order
+POST   /maintenance/defects/{defect_id}/resolve
+POST   /maintenance/defects/{defect_id}/close
 
-GET    /defects/{defect_id}/comments
-POST   /defects/{defect_id}/comments
+GET    /maintenance/defects/{defect_id}/comments
+POST   /maintenance/defects/{defect_id}/comments
 
-POST   /defects/search
-POST   /defects/export
-POST   /defects/ask
+POST   /maintenance/defects/search
+POST   /maintenance/defects/export
+POST   /maintenance/defects/ask
 ```
 
 ## 8. Preventive Maintenance
@@ -784,9 +846,8 @@ PM management creates planned work before failures happen.
 
 PM can target:
 
-- a tag
+- a tag (this can be a plant, unit, system, or functional position node in the tag tree)
 - an asset
-- an asset system
 - a route/group of tags or assets
 
 ### 8.2 MaintenancePlan
@@ -798,10 +859,9 @@ MaintenancePlan
   plan_number auto, e.g. MP-2026-0001
   name
   description
-  target_type: tag / asset / asset_system / route
+  target_type: tag / asset / route
   tag_id nullable
   asset_id nullable
-  asset_system_id nullable
   is_active
   created_at
   updated_at
@@ -880,28 +940,28 @@ Rules:
 ### 8.6 PM Endpoints
 
 ```text
-GET    /pm/plans
-POST   /pm/plans
-GET    /pm/plans/{plan_id}
-PATCH  /pm/plans/{plan_id}
-DELETE /pm/plans/{plan_id}
+GET    /maintenance/pm/plans
+POST   /maintenance/pm/plans
+GET    /maintenance/pm/plans/{plan_id}
+PATCH  /maintenance/pm/plans/{plan_id}
+DELETE /maintenance/pm/plans/{plan_id}
 
-GET    /pm/plans/{plan_id}/tasks
-POST   /pm/plans/{plan_id}/tasks
-PATCH  /pm/plans/{plan_id}/tasks/{task_id}
-DELETE /pm/plans/{plan_id}/tasks/{task_id}
+GET    /maintenance/pm/plans/{plan_id}/tasks
+POST   /maintenance/pm/plans/{plan_id}/tasks
+PATCH  /maintenance/pm/plans/{plan_id}/tasks/{task_id}
+DELETE /maintenance/pm/plans/{plan_id}/tasks/{task_id}
 
-GET    /pm/tasks/{task_id}/triggers
-POST   /pm/tasks/{task_id}/triggers
-PATCH  /pm/tasks/{task_id}/triggers/{trigger_id}
+GET    /maintenance/pm/tasks/{task_id}/triggers
+POST   /maintenance/pm/tasks/{task_id}/triggers
+PATCH  /maintenance/pm/tasks/{task_id}/triggers/{trigger_id}
 
-GET    /pm/schedules
-POST   /pm/schedules/{schedule_id}/generate-work-order
-POST   /pm/schedules/{schedule_id}/skip
+GET    /maintenance/pm/schedules
+POST   /maintenance/pm/schedules/{schedule_id}/generate-work-order
+POST   /maintenance/pm/schedules/{schedule_id}/skip
 
-GET    /pm/calendar
-POST   /pm/search
-POST   /pm/ask
+GET    /maintenance/pm/calendar
+POST   /maintenance/pm/search
+POST   /maintenance/pm/ask
 ```
 
 ## 9. Inspection Management
@@ -964,25 +1024,25 @@ InspectionResultLine
 ### 9.3 Inspection Endpoints
 
 ```text
-GET    /inspections/checklists
-POST   /inspections/checklists
-GET    /inspections/checklists/{checklist_id}
-PATCH  /inspections/checklists/{checklist_id}
+GET    /maintenance/inspections/checklists
+POST   /maintenance/inspections/checklists
+GET    /maintenance/inspections/checklists/{checklist_id}
+PATCH  /maintenance/inspections/checklists/{checklist_id}
 
-POST   /inspections/checklists/{checklist_id}/items
-PATCH  /inspections/checklists/{checklist_id}/items/{item_id}
-DELETE /inspections/checklists/{checklist_id}/items/{item_id}
+POST   /maintenance/inspections/checklists/{checklist_id}/items
+PATCH  /maintenance/inspections/checklists/{checklist_id}/items/{item_id}
+DELETE /maintenance/inspections/checklists/{checklist_id}/items/{item_id}
 
-POST   /inspections/results
-GET    /inspections/results
-GET    /inspections/results/{result_id}
-PATCH  /inspections/results/{result_id}
-POST   /inspections/results/{result_id}/complete
-POST   /inspections/results/{result_id}/create-defect
-POST   /inspections/results/{result_id}/create-work-order
+POST   /maintenance/inspections/results
+GET    /maintenance/inspections/results
+GET    /maintenance/inspections/results/{result_id}
+PATCH  /maintenance/inspections/results/{result_id}
+POST   /maintenance/inspections/results/{result_id}/complete
+POST   /maintenance/inspections/results/{result_id}/create-defect
+POST   /maintenance/inspections/results/{result_id}/create-work-order
 
-POST   /inspections/search
-POST   /inspections/ask
+POST   /maintenance/inspections/search
+POST   /maintenance/inspections/ask
 ```
 
 ## 10. Warehouse And Maintenance Integration
@@ -1038,6 +1098,75 @@ MaterialRequisition
 If Phase 1 requisitions do not yet have these source fields, add them in a
 backward-compatible migration.
 
+Required maintenance endpoints:
+
+```text
+POST /maintenance/work-orders/{wo_id}/materials/{line_id}/create-mr
+POST /maintenance/work-orders/{wo_id}/create-mr
+POST /maintenance/work-orders/{wo_id}/replacement/create-mr
+```
+
+Endpoint meanings:
+
+- `materials/{line_id}/create-mr`: create an MR for one missing spare part or consumable.
+- `work-orders/{wo_id}/create-mr`: create one MR for multiple missing WO material lines.
+- `replacement/create-mr`: create an MR for a full replacement equipment item that may become an asset after receiving.
+
+The URL belongs to maintenance because the user starts from WO context. The MR
+record belongs to `requisition_management`.
+
+Implementation rule:
+
+```text
+maintenance/work_order_management endpoint
+  -> validates WO, tag, asset, and material context
+  -> emits MaintenanceMRRequested event or Celery command
+  -> requisition_management creates MaterialRequisition and MR lines
+  -> maintenance stores returned mr_id/mr_number link on the WO material context
+```
+
+Do not create MR tables inside maintenance. Do not create maintenance-only item
+records. MR lines must use shared `item_id` values from material management.
+
+For a spare part request:
+
+```text
+source_type = work_order_material
+work_order_id = wo_id
+source_line_id = work_order_material_id
+item_id = WorkOrderMaterial.item_id or AssetSpare.item_id
+tag_id
+asset_id
+asset_spare_id nullable
+quantity
+needed_by_date
+```
+
+For a full asset replacement request:
+
+```text
+source_type = asset_replacement
+work_order_id = wo_id
+tag_id = replacement position
+asset_id = failed/current asset nullable
+replace_asset_id = failed/current asset nullable
+item_id = replacement equipment item
+quantity = 1
+requires_asset_registration = true
+intended_lifecycle_tracking = true
+needed_by_date
+```
+
+After the replacement item is purchased and received:
+
+```text
+PO/GRN receives Item
+  -> warehouse captures serial
+  -> maintenance creates Asset from stock serial
+  -> maintenance installs Asset at Tag
+  -> old AssetInstallation is removed/closed
+```
+
 ## 11. Commerce And Maintenance Integration
 
 Commerce buys `Item`, not `Asset`.
@@ -1090,7 +1219,7 @@ Financial should be able to report:
 - cost by work order
 - cost by tag
 - cost by physical asset
-- cost by asset system
+- cost by tag hierarchy level such as plant, unit, system, or position
 - material cost vs labor cost
 - maintenance cost trend
 
@@ -1163,8 +1292,7 @@ material-consumption
 ```text
 from
 to
-plant_id
-asset_system_id
+tag_scope_id
 tag_id
 asset_id
 criticality

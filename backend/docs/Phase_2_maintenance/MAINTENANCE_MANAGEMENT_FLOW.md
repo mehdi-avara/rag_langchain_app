@@ -26,6 +26,31 @@ Maintenance turns selected Items/serials into Assets when lifecycle tracking is 
 Maintenance installs Assets at Tags.
 ```
 
+Frontend should expose all Phase 2 maintenance features inside one maintenance
+area:
+
+```text
+/maintenance/assets
+/maintenance/work-orders
+/maintenance/defects
+/maintenance/pm
+/maintenance/inspections
+/maintenance/dashboard
+```
+
+This is a product and URL grouping only. The backend must still implement each
+maintenance capability in its own submodule under the maintenance package so
+ownership stays clear:
+
+```text
+backend/maintenance/asset_management
+backend/maintenance/work_order_management
+backend/maintenance/defect_management
+backend/maintenance/pm_management
+backend/maintenance/inspection_management
+backend/maintenance/reporting
+```
+
 ## 2. Why Tag And Asset Are Both Needed
 
 `Tag` answers:
@@ -271,7 +296,7 @@ Financial should report cost by:
 work order
 tag
 asset
-asset system
+tag hierarchy level such as plant, unit, or system
 item
 supplier
 period
@@ -337,7 +362,7 @@ Close
 
 ```text
 Create PM Plan
-  -> target tag, asset, asset system, or route
+  -> target tag, asset, or route
 
 Add PM Tasks
   -> craft
@@ -388,6 +413,15 @@ If not available:
   maintenance reserves/issues item to WO
 ```
 
+Frontend action:
+
+```text
+POST /maintenance/work-orders/{wo_id}/materials/{line_id}/create-mr
+```
+
+The button can say `Create MR` or `Request Part`, but the line must use the
+shared `item_id`. Maintenance should not create a separate maintenance-only item.
+
 ### 6.6 Buying A Whole Asset
 
 ```text
@@ -406,6 +440,16 @@ Maintenance creates Asset from received serial
   -> new AssetInstallation current
 ```
 
+Frontend action:
+
+```text
+POST /maintenance/work-orders/{wo_id}/replacement/create-mr
+```
+
+The MR is for a replacement `Item`, not an `Asset`. After warehouse receives the
+item and captures the serial number, maintenance can register that serial as an
+`Asset` and install it at the tag.
+
 ## 7. Frontend Screens
 
 ### Asset Screens
@@ -415,7 +459,8 @@ Build:
 ```text
 asset list
 asset detail
-asset tree by plant/system
+asset/component tree
+tag tree with current asset context
 tag tree with current asset card
 asset installation history
 spare parts tab
@@ -525,7 +570,7 @@ Do not directly edit statuses.
 Do not send:
 
 ```text
-PATCH /work-orders/{id} { "status": "closed" }
+PATCH /maintenance/work-orders/{id} { "status": "closed" }
 ```
 
 Use workflow actions:
