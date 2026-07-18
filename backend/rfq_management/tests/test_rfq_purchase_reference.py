@@ -29,16 +29,20 @@ def _rfq_with_winner(response_items):
                 item_id=501,
                 item_code="SP-001",
                 item_name="Seal",
+                unit_id=31,
                 unit_code="PCS",
                 quantity=Decimal("4"),
+                specifications="Mechanical seal",
             ),
             SimpleNamespace(
                 id=101,
                 item_id=502,
                 item_code="SP-002",
                 item_name="Bearing",
+                unit_id=31,
                 unit_code="PCS",
                 quantity=Decimal("2"),
+                specifications="High-temperature bearing",
             ),
         ],
         responses=[winner],
@@ -98,6 +102,10 @@ def test_winning_quotation_reference_returns_uniform_complete_quote(monkeypatch)
     assert result["supplier_id"] == 7
     assert len(result["items"]) == 2
     assert result["items"][0]["item_id"] == 501
+    assert result["items"][0]["unit_id"] == 31
+    assert result["items"][0]["specifications"] == (
+        "Mechanical seal"
+    )
 
 def test_select_winner_rejects_incomplete_quote_before_closing_rfq(monkeypatch):
     response = SimpleNamespace(

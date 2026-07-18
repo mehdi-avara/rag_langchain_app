@@ -543,12 +543,10 @@ def create_purchase_order_from_rfq(
     )
 
     if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": PURCHASE_ORDER_RFQ_ALREADY_LINKED,
-                "message": "A purchase order already exists for this RFQ",
-            },
+        purchase_error(
+            status.HTTP_409_CONFLICT,
+            PURCHASE_ORDER_RFQ_ALREADY_LINKED,
+            "A purchase order already exists for this RFQ",
         )
 
     source = _get_winning_quotation_reference_for_purchase(
@@ -556,6 +554,115 @@ def create_purchase_order_from_rfq(
         user=user,
         rfq_id=rfq_id,
     )
+    source_items = list(source.get("items") or [])
+
+    if not source_items:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_RFQ_INVALID_WINNER,
+            "Winning quotation contains no purchase items",
+        )
+
+    header_currency_id = source["currency_id"]
+    header_base_currency_id = source["base_currency_id"]
+    header_exchange_rate = Decimal(
+        str(source["exchange_rate_used"])
+    )
+
+    prepared_lines: list[dict] = []
+
+    for line_number, source_item in enumerate(
+        source_items,
+        start=1,
+    ):
+        item_id = source_item.get("item_id")
+        unit_id = source_item.get("unit_id")
+
+        if item_id is None or unit_id is None:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_RFQ_INVALID_WINNER,
+                "Winning quotation contains an item without a material or unit reference",
+            )
+
+        quantity = Decimal(
+            str(source_item["quantity"])
+        )
+        unit_price = Decimal(
+            str(source_item["unit_price"])
+        )
+        unit_price_base = Decimal(
+            str(source_item["unit_price_base"])
+        )
+        exchange_rate = Decimal(
+            str(source_item["exchange_rate_used"])
+        )
+
+        if quantity <= 0:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_RFQ_INVALID_WINNER,
+                "Winning quotation contains a non-positive quantity",
+            )
+
+        if unit_price < 0 or unit_price_base < 0:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_RFQ_INVALID_WINNER,
+                "Winning quotation contains a negative price",
+            )
+
+        if exchange_rate <= 0:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_RFQ_INVALID_WINNER,
+                "Winning quotation contains an invalid exchange rate",
+            )
+
+        if (
+            source_item["currency_id"]
+            != header_currency_id
+            or source_item["base_currency_id"]
+            != header_base_currency_id
+            or exchange_rate != header_exchange_rate
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_RFQ_INVALID_WINNER,
+                "Winning quotation item terms do not match the purchase-order header",
+            )
+
+        prepared_lines.append(
+            {
+                "line_number": line_number,
+                "item_id": item_id,
+                "ordered_quantity": quantity,
+                "unit_id": unit_id,
+                "line_description": (
+                    (
+                        source_item.get(
+                            "specifications"
+                        )
+                        or source_item.get("item_name")
+                        or ""
+                    ).strip()
+                    or None
+                ),
+                "unit_price": unit_price,
+                "currency_id": source_item[
+                    "currency_id"
+                ],
+                "unit_price_base": unit_price_base,
+                "exchange_rate_used": exchange_rate,
+                "notes": (
+                    (
+                        source_item.get("notes")
+                        or ""
+                    ).strip()
+                    or None
+                ),
+            }
+        )
 
     for _ in range(5):
         try:
@@ -565,11 +672,19 @@ def create_purchase_order_from_rfq(
             )
 
             description_parts = [
-                f"Created from RFQ {source['rfq_number']}.",
-                (source.get("description") or "").strip(),
+                (
+                    f"Created from RFQ "
+                    f"{source['rfq_number']}."
+                ),
+                (
+                    source.get("description")
+                    or ""
+                ).strip(),
             ]
             description = " ".join(
-                part for part in description_parts if part
+                part
+                for part in description_parts
+                if part
             )
 
             purchase_order = PurchaseOrder(
@@ -577,25 +692,31 @@ def create_purchase_order_from_rfq(
                 reference_number=reference_number,
                 title=source["title"],
                 rfq_id=source["rfq_id"],
+                source_material_requisition_id=None,
                 winning_quotation_response_id=source[
                     "winning_quotation_response_id"
                 ],
                 supplier_id=source["supplier_id"],
                 supplier_name=source["supplier_name"],
-                currency_id=source["currency_id"],
-                base_currency_id=source["base_currency_id"],
-                exchange_rate_used=source["exchange_rate_used"],
+                currency_id=header_currency_id,
+                base_currency_id=header_base_currency_id,
+                exchange_rate_used=header_exchange_rate,
                 description=description,
                 created_by_user_id=user.id,
                 status=PurchaseOrderStatus.DRAFT.value,
-                approval_status=PurchaseApprovalStatus.DRAFT.value,
+                approval_status=(
+                    PurchaseApprovalStatus.DRAFT.value
+                ),
             )
             db.add(purchase_order)
             db.flush()
 
-            delivery_days = source.get("delivery_days")
+            delivery_days = source.get(
+                "delivery_days"
+            )
             expected_delivery_date = (
-                datetime.utcnow() + timedelta(days=delivery_days)
+                datetime.utcnow()
+                + timedelta(days=delivery_days)
                 if delivery_days is not None
                 else None
             )
@@ -603,50 +724,68 @@ def create_purchase_order_from_rfq(
             purchase_phase = PurchasePhase(
                 purchase_order_id=purchase_order.id,
                 phase_number=1,
-                title=f"RFQ {source['rfq_number']} delivery",
-                description="Generated from the selected quotation response",
+                title=(
+                    f"RFQ {source['rfq_number']} "
+                    "delivery"
+                ),
+                description=(
+                    "Generated from the selected "
+                    "quotation response"
+                ),
                 status=PurchasePhaseStatus.DRAFT.value,
-                currency_id=source["currency_id"],
-                exchange_rate_used=source["exchange_rate_used"],
-                expected_delivery_date=expected_delivery_date,
+                currency_id=header_currency_id,
+                exchange_rate_used=(
+                    header_exchange_rate
+                ),
+                expected_delivery_date=(
+                    expected_delivery_date
+                ),
             )
             db.add(purchase_phase)
             db.flush()
 
-            for source_item in source["items"]:
-                if source_item["item_id"] is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail={
-                            "code": PURCHASE_ORDER_RFQ_INVALID_WINNER,
-                            "message": "Winning quotation contains an item without a material reference",
-                        },
-                    )
-
-                quantity = Decimal(str(source_item["quantity"]))
-                unit_price = Decimal(str(source_item["unit_price"]))
-                unit_price_base = Decimal(
-                    str(source_item["unit_price_base"])
+            for line_data in prepared_lines:
+                purchase_line = PurchaseOrderLine(
+                    purchase_order_id=(
+                        purchase_order.id
+                    ),
+                    line_number=line_data[
+                        "line_number"
+                    ],
+                    item_id=line_data["item_id"],
+                    ordered_quantity=line_data[
+                        "ordered_quantity"
+                    ],
+                    unit_id=line_data["unit_id"],
+                    line_description=line_data[
+                        "line_description"
+                    ],
+                    unit_price=line_data[
+                        "unit_price"
+                    ],
+                    currency_id=line_data[
+                        "currency_id"
+                    ],
+                    unit_price_base=line_data[
+                        "unit_price_base"
+                    ],
+                    exchange_rate_used=line_data[
+                        "exchange_rate_used"
+                    ],
+                    notes=line_data["notes"],
                 )
+                db.add(purchase_line)
+                db.flush()
 
                 db.add(
-                    PurchasePhaseItem(
+                    PurchasePhaseAllocation(
                         phase_id=purchase_phase.id,
-                        item_id=source_item["item_id"],
-                        item_name=source_item["item_name"],
-                        item_code=source_item["item_code"],
-                        quantity=quantity,
-                        unit=source_item["unit_code"],
-                        unit_price=unit_price,
-                        currency_id=source_item["currency_id"],
-                        unit_price_base=unit_price_base,
-                        base_currency_id=source_item["base_currency_id"],
-                        exchange_rate_used=source_item[
-                            "exchange_rate_used"
+                        purchase_order_line_id=(
+                            purchase_line.id
+                        ),
+                        allocated_quantity=line_data[
+                            "ordered_quantity"
                         ],
-                        line_total=quantity * unit_price,
-                        line_total_base=quantity * unit_price_base,
-                        notes=source_item.get("notes"),
                     )
                 )
 
@@ -655,10 +794,13 @@ def create_purchase_order_from_rfq(
                     db=db,
                     user=user,
                     requisition_id=source["mr_id"],
-                    purchase_order_reference=reference_number,
+                    purchase_order_reference=(
+                        reference_number
+                    ),
                 )
 
             db.commit()
+
             return get_po_or_404(
                 db=db,
                 po_id=purchase_order.id,
@@ -669,12 +811,22 @@ def create_purchase_order_from_rfq(
             db.rollback()
             detail = str(exc.orig)
 
-            if "uq_purchase_orders_company_rfq" in detail:
+            if (
+                "uq_purchase_orders_company_rfq"
+                in detail
+            ):
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
+                    status_code=(
+                        status.HTTP_409_CONFLICT
+                    ),
                     detail={
-                        "code": PURCHASE_ORDER_RFQ_ALREADY_LINKED,
-                        "message": "A purchase order already exists for this RFQ",
+                        "code": (
+                            PURCHASE_ORDER_RFQ_ALREADY_LINKED
+                        ),
+                        "message": (
+                            "A purchase order already "
+                            "exists for this RFQ"
+                        ),
                     },
                 ) from exc
 
@@ -687,12 +839,10 @@ def create_purchase_order_from_rfq(
             db.rollback()
             raise
 
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "code": PURCHASE_ORDER_RFQ_INVALID_WINNER,
-            "message": "Could not generate a unique purchase order reference",
-        },
+    purchase_error(
+        status.HTTP_409_CONFLICT,
+        PURCHASE_ORDER_REFERENCE_GENERATION_FAILED,
+        "Could not generate a unique purchase order reference",
     )
 
 

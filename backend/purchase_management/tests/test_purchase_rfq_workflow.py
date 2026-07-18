@@ -7,7 +7,11 @@ from fastapi import HTTPException
 import purchase_management.services as purchase_services
 from purchase_management.models import (
     PurchaseApprovalStatus,
+    PurchaseOrderLine,
     PurchaseOrderStatus,
+    PurchasePhase,
+    PurchasePhaseAllocation,
+    PurchasePhaseItem,
     PurchasePhaseStatus,
 )
 
@@ -96,8 +100,10 @@ def test_create_purchase_order_from_rfq_creates_traceable_lines(monkeypatch):
                 "item_id": 101,
                 "item_code": "BRG-001",
                 "item_name": "Bearing",
+                "unit_id": 7,
                 "unit_code": "PCS",
                 "quantity": Decimal("2"),
+                "specifications": "Original bearing specification",
                 "unit_price": Decimal("12.5"),
                 "currency_id": 1,
                 "unit_price_base": Decimal("12.5"),
@@ -135,19 +141,77 @@ def test_create_purchase_order_from_rfq_creates_traceable_lines(monkeypatch):
         rfq_id=8,
     )
 
-    purchase_phase = db.added[1]
-    purchase_line = db.added[2]
+    purchase_phase = next(
+        value
+        for value in db.added
+        if isinstance(value, PurchasePhase)
+    )
+    purchase_line = next(
+        value
+        for value in db.added
+        if isinstance(value, PurchaseOrderLine)
+    )
+    allocation = next(
+        value
+        for value in db.added
+        if isinstance(
+            value,
+            PurchasePhaseAllocation,
+        )
+    )
 
     assert purchase_order.rfq_id == 8
-    assert purchase_order.winning_quotation_response_id == 22
+    assert (
+        purchase_order.source_material_requisition_id
+        is None
+    )
+    assert (
+        purchase_order.winning_quotation_response_id
+        == 22
+    )
     assert purchase_order.supplier_id == 14
-    assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
-    assert purchase_phase.purchase_order_id == purchase_order.id
-    assert purchase_phase.status == PurchasePhaseStatus.DRAFT.value
-    assert purchase_line.phase_id == purchase_phase.id
+    assert purchase_order.status == (
+        PurchaseOrderStatus.DRAFT.value
+    )
+
+    assert purchase_phase.purchase_order_id == (
+        purchase_order.id
+    )
+    assert purchase_phase.status == (
+        PurchasePhaseStatus.DRAFT.value
+    )
+
+    assert purchase_line.purchase_order_id == (
+        purchase_order.id
+    )
+    assert purchase_line.line_number == 1
     assert purchase_line.item_id == 101
-    assert purchase_line.line_total == Decimal("25.0")
-    assert purchase_line.line_total_base == Decimal("25.0")
+    assert purchase_line.unit_id == 7
+    assert purchase_line.ordered_quantity == (
+        Decimal("2")
+    )
+    assert purchase_line.unit_price == (
+        Decimal("12.5")
+    )
+    assert purchase_line.unit_price_base == (
+        Decimal("12.5")
+    )
+    assert purchase_line.line_description == (
+        "Original bearing specification"
+    )
+
+    assert allocation.phase_id == purchase_phase.id
+    assert allocation.purchase_order_line_id == (
+        purchase_line.id
+    )
+    assert allocation.allocated_quantity == (
+        Decimal("2")
+    )
+
+    assert not any(
+        isinstance(value, PurchasePhaseItem)
+        for value in db.added
+    )
     assert db.commits == 1
 
 
@@ -174,8 +238,10 @@ def test_create_purchase_order_from_rfq_marks_linked_requisition(monkeypatch):
                 "item_id": 101,
                 "item_code": "BRG-001",
                 "item_name": "Bearing",
+                "unit_id": 7,
                 "unit_code": "PCS",
                 "quantity": Decimal("2"),
+                "specifications": "Original bearing specification",
                 "unit_price": Decimal("12.5"),
                 "currency_id": 1,
                 "unit_price_base": Decimal("12.5"),
@@ -488,3 +554,71 @@ def test_submit_rejects_empty_legacy_purchase_order(monkeypatch):
         "PURCHASE_ORDER_INVALID_STRUCTURE"
     )
     assert db.commits == 0
+
+
+
+def test_create_purchase_order_from_rfq_rejects_missing_unit(
+    monkeypatch,
+):
+    db = FakeSession()
+    user = SimpleNamespace(
+        id=11,
+        company_id=3,
+    )
+
+    source = {
+        "rfq_id": 8,
+        "rfq_number": "RFQ-2026-0008",
+        "mr_id": None,
+        "title": "Pump spare parts",
+        "description": None,
+        "supplier_id": 14,
+        "supplier_name": "Vendor A",
+        "winning_quotation_response_id": 22,
+        "currency_id": 1,
+        "base_currency_id": 1,
+        "exchange_rate_used": Decimal("1"),
+        "delivery_days": None,
+        "items": [
+            {
+                "item_id": 101,
+                "item_code": "BRG-001",
+                "item_name": "Bearing",
+                "unit_id": None,
+                "unit_code": "PCS",
+                "quantity": Decimal("2"),
+                "specifications": None,
+                "unit_price": Decimal("12.5"),
+                "currency_id": 1,
+                "unit_price_base": Decimal("12.5"),
+                "base_currency_id": 1,
+                "exchange_rate_used": Decimal("1"),
+                "notes": None,
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        purchase_services,
+        "_get_purchase_order_for_rfq",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        purchase_services,
+        "_get_winning_quotation_reference_for_purchase",
+        lambda **kwargs: source,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        purchase_services.create_purchase_order_from_rfq(
+            db=db,
+            user=user,
+            rfq_id=8,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == (
+        "PURCHASE_ORDER_RFQ_INVALID_WINNER"
+    )
+    assert db.commits == 0
+    assert db.rollbacks == 0
