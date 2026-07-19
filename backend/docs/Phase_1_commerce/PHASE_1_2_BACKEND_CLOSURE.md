@@ -47,3 +47,16 @@ Purchase service errors use shared catalogued error codes.
 The corrective Phase 1.2 closure migration idempotently creates and assigns
 `purchase_management:phases:split` to the built-in global admin role. Its
 downgrade preserves runtime RBAC assignments.
+
+## RBAC association integrity
+
+The `role_permission` association is defined by the ORM and original schema as
+a composite primary key over `role_id` and `permission_id`.
+
+A corrective migration removes duplicate association rows and restores
+`pk_role_permission`. This makes permission seeding, role updates, and
+`ON CONFLICT DO NOTHING` operations idempotent at the database level.
+
+The downgrade removes only the restored constraint. Deduplicated rows are not
+recreated because duplicate role-permission assignments have no independent
+business meaning.

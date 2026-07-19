@@ -174,5 +174,53 @@ def test_populated_database_roundtrip_preserves_purchase_data():
             )
         ).scalar_one()
 
+        duplicate_pair_count = (
+            connection.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM (
+                        SELECT
+                            role_id,
+                            permission_id
+                        FROM role_permission
+                        GROUP BY
+                            role_id,
+                            permission_id
+                        HAVING COUNT(*) > 1
+                    ) AS duplicate_pair
+                    """
+                )
+            ).scalar_one()
+        )
+
+        primary_key_definition = (
+            connection.execute(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(
+                        constraint_row.oid
+                    )
+                    FROM pg_constraint
+                        AS constraint_row
+                    JOIN pg_class AS table_row
+                      ON table_row.oid =
+                         constraint_row.conrelid
+                    WHERE table_row.relname =
+                          'role_permission'
+                      AND constraint_row.conname =
+                          'pk_role_permission'
+                      AND constraint_row.contype =
+                          'p'
+                    """
+                )
+            ).scalar_one()
+        )
+
     assert permission_count == 1
     assert assignment_count == 1
+    assert duplicate_pair_count == 0
+    assert primary_key_definition == (
+        "PRIMARY KEY "
+        "(role_id, permission_id)"
+    )
