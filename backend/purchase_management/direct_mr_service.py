@@ -274,7 +274,6 @@ def create_purchase_order_from_mr(
             db=db,
             user=user,
             supplier_id=data["supplier_id"],
-            supplier_name=None,
         )
     )
     base_currency = (
@@ -351,7 +350,6 @@ def create_purchase_order_from_mr(
                     source["id"]
                 ),
                 supplier_id=supplier_id,
-                supplier_name=supplier_name,
                 description=description,
                 created_by_user_id=user.id,
                 status=(
@@ -362,6 +360,9 @@ def create_purchase_order_from_mr(
                     PurchaseApprovalStatus
                     .DRAFT.value
                 ),
+            )
+            purchase_order._supplier_display_name = (
+                supplier_name
             )
             db.add(purchase_order)
             db.flush()

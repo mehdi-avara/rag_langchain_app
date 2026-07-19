@@ -40,6 +40,65 @@ class PurchaseOrderSearchHit(BaseModel):
     match_source: str
 
 
+def _supplier_ids_for_query(
+    db: Session,
+    current_user: User,
+    query_text: str,
+) -> list[int]:
+    from supplier_management.search.service import (
+        search_supplier_hits,
+    )
+
+    try:
+        hits = search_supplier_hits(
+            db=db,
+            current_user=current_user,
+            query_text=query_text,
+            mode="keyword",
+            limit=100,
+        )
+    except Exception:
+        return []
+
+    result: list[int] = []
+
+    for hit in hits:
+        value = getattr(
+            hit,
+            "id",
+            getattr(hit, "supplier_id", None),
+        )
+
+        if value is not None:
+            result.append(int(value))
+
+    return list(dict.fromkeys(result))
+
+
+def _supplier_names_by_id(
+    db: Session,
+    current_user: User,
+    supplier_ids: list[int],
+) -> dict[int, str]:
+    from supplier_management.services import (
+        get_supplier_or_404,
+    )
+
+    result: dict[int, str] = {}
+
+    for supplier_id in dict.fromkeys(
+        supplier_ids
+    ):
+        supplier = get_supplier_or_404(
+            db=db,
+            supplier_id=supplier_id,
+            current_user=current_user,
+        )
+        result[supplier.id] = supplier.name
+
+    return result
+
+
 def _build_hit_from_orm(
     po: PurchaseOrder,
     match_source: str = "text",
@@ -65,6 +124,7 @@ def _build_hit_from_orm(
 
 def _build_hit_from_row(
     row: Dict[str, Any],
+    supplier_name: Optional[str],
     match_source: str = "semantic",
 ) -> PurchaseOrderSearchHit:
     return PurchaseOrderSearchHit(
@@ -72,7 +132,7 @@ def _build_hit_from_row(
         company_id=row["company_id"],
         reference_number=row["reference_number"],
         title=row.get("title"),
-        supplier_name=row.get("supplier_name"),
+        supplier_name=supplier_name,
         status=row["status"],
         approval_status=row["approval_status"],
         source_rfq_id=row.get("source_rfq_id"),
@@ -125,6 +185,12 @@ def search_purchase_order_hits(
         dict.fromkeys(ids or [])
     )
 
+    supplier_ids = _supplier_ids_for_query(
+        db=db,
+        current_user=current_user,
+        query_text=query_text,
+    )
+
     semantic_hits: List[
         PurchaseOrderSearchHit
     ] = []
@@ -145,9 +211,24 @@ def search_purchase_order_hits(
                 ids=scoped_ids or None,
                 limit=limit,
             )
+
+            supplier_names = _supplier_names_by_id(
+                db=db,
+                current_user=current_user,
+                supplier_ids=[
+                    int(row["supplier_id"])
+                    for row in rows
+                    if row.get("supplier_id")
+                    is not None
+                ],
+            )
+
             semantic_hits = [
                 _build_hit_from_row(
                     row,
+                    supplier_names.get(
+                        row.get("supplier_id")
+                    ),
                     "semantic",
                 )
                 for row in rows
@@ -183,6 +264,7 @@ def search_purchase_order_hits(
             query_text,
             company_id,
             ids=scoped_ids or None,
+            supplier_ids=supplier_ids,
             limit=limit,
         )
 

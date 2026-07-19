@@ -510,7 +510,10 @@ def test_cancelled_purchase_order_cannot_be_updated(monkeypatch):
         )
 
     assert exc_info.value.status_code == 422
-    assert exc_info.value.detail == "Cannot edit a cancelled purchase order"
+    assert exc_info.value.detail == {
+        "code": "PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE",
+        "message": "Cannot edit a cancelled purchase order",
+    }
     assert db.commits == 0
 
 

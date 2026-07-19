@@ -277,10 +277,6 @@ class PurchaseOrderUpdate(BaseModel):
         None,
         gt=0,
     )
-    supplier_name: Optional[str] = Field(
-        None,
-        max_length=255,
-    )
     description: Optional[str] = None
     status: Optional[str] = None
 
@@ -305,7 +301,7 @@ class PurchaseOrderRead(BaseModel):
     source_material_requisition_id: Optional[
         int
     ]
-    supplier_id: Optional[int]
+    supplier_id: int
     supplier_name: Optional[str]
     status: str
     approval_status: str

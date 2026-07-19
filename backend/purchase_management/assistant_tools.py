@@ -408,7 +408,24 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
     )
 
     def build_draft(self, *, intent: str, db, user, slots: dict, attachments: list):
-        draft = super().build_draft(intent=intent, db=db, user=user, slots=slots, attachments=attachments)
+        draft = super().build_draft(
+            intent=intent,
+            db=db,
+            user=user,
+            slots=slots,
+            attachments=attachments,
+        )
+
+        if draft.payload.get("supplier_id") is not None:
+            draft.payload.pop(
+                "supplier_name",
+                None,
+            )
+            draft.payload.pop(
+                "supplier_query",
+                None,
+            )
+
         if intent != "add_purchase_order" or not draft.valid:
             return draft
         rfq_id = draft.payload.get("rfq_id")

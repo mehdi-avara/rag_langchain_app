@@ -44,7 +44,7 @@ ADD_PURCHASE_ORDER = {
     "specialist_notes": (
         "An order created from an RFQ needs a resolvable RFQ reference.",
         "A direct order requires resolvable transaction currency and base currency before it is committable.",
-        "Supplier is optional in the current endpoint contract, but resolve it when supplied.",
+        "Supplier is required for every purchase order and must resolve to a valid supplier_id.",
     ),
 }
 

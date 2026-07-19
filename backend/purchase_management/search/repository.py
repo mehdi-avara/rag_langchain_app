@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from components.embedding import JinaAPIEmbeddings
 
@@ -16,14 +16,19 @@ def search_purchase_orders_keyword(
     query_text: str,
     company_id: int,
     ids: Optional[List[int]] = None,
+    supplier_ids: Optional[List[int]] = None,
     limit: int = 20,
 ) -> List[PurchaseOrder]:
     pattern = f"%{query_text}%"
 
-    query = db.query(
-        PurchaseOrder
-    ).filter(
-        PurchaseOrder.company_id == company_id
+    query = (
+        db.query(PurchaseOrder)
+        .options(
+            selectinload(PurchaseOrder.supplier)
+        )
+        .filter(
+            PurchaseOrder.company_id == company_id
+        )
     )
 
     if ids is not None:
@@ -34,22 +39,22 @@ def search_purchase_orders_keyword(
             PurchaseOrder.id.in_(ids)
         )
 
-    query = query.filter(
-        or_(
-            PurchaseOrder.reference_number.ilike(
-                pattern
-            ),
-            PurchaseOrder.supplier_name.ilike(
-                pattern
-            ),
-            PurchaseOrder.title.ilike(
-                pattern
-            ),
-            PurchaseOrder.description.ilike(
-                pattern
-            ),
+    conditions = [
+        PurchaseOrder.reference_number.ilike(
+            pattern
+        ),
+        PurchaseOrder.title.ilike(pattern),
+        PurchaseOrder.description.ilike(pattern),
+    ]
+
+    if supplier_ids:
+        conditions.append(
+            PurchaseOrder.supplier_id.in_(
+                supplier_ids
+            )
         )
-    )
+
+    query = query.filter(or_(*conditions))
 
     return (
         query.order_by(
@@ -115,9 +120,7 @@ def search_purchase_orders_semantic(
                 f"po_id_{index}"
             ] = po_id
 
-    where_clause = " AND ".join(
-        filters
-    )
+    where_clause = " AND ".join(filters)
 
     sql = text(
         f"""
@@ -126,7 +129,7 @@ def search_purchase_orders_semantic(
             po.company_id,
             po.reference_number,
             po.title,
-            po.supplier_name,
+            po.supplier_id,
             po.status,
             po.approval_status,
             po.source_rfq_id,

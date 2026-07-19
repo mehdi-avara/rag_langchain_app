@@ -144,11 +144,17 @@ class PurchaseOrder(Base):
 
     supplier_id = Column(
         Integer,
-        ForeignKey("suppliers.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey(
+            "suppliers.id",
+            ondelete="RESTRICT",
+            name=(
+                "fk_purchase_orders_"
+                "supplier_id_suppliers"
+            ),
+        ),
+        nullable=False,
         index=True,
     )
-    supplier_name = Column(String(255), nullable=True, index=True)
 
     status = Column(
         String(20),
@@ -187,6 +193,23 @@ class PurchaseOrder(Base):
     )
 
     company = relationship("Company")
+    supplier = relationship(
+        "Supplier",
+        foreign_keys=[supplier_id],
+        lazy="joined",
+    )
+
+    @property
+    def supplier_name(self):
+        if self.supplier is not None:
+            return self.supplier.name
+
+        return getattr(
+            self,
+            "_supplier_display_name",
+            None,
+        )
+
     created_by = relationship(
         "User",
         foreign_keys=[created_by_user_id],

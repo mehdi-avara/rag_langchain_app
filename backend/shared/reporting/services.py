@@ -539,7 +539,7 @@ def purchase_report(
 
         if normalized_group_by == "supplier":
             label_sql = (
-                "COALESCE(NULLIF(po.supplier_name, ''), 'Unassigned')"
+                "COALESCE(NULLIF(supplier_name, ''), 'Unassigned')"
             )
             chart_type = "bar"
         else:
@@ -552,7 +552,7 @@ def purchase_report(
             WITH po_totals AS (
                 SELECT
                     po.id,
-                    po.supplier_name,
+                    supplier.name AS supplier_name,
                     po.created_at,
                     COALESCE(
                         (
@@ -573,6 +573,8 @@ def purchase_report(
                         0
                     ) AS total_base
                 FROM purchase_orders po
+                JOIN suppliers AS supplier
+                  ON supplier.id = po.supplier_id
                 WHERE {order_filter}
             )
             SELECT

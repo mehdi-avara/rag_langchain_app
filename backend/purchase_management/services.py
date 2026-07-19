@@ -137,14 +137,12 @@ def _mark_requisition_ordered_from_purchase_order(
 
 def _purchase_order_query(db: Session):
     return db.query(PurchaseOrder).options(
+        selectinload(PurchaseOrder.supplier),
         selectinload(PurchaseOrder.lines).selectinload(
             PurchaseOrderLine.allocations
         ),
         selectinload(PurchaseOrder.phases).selectinload(
             PurchasePhase.allocations
-        ),
-        selectinload(PurchaseOrder.phases).selectinload(
-            PurchasePhase.items
         ),
         selectinload(PurchaseOrder.costs),
     )
@@ -209,13 +207,11 @@ def list_purchase_orders(
 def _resolve_supplier_for_purchase(
     db: Session,
     user: User,
-    supplier_id: Optional[int],
-    supplier_name: Optional[str],
-) -> tuple[Optional[int], Optional[str]]:
-    if supplier_id is None:
-        return None, supplier_name
-
-    from supplier_management.services import get_supplier_or_404
+    supplier_id: int,
+) -> tuple[int, str]:
+    from supplier_management.services import (
+        get_supplier_or_404,
+    )
 
     supplier = get_supplier_or_404(
         db=db,
@@ -411,7 +407,6 @@ def create_purchase_order(
             db=db,
             user=user,
             supplier_id=supplier_id,
-            supplier_name=None,
         )
     )
 
@@ -442,7 +437,6 @@ def create_purchase_order(
                 source_rfq_id=None,
                 source_material_requisition_id=None,
                 supplier_id=resolved_supplier_id,
-                supplier_name=resolved_supplier_name,
                 description=(
                     (data.get("description") or "").strip()
                     or None
@@ -450,6 +444,9 @@ def create_purchase_order(
                 created_by_user_id=user.id,
                 status=PurchaseOrderStatus.DRAFT.value,
                 approval_status=PurchaseApprovalStatus.DRAFT.value,
+            )
+            purchase_order._supplier_display_name = (
+                resolved_supplier_name
             )
             db.add(purchase_order)
             db.flush()
@@ -692,13 +689,15 @@ def create_purchase_order_from_rfq(
                 source_rfq_id=source["rfq_id"],
                 source_material_requisition_id=None,
                 supplier_id=source["supplier_id"],
-                supplier_name=source["supplier_name"],
                 description=description,
                 created_by_user_id=user.id,
                 status=PurchaseOrderStatus.DRAFT.value,
                 approval_status=(
                     PurchaseApprovalStatus.DRAFT.value
                 ),
+            )
+            purchase_order._supplier_display_name = (
+                source.get("supplier_name")
             )
             db.add(purchase_order)
             db.flush()
@@ -834,36 +833,61 @@ def create_purchase_order_from_rfq(
     )
 
 
-def update_purchase_order(db: Session, user: User, po_id: int, **kwargs) -> PurchaseOrder:
-    po = get_po_or_404(db, po_id, user)
+def update_purchase_order(
+    db: Session,
+    user: User,
+    po_id: int,
+    **kwargs,
+) -> PurchaseOrder:
+    po = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
 
     if po.status == PurchaseOrderStatus.CANCELLED.value:
-        raise HTTPException(status_code=422, detail="Cannot edit a cancelled purchase order")
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
+            "Cannot edit a cancelled purchase order",
+        )
 
     missing = object()
-    missing = object()
-    supplied_supplier_id = kwargs.pop("supplier_id", missing)
-    supplied_supplier_name = kwargs.pop("supplier_name", missing)
+    supplied_supplier_id = kwargs.pop(
+        "supplier_id",
+        missing,
+    )
 
     if supplied_supplier_id is not missing:
         if supplied_supplier_id is None:
-            po.supplier_id = None
-            po.supplier_name = (
-                supplied_supplier_name
-                if supplied_supplier_name is not missing
-                else None
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_SUPPLIER_REQUIRED,
+                "supplier_id is required",
             )
-        else:
-            resolved_supplier_id, resolved_supplier_name = _resolve_supplier_for_purchase(
+
+        if po.approval_status not in {
+            PurchaseApprovalStatus.DRAFT.value,
+            PurchaseApprovalStatus.REJECTED.value,
+        }:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
+                (
+                    "The supplier cannot be changed "
+                    "after submission without an amendment"
+                ),
+            )
+
+        resolved_supplier_id, supplier_name = (
+            _resolve_supplier_for_purchase(
                 db=db,
                 user=user,
                 supplier_id=supplied_supplier_id,
-                supplier_name=None,
             )
-            po.supplier_id = resolved_supplier_id
-            po.supplier_name = resolved_supplier_name
-    elif supplied_supplier_name is not missing:
-        po.supplier_name = supplied_supplier_name
+        )
+        po.supplier_id = resolved_supplier_id
+        po._supplier_display_name = supplier_name
 
     for key, value in kwargs.items():
         if value is not None:
@@ -871,7 +895,13 @@ def update_purchase_order(db: Session, user: User, po_id: int, **kwargs) -> Purc
 
     db.commit()
     db.refresh(po)
-    return po
+
+    return get_po_or_404(
+        db=db,
+        po_id=po.id,
+        user=user,
+    )
+
 
 def cancel_purchase_order(db: Session, user: User, po_id: int) -> PurchaseOrder:
     po = get_po_or_404(db, po_id, user)
@@ -2925,10 +2955,16 @@ def ensure_po_embeddings(db: Session, user: User, po_ids: Optional[List[int]] = 
         from components.embedding import JinaAPIEmbeddings
         client = JinaAPIEmbeddings()
 
-        q = db.query(PurchaseOrder).filter(
-            PurchaseOrder.company_id == _tenant_id(user),
+        q = (
+            db.query(PurchaseOrder)
+            .options(
+                selectinload(PurchaseOrder.supplier)
+            )
+            .filter(
+                PurchaseOrder.company_id == _tenant_id(user),
             PurchaseOrder.description_embedding == None,
-            PurchaseOrder.description != None,
+                PurchaseOrder.description != None,
+            )
         )
         if po_ids:
             q = q.filter(PurchaseOrder.id.in_(po_ids))
@@ -2955,6 +2991,42 @@ def _build_searchable_text(po: PurchaseOrder) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+
+
+def _supplier_ids_matching_query(
+    db: Session,
+    current_user: User,
+    query_text: str,
+) -> list[int]:
+    from supplier_management.search.service import (
+        search_supplier_hits,
+    )
+
+    try:
+        hits = search_supplier_hits(
+            db=db,
+            current_user=current_user,
+            query_text=query_text,
+            mode="keyword",
+            limit=100,
+        )
+    except Exception:
+        return []
+
+    supplier_ids: list[int] = []
+
+    for hit in hits:
+        value = getattr(
+            hit,
+            "id",
+            getattr(hit, "supplier_id", None),
+        )
+
+        if value is not None:
+            supplier_ids.append(int(value))
+
+    return list(dict.fromkeys(supplier_ids))
+
 def export_purchase_order_rows(
     db: Session,
     current_user: User,
@@ -2969,6 +3041,7 @@ def export_purchase_order_rows(
     query = (
         db.query(PurchaseOrder)
         .options(
+            selectinload(PurchaseOrder.supplier),
             selectinload(PurchaseOrder.lines),
             selectinload(PurchaseOrder.phases),
             selectinload(PurchaseOrder.costs),
@@ -2991,18 +3064,29 @@ def export_purchase_order_rows(
         )
 
     if query_text:
-        pattern = f"%{query_text.strip()}%"
-        query = query.filter(
-            or_(
-                PurchaseOrder.reference_number
-                .ilike(pattern),
-                PurchaseOrder.title.ilike(pattern),
-                PurchaseOrder.supplier_name
-                .ilike(pattern),
-                PurchaseOrder.description
-                .ilike(pattern),
-            )
+        normalized_query = query_text.strip()
+        pattern = f"%{normalized_query}%"
+        supplier_ids = _supplier_ids_matching_query(
+            db=db,
+            current_user=current_user,
+            query_text=normalized_query,
         )
+
+        conditions = [
+            PurchaseOrder.reference_number
+            .ilike(pattern),
+            PurchaseOrder.title.ilike(pattern),
+            PurchaseOrder.description.ilike(pattern),
+        ]
+
+        if supplier_ids:
+            conditions.append(
+                PurchaseOrder.supplier_id.in_(
+                    supplier_ids
+                )
+            )
+
+        query = query.filter(or_(*conditions))
 
     orders = (
         query.order_by(
