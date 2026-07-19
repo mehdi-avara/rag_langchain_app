@@ -128,21 +128,12 @@ class GoodsReceiptItem(Base):
     __table_args__ = (
         UniqueConstraint(
             "goods_receipt_note_id",
-            "purchase_phase_item_id",
-            name="uq_grn_items_phase_item",
-        ),
-        UniqueConstraint(
-            "goods_receipt_note_id",
             "purchase_phase_allocation_id",
             name="uq_grn_items_phase_allocation",
         ),
         Index(
             "ix_grn_items_grn_id",
             "goods_receipt_note_id",
-        ),
-        Index(
-            "ix_grn_items_phase_item_id",
-            "purchase_phase_item_id",
         ),
         Index(
             "ix_grn_items_phase_allocation_id",
@@ -171,14 +162,6 @@ class GoodsReceiptItem(Base):
             ondelete="CASCADE",
         ),
         nullable=False,
-    )
-    purchase_phase_item_id = Column(
-        Integer,
-        ForeignKey(
-            "purchase_phase_items.id",
-            ondelete="RESTRICT",
-        ),
-        nullable=True,
     )
     purchase_phase_allocation_id = Column(
         Integer,
@@ -261,10 +244,6 @@ class GoodsReceiptItem(Base):
     goods_receipt = relationship(
         "GoodsReceiptNote",
         back_populates="items",
-    )
-    purchase_phase_item = relationship(
-        "PurchasePhaseItem",
-        foreign_keys=[purchase_phase_item_id],
     )
     purchase_phase_allocation = relationship(
         "PurchasePhaseAllocation",

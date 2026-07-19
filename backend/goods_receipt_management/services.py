@@ -282,7 +282,6 @@ def build_goods_receipt_item(
 
     return GoodsReceiptItem(
         goods_receipt_note_id=goods_receipt_note_id,
-        purchase_phase_item_id=None,
         purchase_phase_allocation_id=source["id"],
         item_id=source["item_id"],
         item_code=source["item_code"],
@@ -938,9 +937,7 @@ def get_posted_goods_receipt_for_warehouse(
         "items": [
             {
                 "id": item.id,
-                "purchase_phase_item_id": (
-                    item.purchase_phase_item_id
-                ),
+
                 "purchase_phase_allocation_id": (
                     item.purchase_phase_allocation_id
                 ),

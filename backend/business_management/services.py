@@ -1389,9 +1389,7 @@ class BusinessFlowBuilder:
                 details=_details(
                     grn_item_id=item.id,
                     grn_id=grn.id,
-                    purchase_phase_item_id=(
-                        item.purchase_phase_item_id
-                    ),
+
                     purchase_phase_allocation_id=(
                         item
                         .purchase_phase_allocation_id
@@ -1441,9 +1439,7 @@ class BusinessFlowBuilder:
                             item
                             .purchase_phase_allocation_id
                         ),
-                        purchase_phase_item_id=(
-                            item.purchase_phase_item_id
-                        ),
+
                         grn_item_id=item.id,
                     ),
                 )

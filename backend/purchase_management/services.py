@@ -51,7 +51,6 @@ from .models import (
     PurchasePhase,
     PurchasePhaseAllocation,
     PurchasePhaseSplitEvent,
-    PurchasePhaseItem,
     PurchasePhaseStatus,
 )
 
@@ -2337,7 +2336,6 @@ def split_purchase_order_phase(
         raise
 
 
-# ── PurchasePhaseItem CRUD ────────────────────────────────────────────────────
 
 def _get_phase_or_404(db: Session, user: User, po_id: int, phase_id: int) -> PurchasePhase:
     po = get_po_or_404(db, po_id, user)
@@ -2348,144 +2346,6 @@ def _get_phase_or_404(db: Session, user: User, po_id: int, phase_id: int) -> Pur
     if not phase:
         raise HTTPException(status_code=404, detail="Phase not found")
     return phase
-
-
-def _resolve_item_for_purchase(
-    db: Session,
-    user: User,
-    item_id: Optional[int],
-    item_name: Optional[str],
-    item_code: Optional[str],
-    unit: Optional[str],
-) -> tuple[Optional[int], str, Optional[str], str]:
-    if item_id is None:
-        normalized_name = (item_name or "").strip()
-        if not normalized_name:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="item_id or item_name is required",
-            )
-        return None, normalized_name, item_code, (unit or "pcs").strip() or "pcs"
-
-    from material_management.services import get_item_reference
-
-    reference = get_item_reference(
-        db=db,
-        current_user=user,
-        item_id=item_id,
-    )
-
-    return (
-        reference["id"],
-        reference["name"],
-        reference["item_code"],
-        reference["unit_code"],
-    )
-
-
-def add_phase_item(
-    db: Session,
-    user: User,
-    po_id: int,
-    phase_id: int,
-    item_id: Optional[int],
-    item_name: Optional[str],
-    item_code: Optional[str],
-    quantity: Decimal,
-    unit: Optional[str],
-    unit_price: Decimal,
-    currency_id: int,
-    unit_price_base: Decimal,
-    base_currency_id: int,
-    exchange_rate_used: Decimal,
-    notes: Optional[str],
-) -> PurchasePhaseItem:
-    phase = _get_phase_or_404(db, user, po_id, phase_id)
-
-    resolved_item_id, resolved_item_name, resolved_item_code, resolved_unit = (
-        _resolve_item_for_purchase(
-            db=db,
-            user=user,
-            item_id=item_id,
-            item_name=item_name,
-            item_code=item_code,
-            unit=unit,
-        )
-    )
-
-    line_total = quantity * unit_price
-    line_total_base = quantity * unit_price_base
-
-    item = PurchasePhaseItem(
-        phase_id=phase.id,
-        item_id=resolved_item_id,
-        item_name=resolved_item_name,
-        item_code=resolved_item_code,
-        quantity=quantity,
-        unit=resolved_unit,
-        unit_price=unit_price,
-        currency_id=currency_id,
-        unit_price_base=unit_price_base,
-        base_currency_id=base_currency_id,
-        exchange_rate_used=exchange_rate_used,
-        line_total=line_total,
-        line_total_base=line_total_base,
-        notes=notes,
-    )
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-    return item
-
-
-def update_phase_item(
-    db: Session,
-    user: User,
-    po_id: int,
-    phase_id: int,
-    item_id: int,
-    **kwargs,
-) -> PurchasePhaseItem:
-    phase = _get_phase_or_404(db, user, po_id, phase_id)
-    item = db.query(PurchasePhaseItem).filter(
-        PurchasePhaseItem.id == item_id,
-        PurchasePhaseItem.phase_id == phase.id,
-    ).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    missing = object()
-    supplied_item_id = kwargs.pop("item_id", missing)
-
-    if supplied_item_id is not missing:
-        if supplied_item_id is None:
-            item.item_id = None
-        else:
-            resolved_item_id, resolved_item_name, resolved_item_code, resolved_unit = (
-                _resolve_item_for_purchase(
-                    db=db,
-                    user=user,
-                    item_id=supplied_item_id,
-                    item_name=None,
-                    item_code=None,
-                    unit=None,
-                )
-            )
-            item.item_id = resolved_item_id
-            item.item_name = resolved_item_name
-            item.item_code = resolved_item_code
-            item.unit = resolved_unit
-
-    for key, value in kwargs.items():
-        if value is not None:
-            setattr(item, key, value)
-
-    item.line_total = item.quantity * item.unit_price
-    item.line_total_base = item.quantity * item.unit_price_base
-
-    db.commit()
-    db.refresh(item)
-    return item
 
 
 def purchase_error(status_code: int, code: str, message: str):
@@ -2524,52 +2384,6 @@ def get_phase_reference_for_goods_receipt(
     return {
         "purchase_order_id": purchase_order.id,
         "purchase_phase_id": purchase_phase.id,
-    }
-
-
-def get_phase_item_reference_for_goods_receipt(
-    db: Session,
-    current_user: User,
-    purchase_order_id: int,
-    purchase_phase_id: int,
-    purchase_phase_item_id: int,
-) -> dict:
-    phase = _get_phase_or_404(
-        db=db,
-        user=current_user,
-        po_id=purchase_order_id,
-        phase_id=purchase_phase_id,
-    )
-
-    phase_item = (
-        db.query(PurchasePhaseItem)
-        .filter(
-            PurchasePhaseItem.id == purchase_phase_item_id,
-            PurchasePhaseItem.phase_id == phase.id,
-        )
-        .first()
-    )
-
-    if phase_item is None:
-        purchase_error(
-            status.HTTP_404_NOT_FOUND,
-            PURCHASE_PHASE_ITEM_NOT_FOUND,
-            "Purchase phase item not found",
-        )
-
-    return {
-        "id": phase_item.id,
-        "item_id": phase_item.item_id,
-        "item_code": phase_item.item_code,
-        "item_name": phase_item.item_name,
-        "unit_code": phase_item.unit,
-        "quantity": phase_item.quantity,
-        "received_quantity": phase_item.received_quantity,
-        "unit_price": phase_item.unit_price,
-        "currency_id": phase_item.currency_id,
-        "unit_price_base": phase_item.unit_price_base,
-        "base_currency_id": phase_item.base_currency_id,
-        "exchange_rate_used": phase_item.exchange_rate_used,
     }
 
 
@@ -3075,48 +2889,25 @@ def get_summary(
     po_id: int,
 ) -> dict:
     po = get_po_or_404(db, po_id, user)
-    normalized_lines = list(po.lines or [])
+    lines = list(po.lines or [])
 
-    if normalized_lines:
-        item_count = len(normalized_lines)
-        total_in_currency = sum(
-            (
-                Decimal(str(line.ordered_quantity))
-                * Decimal(str(line.unit_price))
-                for line in normalized_lines
-            ),
-            Decimal("0"),
-        )
-        total_in_base = sum(
-            (
-                Decimal(str(line.ordered_quantity))
-                * Decimal(str(line.unit_price_base))
-                for line in normalized_lines
-            ),
-            Decimal("0"),
-        )
-    else:
-        legacy_items = [
-            item
-            for phase in po.phases
-            for item in phase.items
-        ]
-        item_count = len(legacy_items)
-        total_in_currency = sum(
-            (
-                Decimal(str(item.line_total))
-                for item in legacy_items
-            ),
-            Decimal("0"),
-        )
-        total_in_base = sum(
-            (
-                Decimal(str(item.line_total_base))
-                for item in legacy_items
-            ),
-            Decimal("0"),
-        )
-
+    item_count = len(lines)
+    total_in_currency = sum(
+        (
+            Decimal(str(line.ordered_quantity))
+            * Decimal(str(line.unit_price))
+            for line in lines
+        ),
+        Decimal("0"),
+    )
+    total_in_base = sum(
+        (
+            Decimal(str(line.ordered_quantity))
+            * Decimal(str(line.unit_price_base))
+            for line in lines
+        ),
+        Decimal("0"),
+    )
     additional_costs_base = sum(
         (
             Decimal(str(cost.amount_base))
@@ -3134,8 +2925,13 @@ def get_summary(
         "total_in_base": total_in_base,
         "currency_id": po.currency_id,
         "base_currency_id": po.base_currency_id,
-        "additional_costs_base": additional_costs_base,
-        "grand_total_base": total_in_base + additional_costs_base,
+        "additional_costs_base": (
+            additional_costs_base
+        ),
+        "grand_total_base": (
+            total_in_base
+            + additional_costs_base
+        ),
     }
 
 
@@ -3185,8 +2981,6 @@ def export_purchase_order_rows(
     approval_status: Optional[str] = None,
     limit: int = 10000,
 ) -> list[dict]:
-    from decimal import Decimal
-
     from sqlalchemy import or_
     from sqlalchemy.orm import selectinload
 
@@ -3194,30 +2988,37 @@ def export_purchase_order_rows(
         db.query(PurchaseOrder)
         .options(
             selectinload(PurchaseOrder.lines),
-            selectinload(PurchaseOrder.phases).selectinload(
-                PurchasePhase.items
-            ),
+            selectinload(PurchaseOrder.phases),
             selectinload(PurchaseOrder.costs),
         )
-        .filter(PurchaseOrder.company_id == _tenant_id(current_user))
+        .filter(
+            PurchaseOrder.company_id
+            == _tenant_id(current_user)
+        )
     )
 
     if po_status:
-        query = query.filter(PurchaseOrder.status == po_status)
+        query = query.filter(
+            PurchaseOrder.status == po_status
+        )
 
     if approval_status:
         query = query.filter(
-            PurchaseOrder.approval_status == approval_status
+            PurchaseOrder.approval_status
+            == approval_status
         )
 
     if query_text:
         pattern = f"%{query_text.strip()}%"
         query = query.filter(
             or_(
-                PurchaseOrder.reference_number.ilike(pattern),
+                PurchaseOrder.reference_number
+                .ilike(pattern),
                 PurchaseOrder.title.ilike(pattern),
-                PurchaseOrder.supplier_name.ilike(pattern),
-                PurchaseOrder.description.ilike(pattern),
+                PurchaseOrder.supplier_name
+                .ilike(pattern),
+                PurchaseOrder.description
+                .ilike(pattern),
             )
         )
 
@@ -3233,35 +3034,25 @@ def export_purchase_order_rows(
     result: list[dict] = []
 
     for order in orders:
-        normalized_lines = list(order.lines or [])
-        phase_items = [
-            item
-            for phase in order.phases or []
-            for item in phase.items or []
-        ]
+        lines = list(order.lines or [])
 
-        if normalized_lines:
-            item_count = len(normalized_lines)
-            total_in_base = sum(
-                (
-                    Decimal(str(line.ordered_quantity))
-                    * Decimal(str(line.unit_price_base))
-                    for line in normalized_lines
-                ),
-                Decimal("0"),
-            )
-        else:
-            item_count = len(phase_items)
-            total_in_base = sum(
-                (
-                    Decimal(str(item.line_total_base or 0))
-                    for item in phase_items
-                ),
-                Decimal("0"),
-            )
+        total_in_base = sum(
+            (
+                Decimal(
+                    str(line.ordered_quantity)
+                )
+                * Decimal(
+                    str(line.unit_price_base)
+                )
+                for line in lines
+            ),
+            Decimal("0"),
+        )
         additional_costs_base = sum(
             (
-                Decimal(str(cost.amount_base or 0))
+                Decimal(
+                    str(cost.amount_base or 0)
+                )
                 for cost in order.costs or []
             ),
             Decimal("0"),
@@ -3269,18 +3060,29 @@ def export_purchase_order_rows(
 
         result.append(
             {
-                "reference_number": order.reference_number,
+                "reference_number": (
+                    order.reference_number
+                ),
                 "title": order.title,
-                "supplier_name": order.supplier_name,
+                "supplier_name": (
+                    order.supplier_name
+                ),
                 "status": order.status,
-                "approval_status": order.approval_status,
+                "approval_status": (
+                    order.approval_status
+                ),
                 "rfq_id": order.rfq_id,
-                "phase_count": len(order.phases or []),
-                "item_count": item_count,
+                "phase_count": len(
+                    order.phases or []
+                ),
+                "item_count": len(lines),
                 "total_in_base": total_in_base,
-                "additional_costs_base": additional_costs_base,
+                "additional_costs_base": (
+                    additional_costs_base
+                ),
                 "grand_total_base": (
-                    total_in_base + additional_costs_base
+                    total_in_base
+                    + additional_costs_base
                 ),
                 "created_at": order.created_at,
             }

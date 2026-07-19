@@ -52,63 +52,6 @@ class PurchaseOrderLineRead(BaseModel):
     )
 
 
-class PurchasePhaseItemCreate(BaseModel):
-    item_id: Optional[int] = Field(None, gt=0)
-    item_name: Optional[str] = Field(None, max_length=255)
-    item_code: Optional[str] = Field(None, max_length=100)
-    quantity: Decimal = Field(..., gt=0)
-    unit: Optional[str] = Field(None, max_length=30)
-    unit_price: Decimal = Field(Decimal("0"), ge=0)
-    currency_id: int = Field(..., gt=0)
-    unit_price_base: Decimal = Field(Decimal("0"), ge=0)
-    base_currency_id: int = Field(..., gt=0)
-    exchange_rate_used: Decimal = Field(Decimal("1"), gt=0)
-    notes: Optional[str] = None
-
-    @model_validator(mode="after")
-    def require_item_reference(self):
-        if self.item_id is None and not (self.item_name or "").strip():
-            raise ValueError("item_id or item_name is required")
-        return self
-
-
-class PurchasePhaseItemUpdate(BaseModel):
-    item_id: Optional[int] = Field(None, gt=0)
-    item_name: Optional[str] = Field(None, max_length=255)
-    item_code: Optional[str] = Field(None, max_length=100)
-    quantity: Optional[Decimal] = Field(None, gt=0)
-    unit: Optional[str] = Field(None, max_length=30)
-    unit_price: Optional[Decimal] = Field(None, ge=0)
-    currency_id: Optional[int] = Field(None, gt=0)
-    unit_price_base: Optional[Decimal] = Field(None, ge=0)
-    base_currency_id: Optional[int] = Field(None, gt=0)
-    exchange_rate_used: Optional[Decimal] = Field(None, gt=0)
-    notes: Optional[str] = None
-
-
-class PurchasePhaseItemRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    phase_id: int
-    item_id: Optional[int]
-    item_name: str
-    item_code: Optional[str]
-    quantity: Decimal
-    received_quantity: Decimal
-    unit: str
-    unit_price: Decimal
-    currency_id: int
-    unit_price_base: Decimal
-    base_currency_id: int
-    exchange_rate_used: Decimal
-    line_total: Decimal
-    line_total_base: Decimal
-    notes: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-
-
 class PurchasePhaseCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
@@ -145,7 +88,6 @@ class PurchasePhaseRead(BaseModel):
     allocations: list[PurchasePhaseAllocationRead] = Field(
         default_factory=list
     )
-    items: list[PurchasePhaseItemRead] = Field(default_factory=list)
 
 
 class PurchasePhaseSplitMove(BaseModel):

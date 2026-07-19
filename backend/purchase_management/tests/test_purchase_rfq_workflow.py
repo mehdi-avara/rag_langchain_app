@@ -11,7 +11,6 @@ from purchase_management.models import (
     PurchaseOrderStatus,
     PurchasePhase,
     PurchasePhaseAllocation,
-    PurchasePhaseItem,
     PurchasePhaseStatus,
 )
 
@@ -208,10 +207,6 @@ def test_create_purchase_order_from_rfq_creates_traceable_lines(monkeypatch):
         Decimal("2")
     )
 
-    assert not any(
-        isinstance(value, PurchasePhaseItem)
-        for value in db.added
-    )
     assert db.commits == 1
 
 

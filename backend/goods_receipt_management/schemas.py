@@ -165,7 +165,6 @@ class GoodsReceiptItemRead(BaseModel):
 
     id: int
     goods_receipt_note_id: int
-    purchase_phase_item_id: Optional[int]
     purchase_phase_allocation_id: int
     item_id: Optional[int]
     item_code: Optional[str]

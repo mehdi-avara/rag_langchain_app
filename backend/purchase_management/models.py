@@ -5,7 +5,6 @@ Tables:
   purchase_order_lines         — normalized commercial order lines
   purchase_phases              — physical delivery batches
   purchase_phase_allocations   — allocation of PO lines across delivery phases
-  purchase_phase_items         — legacy compatibility table
   purchase_order_costs         — freight, customs, tax, insurance, and other costs
   purchase_order_receipt_links — financial receipt links
 """
@@ -439,12 +438,6 @@ class PurchasePhase(Base):
         passive_deletes=True,
         order_by="PurchasePhaseAllocation.id",
     )
-    items = relationship(
-        "PurchasePhaseItem",
-        back_populates="phase",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
 
 
 class PurchasePhaseAllocation(Base):
@@ -590,106 +583,6 @@ class PurchasePhaseSplitEvent(Base):
     actor_user = relationship(
         "User",
         foreign_keys=[actor_user_id],
-    )
-
-
-class PurchasePhaseItem(Base):
-    __tablename__ = "purchase_phase_items"
-    __table_args__ = (
-        Index(
-            "ix_purchase_phase_items_phase_id",
-            "phase_id",
-        ),
-        Index(
-            "ix_purchase_phase_items_item_id",
-            "item_id",
-        ),
-    )
-
-    id = Column(Integer, primary_key=True)
-    phase_id = Column(
-        Integer,
-        ForeignKey("purchase_phases.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    item_id = Column(
-        Integer,
-        ForeignKey("items.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
-    item_name = Column(String(255), nullable=False)
-    item_code = Column(String(100), nullable=True, index=True)
-
-    quantity = Column(Numeric(18, 4), nullable=False)
-    received_quantity = Column(
-        Numeric(18, 4),
-        nullable=False,
-        default=0,
-    )
-    unit = Column(String(30), nullable=False, default="pcs")
-
-    unit_price = Column(
-        Numeric(28, 10),
-        nullable=False,
-        default=0,
-    )
-    currency_id = Column(
-        Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    unit_price_base = Column(
-        Numeric(28, 10),
-        nullable=False,
-        default=0,
-    )
-    base_currency_id = Column(
-        Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    exchange_rate_used = Column(
-        Numeric(28, 10),
-        nullable=False,
-        default=1,
-    )
-
-    line_total = Column(
-        Numeric(28, 10),
-        nullable=False,
-        default=0,
-    )
-    line_total_base = Column(
-        Numeric(28, 10),
-        nullable=False,
-        default=0,
-    )
-
-    notes = Column(Text, nullable=True)
-    created_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
-
-    phase = relationship(
-        "PurchasePhase",
-        back_populates="items",
-    )
-    currency = relationship(
-        "Currency",
-        foreign_keys=[currency_id],
-    )
-    base_currency = relationship(
-        "Currency",
-        foreign_keys=[base_currency_id],
     )
 
 

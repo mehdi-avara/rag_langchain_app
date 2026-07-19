@@ -74,7 +74,6 @@ def test_build_item_uses_allocation(monkeypatch):
         },
     )
 
-    assert item.purchase_phase_item_id is None
     assert item.purchase_phase_allocation_id == 41
     assert item.item_id == 101
     assert item.unit_cost == Decimal("12.5")
