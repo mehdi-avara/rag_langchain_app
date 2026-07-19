@@ -13,11 +13,15 @@ from deps import require_permission
 from ..schemas import (
     PurchaseOrderApproval,
     PurchaseOrderCreate,
+    PurchaseOrderFromMRCreate,
     PurchaseOrderRead,
     PurchaseOrderSummary,
     PurchaseOrderUpdate,
     ReceiptLinkCreate,
     ReceiptLinkRead,
+)
+from ..direct_mr_service import (
+    create_purchase_order_from_mr,
 )
 from ..services import (
     add_receipt_link,
@@ -73,6 +77,34 @@ def create_order(
     return create_purchase_order(
         db=db,
         user=current_user,
+        data=payload.model_dump(),
+    )
+
+
+@router.post(
+    "/purchase/orders/from-mr/{mr_id}",
+    response_model=PurchaseOrderRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_order_from_mr(
+    mr_id: int,
+    payload: PurchaseOrderFromMRCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "purchase_management:orders:create"
+        )
+    ),
+    _requisition_reader: User = Depends(
+        require_permission(
+            "requisition_management:read"
+        )
+    ),
+):
+    return create_purchase_order_from_mr(
+        db=db,
+        user=current_user,
+        requisition_id=mr_id,
         data=payload.model_dump(),
     )
 

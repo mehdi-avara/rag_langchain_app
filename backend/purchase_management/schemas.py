@@ -214,6 +214,75 @@ class PurchasePhaseSplitResult(BaseModel):
     audit_event_id: int
 
 
+class PurchaseOrderFromMRLineCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requisition_item_id: int = Field(..., gt=0)
+    line_description: Optional[str] = None
+    unit_price: Decimal = Field(..., ge=0)
+    currency_id: int = Field(..., gt=0)
+    exchange_rate_used: Decimal = Field(..., gt=0)
+    notes: Optional[str] = None
+
+
+class PurchaseOrderFromMRCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: int = Field(..., gt=0)
+    title: Optional[str] = Field(
+        None,
+        max_length=255,
+    )
+    description: Optional[str] = None
+    expected_delivery_date: Optional[datetime] = None
+    lines: list[
+        PurchaseOrderFromMRLineCreate
+    ] = Field(
+        ...,
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def validate_direct_mr_terms(self):
+        requisition_item_ids = [
+            line.requisition_item_id
+            for line in self.lines
+        ]
+
+        if len(requisition_item_ids) != len(
+            set(requisition_item_ids)
+        ):
+            raise ValueError(
+                "Each requisition item may be "
+                "selected only once"
+            )
+
+        currency_ids = {
+            line.currency_id
+            for line in self.lines
+        }
+        exchange_rates = {
+            Decimal(
+                str(line.exchange_rate_used)
+            )
+            for line in self.lines
+        }
+
+        if len(currency_ids) != 1:
+            raise ValueError(
+                "All direct purchase lines must "
+                "use the same currency"
+            )
+
+        if len(exchange_rates) != 1:
+            raise ValueError(
+                "All direct purchase lines must "
+                "use the same exchange rate"
+            )
+
+        return self
+
+
 class PurchaseOrderCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
     supplier_id: int = Field(..., gt=0)

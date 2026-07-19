@@ -853,3 +853,67 @@ def mark_requisition_ordered_from_purchase_order(
     )
 
     return requisition
+
+
+
+# ── Purchase module contract ──────────────────────────────────────────────────
+
+def get_requisition_reference_for_purchase(
+    db: Session,
+    current_user: User,
+    requisition_id: int,
+    lock: bool = False,
+) -> dict:
+    company_id = tenant_id(current_user)
+
+    query = (
+        db.query(MaterialRequisition)
+        .options(
+            selectinload(
+                MaterialRequisition.items
+            )
+        )
+        .filter(
+            MaterialRequisition.id
+            == requisition_id,
+            MaterialRequisition.company_id
+            == company_id,
+        )
+    )
+
+    if lock:
+        query = query.with_for_update()
+
+    requisition = query.first()
+
+    if requisition is None:
+        _raise(
+            status.HTTP_404_NOT_FOUND,
+            MATERIAL_REQUISITION_NOT_FOUND,
+            "Material requisition not found",
+        )
+
+    return {
+        "id": requisition.id,
+        "company_id": requisition.company_id,
+        "mr_number": requisition.mr_number,
+        "status": requisition.status,
+        "needed_by_date": (
+            requisition.needed_by_date
+        ),
+        "reason": requisition.reason,
+        "notes": requisition.notes,
+        "items": [
+            {
+                "id": item.id,
+                "item_id": item.item_id,
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "unit_id": item.unit_id,
+                "unit_code": item.unit_code,
+                "quantity": item.quantity,
+                "notes": item.notes,
+            }
+            for item in requisition.items
+        ],
+    }

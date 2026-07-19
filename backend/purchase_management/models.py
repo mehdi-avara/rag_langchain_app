@@ -85,6 +85,11 @@ class PurchaseOrder(Base):
             "rfq_id",
             name="uq_purchase_orders_company_rfq",
         ),
+        UniqueConstraint(
+            "company_id",
+            "source_material_requisition_id",
+            name="uq_purchase_orders_company_source_mr",
+        ),
         CheckConstraint(
             """
             NOT (
