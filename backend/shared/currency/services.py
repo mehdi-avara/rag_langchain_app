@@ -7,13 +7,55 @@ No other module should import Currency or ExchangeRate models directly.
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .models import Currency, ExchangeRate
+
+
+
+EXCHANGE_RATE_DECIMAL_PLACES = 10
+
+
+def quantize_decimal(
+    value,
+    decimal_places: int,
+) -> Decimal:
+    normalized_places = int(decimal_places)
+
+    if not 0 <= normalized_places <= 10:
+        raise ValueError(
+            "decimal_places must be between 0 and 10"
+        )
+
+    quantum = Decimal("1").scaleb(
+        -normalized_places
+    )
+
+    return Decimal(str(value)).quantize(
+        quantum,
+        rounding=ROUND_HALF_UP,
+    )
+
+
+def quantize_money(
+    value,
+    decimal_places: int,
+) -> Decimal:
+    return quantize_decimal(
+        value,
+        decimal_places,
+    )
+
+
+def quantize_exchange_rate(value) -> Decimal:
+    return quantize_decimal(
+        value,
+        EXCHANGE_RATE_DECIMAL_PLACES,
+    )
 
 
 # ── Currency CRUD ─────────────────────────────────────────────────────────────

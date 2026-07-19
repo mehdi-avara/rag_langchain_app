@@ -1118,3 +1118,41 @@ def get_item_references(
         }
         for item in items
     }
+
+
+def get_unit_references(
+    db: Session,
+    current_user: User,
+    unit_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    normalized_ids = sorted(
+        {
+            int(unit_id)
+            for unit_id in unit_ids
+            if unit_id is not None
+            and int(unit_id) > 0
+        }
+    )
+
+    if not normalized_ids:
+        return {}
+
+    units = (
+        db.query(Unit)
+        .filter(
+            Unit.company_id
+            == tenant_id(current_user),
+            Unit.id.in_(normalized_ids),
+        )
+        .all()
+    )
+
+    return {
+        unit.id: {
+            "id": unit.id,
+            "code": unit.code,
+            "name": unit.name,
+            "unit_type": unit.unit_type,
+        }
+        for unit in units
+    }

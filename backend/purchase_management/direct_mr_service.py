@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import HTTPException, status
+from fastapi import status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -477,21 +477,14 @@ def create_purchase_order_from_mr(
                 "uq_purchase_orders_company_source_mr"
                 in detail
             ):
-                raise HTTPException(
-                    status_code=(
-                        status.HTTP_409_CONFLICT
+                                purchase_error(
+                    status.HTTP_409_CONFLICT,
+                    PURCHASE_ORDER_MR_ALREADY_LINKED,
+                    (
+                        "A purchase order already exists for "
+                        "this material requisition"
                     ),
-                    detail={
-                        "code": (
-                            PURCHASE_ORDER_MR_ALREADY_LINKED
-                        ),
-                        "message": (
-                            "A purchase order already "
-                            "exists for this material "
-                            "requisition"
-                        ),
-                    },
-                ) from exc
+                )
 
             if "uq_po_company_reference" in detail:
                 continue

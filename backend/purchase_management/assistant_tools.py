@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from sqlalchemy import or_
 
-from material_management.models import Item, Unit
+from material_management.services import (
+    get_item_references,
+    get_unit_references,
+    list_items,
+    search_units_for_assistant,
+)
 
 from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
@@ -69,6 +74,7 @@ def _purchase_phase_to_candidate(row) -> Candidate:
     )
 
 
+
 def _search_purchase_phase_allocations_for_resolution(
     db,
     current_user,
@@ -82,8 +88,6 @@ def _search_purchase_phase_allocations_for_resolution(
             PurchasePhase,
             PurchasePhaseAllocation,
             PurchaseOrderLine,
-            Item,
-            Unit,
         )
         .join(
             PurchasePhase,
@@ -98,15 +102,8 @@ def _search_purchase_phase_allocations_for_resolution(
         .join(
             PurchaseOrderLine,
             PurchaseOrderLine.id
-            == PurchasePhaseAllocation.purchase_order_line_id,
-        )
-        .join(
-            Item,
-            Item.id == PurchaseOrderLine.item_id,
-        )
-        .join(
-            Unit,
-            Unit.id == PurchaseOrderLine.unit_id,
+            == PurchasePhaseAllocation
+            .purchase_order_line_id,
         )
         .filter(
             PurchaseOrder.company_id
@@ -115,41 +112,148 @@ def _search_purchase_phase_allocations_for_resolution(
     )
 
     if ids is not None:
+        normalized_ids = [
+            int(value)
+            for value in ids
+        ]
+
+        if not normalized_ids:
+            return []
+
         query = query.filter(
-            PurchasePhaseAllocation.id.in_(ids)
+            PurchasePhaseAllocation.id.in_(
+                normalized_ids
+            )
         )
 
     text = (query_text or "").strip()
 
     if text:
-        pattern = f"%{text}%"
-        query = query.filter(
-            or_(
-                PurchaseOrder.reference_number.ilike(
-                    pattern
-                ),
-                PurchasePhase.title.ilike(pattern),
-                PurchaseOrderLine.line_description.ilike(
-                    pattern
-                ),
-                Item.name.ilike(pattern),
-                Item.item_code.ilike(pattern),
-                Unit.code.ilike(pattern),
+        material_limit = max(
+            int(limit) * 10,
+            50,
+        )
+        matching_items = list_items(
+            db=db,
+            current_user=current_user,
+            query_text=text,
+            limit=material_limit,
+            offset=0,
+        )
+        matching_units = (
+            search_units_for_assistant(
+                db=db,
+                current_user=current_user,
+                query_text=text,
+                limit=material_limit,
             )
         )
 
-    return (
+        item_ids = [
+            item.id
+            for item in matching_items
+        ]
+        unit_ids = [
+            unit.id
+            for unit in matching_units
+        ]
+
+        filters = [
+            PurchaseOrder.reference_number.ilike(
+                f"%{text}%"
+            ),
+            PurchaseOrder.title.ilike(
+                f"%{text}%"
+            ),
+            PurchasePhase.title.ilike(
+                f"%{text}%"
+            ),
+            PurchaseOrderLine.line_description.ilike(
+                f"%{text}%"
+            ),
+        ]
+
+        if item_ids:
+            filters.append(
+                PurchaseOrderLine.item_id.in_(
+                    item_ids
+                )
+            )
+
+        if unit_ids:
+            filters.append(
+                PurchaseOrderLine.unit_id.in_(
+                    unit_ids
+                )
+            )
+
+        query = query.filter(or_(*filters))
+
+    rows = (
         query.order_by(
             PurchaseOrder.created_at.desc(),
             PurchasePhase.phase_number.asc(),
             PurchaseOrderLine.line_number.asc(),
+            PurchasePhaseAllocation.id.asc(),
         )
         .limit(limit)
         .all()
     )
 
+    item_references = get_item_references(
+        db=db,
+        current_user=current_user,
+        item_ids=[
+            order_line.item_id
+            for _, _, _, order_line in rows
+        ],
+    )
+    unit_references = get_unit_references(
+        db=db,
+        current_user=current_user,
+        unit_ids=[
+            order_line.unit_id
+            for _, _, _, order_line in rows
+        ],
+    )
 
-def _purchase_phase_allocation_to_candidate(row) -> Candidate:
+    return [
+        (
+            purchase_order,
+            phase,
+            allocation,
+            order_line,
+            item_references.get(
+                order_line.item_id,
+                {
+                    "id": order_line.item_id,
+                    "item_code": None,
+                    "name": (
+                        f"Item {order_line.item_id}"
+                    ),
+                },
+            ),
+            unit_references.get(
+                order_line.unit_id,
+                {
+                    "id": order_line.unit_id,
+                    "code": None,
+                    "name": None,
+                },
+            ),
+        )
+        for (
+            purchase_order,
+            phase,
+            allocation,
+            order_line,
+        ) in rows
+    ]
+
+
+def _purchase_phase_allocation_to_candidate(
+    row,
+) -> Candidate:
     (
         purchase_order,
         phase,
@@ -159,18 +263,22 @@ def _purchase_phase_allocation_to_candidate(row) -> Candidate:
         unit,
     ) = row
 
+    item_code = item.get("item_code")
+    item_name = item.get("name")
+    unit_code = unit.get("code")
+
     label = (
         f"{purchase_order.reference_number} - "
         f"phase {phase.phase_number} - "
-        f"{item.item_code or item.name}"
+        f"{item_code or item_name}"
     )
 
     return Candidate(
         id=allocation.id,
         match_text=(
             order_line.line_description
-            or item.name
-            or item.item_code
+            or item_name
+            or item_code
             or ""
         ),
         label=label,
@@ -189,16 +297,15 @@ def _purchase_phase_allocation_to_candidate(row) -> Candidate:
             "phase_number": phase.phase_number,
             "line_number": order_line.line_number,
             "item_id": order_line.item_id,
-            "item_name": item.name,
-            "item_code": item.item_code,
+            "item_name": item_name,
+            "item_code": item_code,
             "unit_id": order_line.unit_id,
-            "unit_code": unit.code,
+            "unit_code": unit_code,
             "allocated_quantity": (
                 allocation.allocated_quantity
             ),
         },
     )
-
 
 def register_purchase_resources() -> None:
     register_resource(

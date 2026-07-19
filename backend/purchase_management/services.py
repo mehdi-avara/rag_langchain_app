@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from datetime import date, datetime, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import HTTPException, status
@@ -26,6 +26,7 @@ from core.exceptions.error_codes import (
     PURCHASE_ORDER_INVALID_STRUCTURE,
     PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
     PURCHASE_ORDER_LINE_NOT_FOUND,
+    PURCHASE_ORDER_NOT_FOUND,
     PURCHASE_ORDER_COST_NOT_FOUND,
     PURCHASE_ORDER_LINES_REQUIRED,
     PURCHASE_ORDER_NOT_RECEIVABLE,
@@ -37,6 +38,7 @@ from core.exceptions.error_codes import (
     PURCHASE_PHASE_ALLOCATION_OVER_RECEIPT,
     PURCHASE_PHASE_ITEM_NOT_FOUND,
     PURCHASE_PHASE_ITEM_OVER_RECEIPT,
+    PURCHASE_PHASE_NOT_FOUND,
     PURCHASE_PHASE_NOT_RECEIVABLE,
     USER_HAS_NO_COMPANY,
 )
@@ -45,6 +47,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from Models import User
+from shared.currency.services import (
+    quantize_exchange_rate,
+    quantize_money,
+)
 
 from .models import (
     CostAllocationMethod,
@@ -81,12 +87,10 @@ def _next_reference_number(db: Session, company_id: int) -> str:
 
 def _tenant_id(user: User) -> int:
     if user.company_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": USER_HAS_NO_COMPANY,
-                "message": "Current user does not belong to a company",
-            },
+                purchase_error(
+            status.HTTP_403_FORBIDDEN,
+            USER_HAS_NO_COMPANY,
+            "Current user does not belong to a company",
         )
 
     return user.company_id
@@ -170,9 +174,10 @@ def get_po_or_404(
     )
 
     if purchase_order is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Purchase order not found",
+                purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_ORDER_NOT_FOUND,
+            "Purchase order not found",
         )
 
     return purchase_order
@@ -227,19 +232,6 @@ def _resolve_supplier_for_purchase(
     )
 
     return supplier.id, supplier.name
-
-
-PRICE_QUANTUM = Decimal("0.0000000001")
-RATE_QUANTUM = Decimal("0.0000000001")
-
-
-def _quantize_decimal(value, decimal_places: int) -> Decimal:
-    quantum = Decimal("1").scaleb(-decimal_places)
-    return Decimal(str(value)).quantize(
-        quantum,
-        rounding=ROUND_HALF_UP,
-    )
-
 
 def _get_company_base_currency_reference(
     db: Session,
@@ -342,17 +334,14 @@ def _prepare_purchase_order_lines(
         ordered_quantity = Decimal(
             str(line["ordered_quantity"])
         )
-        exchange_rate = Decimal(
-            str(line["exchange_rate_used"])
-        ).quantize(
-            RATE_QUANTUM,
-            rounding=ROUND_HALF_UP,
+        exchange_rate = quantize_exchange_rate(
+            line["exchange_rate_used"]
         )
-        unit_price = _quantize_decimal(
+        unit_price = quantize_money(
             line["unit_price"],
             currency.decimal_places,
         )
-        unit_price_base = _quantize_decimal(
+        unit_price_base = quantize_money(
             unit_price * exchange_rate,
             base_currency.decimal_places,
         )
@@ -809,20 +798,11 @@ def create_purchase_order_from_rfq(
                 "uq_purchase_orders_company_rfq"
                 in detail
             ):
-                raise HTTPException(
-                    status_code=(
-                        status.HTTP_409_CONFLICT
-                    ),
-                    detail={
-                        "code": (
-                            PURCHASE_ORDER_RFQ_ALREADY_LINKED
-                        ),
-                        "message": (
-                            "A purchase order already "
-                            "exists for this RFQ"
-                        ),
-                    },
-                ) from exc
+                                purchase_error(
+                    status.HTTP_409_CONFLICT,
+                    PURCHASE_ORDER_RFQ_ALREADY_LINKED,
+                    "A purchase order already exists for this RFQ",
+                )
 
             if "uq_po_company_reference" in detail:
                 continue
@@ -1709,7 +1689,11 @@ def update_phase(db: Session, user: User, po_id: int, phase_id: int, **kwargs) -
     ).first()
 
     if not phase:
-        raise HTTPException(status_code=404, detail="Phase not found")
+                purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_NOT_FOUND,
+            "Purchase phase not found",
+        )
 
     for key, value in kwargs.items():
         if value is not None:
@@ -2265,9 +2249,10 @@ def split_purchase_order_phase(
         )
 
         if purchase_order is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Purchase order not found",
+                        purchase_error(
+                status.HTTP_404_NOT_FOUND,
+                PURCHASE_ORDER_NOT_FOUND,
+                "Purchase order not found",
             )
 
         existing_event = (
@@ -2921,7 +2906,11 @@ def _get_phase_or_404(db: Session, user: User, po_id: int, phase_id: int) -> Pur
         PurchasePhase.purchase_order_id == po.id,
     ).first()
     if not phase:
-        raise HTTPException(status_code=404, detail="Phase not found")
+                purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_NOT_FOUND,
+            "Purchase phase not found",
+        )
     return phase
 
 
@@ -2951,9 +2940,10 @@ def get_phase_reference_for_goods_receipt(
     )
 
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Purchase phase not found",
+                purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_NOT_FOUND,
+            "Purchase phase not found",
         )
 
     purchase_order, purchase_phase = row
@@ -3110,9 +3100,10 @@ def apply_goods_receipt(
     )
 
     if purchase_order is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Purchase order not found",
+                purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_ORDER_NOT_FOUND,
+            "Purchase order not found",
         )
 
     if purchase_order.status in {
@@ -3139,9 +3130,10 @@ def apply_goods_receipt(
     )
 
     if phase is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Purchase phase not found",
+                purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_PHASE_NOT_FOUND,
+            "Purchase phase not found",
         )
 
     if phase.status in {
