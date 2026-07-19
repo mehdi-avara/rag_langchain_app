@@ -4,6 +4,8 @@ PERMISSIONS = [
     ("purchase_management:orders:read", "purchase_management.orders", "read", "View purchase orders"),
     ("purchase_management:orders:create", "purchase_management.orders", "create", "Create purchase orders"),
     ("purchase_management:orders:update", "purchase_management.orders", "update", "Edit purchase orders"),
+    ("purchase_management:orders:submit", "purchase_management.orders", "submit", "Submit purchase orders and amendments for approval"),
+    ("purchase_management:orders:amend", "purchase_management.orders", "amend", "Open commercial amendments for approved purchase orders"),
     ("purchase_management:orders:delete", "purchase_management.orders", "delete", "Delete/cancel purchase orders"),
     ("purchase_management:orders:approve", "purchase_management.orders", "approve", "Approve or reject purchase orders"),
     ("purchase_management:orders:search", "purchase_management.orders", "search", "Search purchase orders"),

@@ -25,6 +25,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -43,6 +44,13 @@ class PurchaseOrderStatus(str, enum.Enum):
 
 
 class PurchaseApprovalStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class PurchaseAmendmentStatus(str, enum.Enum):
     DRAFT = "draft"
     PENDING = "pending"
     APPROVED = "approved"
@@ -245,6 +253,49 @@ class PurchaseOrder(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    amendments = relationship(
+        "PurchaseOrderAmendment",
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by=(
+            "PurchaseOrderAmendment."
+            "amendment_number"
+        ),
+    )
+
+    @property
+    def active_amendment(self):
+        for amendment in self.amendments or []:
+            if amendment.status in {
+                PurchaseAmendmentStatus.DRAFT.value,
+                PurchaseAmendmentStatus.PENDING.value,
+            }:
+                return amendment
+
+        return None
+
+    @property
+    def active_amendment_id(self):
+        amendment = self.active_amendment
+
+        if amendment is None:
+            return None
+
+        return amendment.id
+
+    @property
+    def active_amendment_status(self):
+        amendment = self.active_amendment
+
+        if amendment is None:
+            return None
+
+        return amendment.status
+
+    @property
+    def amendment_count(self):
+        return len(self.amendments or [])
 
 
 class PurchaseOrderLine(Base):
@@ -561,6 +612,189 @@ class PurchasePhaseSplitEvent(Base):
     actor_user = relationship(
         "User",
         foreign_keys=[actor_user_id],
+    )
+
+
+class PurchaseOrderAmendment(Base):
+    __tablename__ = "purchase_order_amendments"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "purchase_order_id",
+            "amendment_number",
+            name=(
+                "uq_purchase_order_amendments_"
+                "company_order_number"
+            ),
+        ),
+        CheckConstraint(
+            "amendment_number >= 1",
+            name=(
+                "purchase_order_amendment_"
+                "number_positive"
+            ),
+        ),
+        CheckConstraint(
+            """
+            status IN (
+                'draft',
+                'pending',
+                'approved',
+                'rejected'
+            )
+            """,
+            name=(
+                "purchase_order_amendment_"
+                "status_valid"
+            ),
+        ),
+        Index(
+            "ix_purchase_order_amendments_"
+            "company_created",
+            "company_id",
+            "created_at",
+        ),
+        Index(
+            "ix_purchase_order_amendments_"
+            "order_number",
+            "purchase_order_id",
+            "amendment_number",
+        ),
+        Index(
+            "ix_purchase_order_amendments_"
+            "created_by_user_id",
+            "created_by_user_id",
+        ),
+        Index(
+            "ix_purchase_order_amendments_"
+            "submitted_by_user_id",
+            "submitted_by_user_id",
+        ),
+        Index(
+            "ix_purchase_order_amendments_"
+            "decided_by_user_id",
+            "decided_by_user_id",
+        ),
+        Index(
+            "uq_purchase_order_amendments_"
+            "active_order",
+            "purchase_order_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('draft', 'pending')"
+            ),
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    company_id = Column(
+        Integer,
+        ForeignKey(
+            "companies.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    purchase_order_id = Column(
+        Integer,
+        ForeignKey(
+            "purchase_orders.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    amendment_number = Column(
+        Integer,
+        nullable=False,
+    )
+    status = Column(
+        String(20),
+        nullable=False,
+        default=PurchaseAmendmentStatus.DRAFT.value,
+    )
+    reason = Column(
+        Text,
+        nullable=False,
+    )
+    before_snapshot = Column(
+        JSONB,
+        nullable=False,
+    )
+    proposed_snapshot = Column(
+        JSONB,
+        nullable=True,
+    )
+    submission_note = Column(
+        Text,
+        nullable=True,
+    )
+    decision_note = Column(
+        Text,
+        nullable=True,
+    )
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    submitted_by_user_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    decided_by_user_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+    submitted_at = Column(
+        DateTime,
+        nullable=True,
+    )
+    decided_at = Column(
+        DateTime,
+        nullable=True,
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    purchase_order = relationship(
+        "PurchaseOrder",
+        back_populates="amendments",
+    )
+    company = relationship(
+        "Company",
+        foreign_keys=[company_id],
+    )
+    created_by_user = relationship(
+        "User",
+        foreign_keys=[created_by_user_id],
+    )
+    submitted_by_user = relationship(
+        "User",
+        foreign_keys=[submitted_by_user_id],
+    )
+    decided_by_user = relationship(
+        "User",
+        foreign_keys=[decided_by_user_id],
     )
 
 

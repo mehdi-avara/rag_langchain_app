@@ -11,6 +11,9 @@ from typing import List, Optional
 from fastapi import HTTPException, status
 from core.exceptions.error_codes import (
     PURCHASE_ORDER_BASE_CURRENCY_NOT_CONFIGURED,
+    PURCHASE_ORDER_AMENDMENT_INVALID_TRANSITION,
+    PURCHASE_ORDER_APPROVAL_ACTION_INVALID,
+    PURCHASE_ORDER_APPROVAL_INVALID_TRANSITION,
     PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
     PURCHASE_ORDER_COMMERCIAL_TERMS_MISMATCH,
     PURCHASE_PHASE_SPLIT_ALLOCATION_BLOCKED,
@@ -21,6 +24,9 @@ from core.exceptions.error_codes import (
     PURCHASE_PHASE_SPLIT_QUANTITY_EXCEEDS_MOVABLE,
     PURCHASE_ORDER_CURRENCY_INVALID,
     PURCHASE_ORDER_INVALID_STRUCTURE,
+    PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
+    PURCHASE_ORDER_LINE_NOT_FOUND,
+    PURCHASE_ORDER_COST_NOT_FOUND,
     PURCHASE_ORDER_LINES_REQUIRED,
     PURCHASE_ORDER_NOT_RECEIVABLE,
     PURCHASE_ORDER_REFERENCE_GENERATION_FAILED,
@@ -145,6 +151,7 @@ def _purchase_order_query(db: Session):
             PurchasePhase.allocations
         ),
         selectinload(PurchaseOrder.costs),
+        selectinload(PurchaseOrder.amendments),
     )
 
 
@@ -845,11 +852,10 @@ def update_purchase_order(
         user=user,
     )
 
-    if po.status == PurchaseOrderStatus.CANCELLED.value:
-        purchase_error(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
-            "Cannot edit a cancelled purchase order",
+    if kwargs:
+        _assert_purchase_order_commercial_mutation_allowed(
+            db=db,
+            purchase_order=po,
         )
 
     missing = object()
@@ -864,19 +870,6 @@ def update_purchase_order(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 PURCHASE_ORDER_SUPPLIER_REQUIRED,
                 "supplier_id is required",
-            )
-
-        if po.approval_status not in {
-            PurchaseApprovalStatus.DRAFT.value,
-            PurchaseApprovalStatus.REJECTED.value,
-        }:
-            purchase_error(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
-                (
-                    "The supplier cannot be changed "
-                    "after submission without an amendment"
-                ),
             )
 
         resolved_supplier_id, supplier_name = (
@@ -901,6 +894,573 @@ def update_purchase_order(
         po_id=po.id,
         user=user,
     )
+
+
+def _assert_purchase_order_commercial_mutation_allowed(
+    db: Session,
+    purchase_order: PurchaseOrder,
+) -> None:
+    from .amendment_service import (
+        _purchase_order_has_posted_receipts,
+        assert_purchase_order_commercially_editable,
+    )
+
+    assert_purchase_order_commercially_editable(
+        db=db,
+        purchase_order=purchase_order,
+    )
+
+    if _purchase_order_has_posted_receipts(
+        db=db,
+        purchase_order_id=purchase_order.id,
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
+            (
+                "Commercial terms cannot be changed "
+                "after a posted goods receipt"
+            ),
+        )
+
+
+def _get_purchase_order_line_or_404(
+    db: Session,
+    purchase_order_id: int,
+    line_id: int,
+) -> PurchaseOrderLine:
+    line = (
+        db.query(PurchaseOrderLine)
+        .options(
+            selectinload(
+                PurchaseOrderLine.allocations
+            )
+        )
+        .filter(
+            PurchaseOrderLine.id == line_id,
+            PurchaseOrderLine.purchase_order_id
+            == purchase_order_id,
+        )
+        .first()
+    )
+
+    if line is None:
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_ORDER_LINE_NOT_FOUND,
+            "Purchase-order line not found",
+        )
+
+    return line
+
+
+def _reload_purchase_order_line(
+    db: Session,
+    purchase_order_id: int,
+    line_id: int,
+) -> PurchaseOrderLine:
+    db.expire_all()
+
+    return _get_purchase_order_line_or_404(
+        db=db,
+        purchase_order_id=purchase_order_id,
+        line_id=line_id,
+    )
+
+
+def _get_purchase_order_cost_or_404(
+    db: Session,
+    purchase_order_id: int,
+    cost_id: int,
+) -> PurchaseOrderCost:
+    cost = (
+        db.query(PurchaseOrderCost)
+        .filter(
+            PurchaseOrderCost.id == cost_id,
+            PurchaseOrderCost.purchase_order_id
+            == purchase_order_id,
+        )
+        .first()
+    )
+
+    if cost is None:
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_ORDER_COST_NOT_FOUND,
+            "Purchase-order cost not found",
+        )
+
+    return cost
+
+
+def _validate_purchase_order_line_allocations(
+    db: Session,
+    purchase_order: PurchaseOrder,
+    allocations: list[dict],
+    ordered_quantity: Decimal,
+) -> list[dict]:
+    if not allocations:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
+            (
+                "At least one delivery allocation "
+                "is required"
+            ),
+        )
+
+    phase_ids = [
+        int(allocation["phase_id"])
+        for allocation in allocations
+    ]
+
+    if len(phase_ids) != len(set(phase_ids)):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
+            (
+                "Each delivery phase may appear "
+                "only once"
+            ),
+        )
+
+    phases = (
+        db.query(PurchasePhase)
+        .filter(
+            PurchasePhase.purchase_order_id
+            == purchase_order.id,
+            PurchasePhase.id.in_(phase_ids),
+        )
+        .all()
+    )
+
+    if {
+        phase.id
+        for phase in phases
+    } != set(phase_ids):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
+            (
+                "One or more delivery phases do not "
+                "belong to the purchase order"
+            ),
+        )
+
+    normalized = [
+        {
+            "phase_id": int(
+                allocation["phase_id"]
+            ),
+            "allocated_quantity": Decimal(
+                str(
+                    allocation[
+                        "allocated_quantity"
+                    ]
+                )
+            ),
+        }
+        for allocation in allocations
+    ]
+
+    total = sum(
+        (
+            allocation["allocated_quantity"]
+            for allocation in normalized
+        ),
+        Decimal("0"),
+    )
+
+    if total != Decimal(str(ordered_quantity)):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
+            (
+                "Allocation total must equal "
+                "ordered quantity"
+            ),
+        )
+
+    return normalized
+
+
+def _prepare_mutated_purchase_order_line(
+    db: Session,
+    user: User,
+    purchase_order: PurchaseOrder,
+    data: dict,
+    excluded_line_id: Optional[int] = None,
+) -> dict:
+    required_fields = (
+        "item_id",
+        "ordered_quantity",
+        "unit_id",
+        "unit_price",
+        "currency_id",
+        "exchange_rate_used",
+    )
+
+    if any(
+        data.get(field) is None
+        for field in required_fields
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            (
+                "Purchase-order line contains "
+                "missing commercial fields"
+            ),
+        )
+
+    base_currency = (
+        _get_company_base_currency_reference(
+            db=db,
+            company_id=purchase_order.company_id,
+        )
+    )
+
+    prepared = _prepare_purchase_order_lines(
+        db=db,
+        user=user,
+        lines=[data],
+        base_currency=base_currency,
+    )[0]
+
+    query = db.query(PurchaseOrderLine).filter(
+        PurchaseOrderLine.purchase_order_id
+        == purchase_order.id
+    )
+
+    if excluded_line_id is not None:
+        query = query.filter(
+            PurchaseOrderLine.id
+            != excluded_line_id
+        )
+
+    other_lines = query.all()
+
+    for other_line in other_lines:
+        if (
+            other_line.currency_id
+            != prepared["currency_id"]
+            or Decimal(
+                str(
+                    other_line
+                    .exchange_rate_used
+                )
+            )
+            != Decimal(
+                str(
+                    prepared[
+                        "exchange_rate_used"
+                    ]
+                )
+            )
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_COMMERCIAL_TERMS_MISMATCH,
+                (
+                    "All purchase-order lines must "
+                    "use the same currency and "
+                    "exchange rate"
+                ),
+            )
+
+    return prepared
+
+
+def create_purchase_order_line(
+    db: Session,
+    user: User,
+    po_id: int,
+    data: dict,
+) -> PurchaseOrderLine:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    _assert_purchase_order_commercial_mutation_allowed(
+        db=db,
+        purchase_order=purchase_order,
+    )
+
+    values = dict(data)
+    allocations = values.pop(
+        "allocations",
+        None,
+    )
+
+    prepared = _prepare_mutated_purchase_order_line(
+        db=db,
+        user=user,
+        purchase_order=purchase_order,
+        data=values,
+    )
+
+    normalized_allocations = (
+        _validate_purchase_order_line_allocations(
+            db=db,
+            purchase_order=purchase_order,
+            allocations=allocations,
+            ordered_quantity=prepared[
+                "ordered_quantity"
+            ],
+        )
+    )
+
+    line_number = (
+        db.query(
+            func.coalesce(
+                func.max(
+                    PurchaseOrderLine.line_number
+                ),
+                0,
+            )
+        )
+        .filter(
+            PurchaseOrderLine.purchase_order_id
+            == purchase_order.id
+        )
+        .scalar()
+        + 1
+    )
+
+    line = PurchaseOrderLine(
+        purchase_order_id=purchase_order.id,
+        line_number=line_number,
+        item_id=prepared["item_id"],
+        ordered_quantity=prepared[
+            "ordered_quantity"
+        ],
+        unit_id=prepared["unit_id"],
+        line_description=prepared[
+            "line_description"
+        ],
+        unit_price=prepared["unit_price"],
+        currency_id=prepared["currency_id"],
+        unit_price_base=prepared[
+            "unit_price_base"
+        ],
+        exchange_rate_used=prepared[
+            "exchange_rate_used"
+        ],
+        notes=prepared["notes"],
+    )
+
+    db.add(line)
+    db.flush()
+
+    for allocation in normalized_allocations:
+        db.add(
+            PurchasePhaseAllocation(
+                phase_id=allocation["phase_id"],
+                purchase_order_line_id=line.id,
+                allocated_quantity=allocation[
+                    "allocated_quantity"
+                ],
+            )
+        )
+
+    line_id = line.id
+    db.commit()
+
+    return _reload_purchase_order_line(
+        db=db,
+        purchase_order_id=purchase_order.id,
+        line_id=line_id,
+    )
+
+
+def update_purchase_order_line(
+    db: Session,
+    user: User,
+    po_id: int,
+    line_id: int,
+    data: dict,
+) -> PurchaseOrderLine:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    _assert_purchase_order_commercial_mutation_allowed(
+        db=db,
+        purchase_order=purchase_order,
+    )
+
+    line = _get_purchase_order_line_or_404(
+        db=db,
+        purchase_order_id=purchase_order.id,
+        line_id=line_id,
+    )
+
+    values = dict(data)
+    allocations_supplied = (
+        "allocations" in values
+    )
+    allocations = values.pop(
+        "allocations",
+        None,
+    )
+
+    merged = {
+        "item_id": line.item_id,
+        "ordered_quantity": (
+            line.ordered_quantity
+        ),
+        "unit_id": line.unit_id,
+        "line_description": (
+            line.line_description
+        ),
+        "unit_price": line.unit_price,
+        "currency_id": line.currency_id,
+        "exchange_rate_used": (
+            line.exchange_rate_used
+        ),
+        "notes": line.notes,
+    }
+
+    merged.update(values)
+
+    prepared = _prepare_mutated_purchase_order_line(
+        db=db,
+        user=user,
+        purchase_order=purchase_order,
+        data=merged,
+        excluded_line_id=line.id,
+    )
+
+    if allocations_supplied:
+        normalized_allocations = (
+            _validate_purchase_order_line_allocations(
+                db=db,
+                purchase_order=purchase_order,
+                allocations=allocations,
+                ordered_quantity=prepared[
+                    "ordered_quantity"
+                ],
+            )
+        )
+    else:
+        current_total = sum(
+            (
+                Decimal(
+                    str(
+                        allocation
+                        .allocated_quantity
+                    )
+                )
+                for allocation in (
+                    line.allocations or []
+                )
+            ),
+            Decimal("0"),
+        )
+
+        if (
+            current_total
+            != Decimal(
+                str(
+                    prepared[
+                        "ordered_quantity"
+                    ]
+                )
+            )
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_LINE_ALLOCATION_INVALID,
+                (
+                    "Allocation changes are required "
+                    "when ordered quantity changes"
+                ),
+            )
+
+        normalized_allocations = None
+
+    line.item_id = prepared["item_id"]
+    line.ordered_quantity = prepared[
+        "ordered_quantity"
+    ]
+    line.unit_id = prepared["unit_id"]
+    line.line_description = prepared[
+        "line_description"
+    ]
+    line.unit_price = prepared["unit_price"]
+    line.currency_id = prepared["currency_id"]
+    line.unit_price_base = prepared[
+        "unit_price_base"
+    ]
+    line.exchange_rate_used = prepared[
+        "exchange_rate_used"
+    ]
+    line.notes = prepared["notes"]
+
+    if normalized_allocations is not None:
+        for allocation in list(
+            line.allocations or []
+        ):
+            db.delete(allocation)
+
+        db.flush()
+
+        for allocation in normalized_allocations:
+            db.add(
+                PurchasePhaseAllocation(
+                    phase_id=(
+                        allocation["phase_id"]
+                    ),
+                    purchase_order_line_id=(
+                        line.id
+                    ),
+                    allocated_quantity=(
+                        allocation[
+                            "allocated_quantity"
+                        ]
+                    ),
+                )
+            )
+
+    line_id = line.id
+    db.commit()
+
+    return _reload_purchase_order_line(
+        db=db,
+        purchase_order_id=purchase_order.id,
+        line_id=line_id,
+    )
+
+
+def delete_purchase_order_line(
+    db: Session,
+    user: User,
+    po_id: int,
+    line_id: int,
+) -> None:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    _assert_purchase_order_commercial_mutation_allowed(
+        db=db,
+        purchase_order=purchase_order,
+    )
+
+    line = _get_purchase_order_line_or_404(
+        db=db,
+        purchase_order_id=purchase_order.id,
+        line_id=line_id,
+    )
+
+    db.delete(line)
+    db.commit()
 
 
 def cancel_purchase_order(db: Session, user: User, po_id: int) -> PurchaseOrder:
@@ -999,66 +1559,110 @@ def process_approval(
     action: str,
     note: Optional[str],
 ) -> PurchaseOrder:
-    po = get_po_or_404(db, po_id, user)
+    po = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    active_amendment = getattr(
+        po,
+        "active_amendment",
+        None,
+    )
+
+    if active_amendment is not None:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_AMENDMENT_INVALID_TRANSITION,
+            (
+                "Use the amendment approval "
+                "workflow for this purchase order"
+            ),
+        )
 
     if action == "submit":
-        if (
-            po.approval_status
-            != PurchaseApprovalStatus.DRAFT.value
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Only draft orders can be submitted "
-                    "for approval"
+        if po.approval_status not in {
+            PurchaseApprovalStatus.DRAFT.value,
+            PurchaseApprovalStatus.REJECTED.value,
+        }:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_APPROVAL_INVALID_TRANSITION,
+                (
+                    "Only draft or rejected orders "
+                    "can be submitted for approval"
                 ),
             )
 
-        _assert_purchase_order_ready_for_submission(po)
+        _assert_purchase_order_ready_for_submission(
+            po
+        )
         po.approval_status = (
             PurchaseApprovalStatus.PENDING.value
         )
+        po.approved_by_user_id = None
 
     elif action == "approve":
         if (
             po.approval_status
             != PurchaseApprovalStatus.PENDING.value
         ):
-            raise HTTPException(
-                status_code=422,
-                detail="Only pending orders can be approved",
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_APPROVAL_INVALID_TRANSITION,
+                (
+                    "Only pending orders "
+                    "can be approved"
+                ),
             )
 
         po.approval_status = (
             PurchaseApprovalStatus.APPROVED.value
         )
-        po.status = PurchaseOrderStatus.ORDERED.value
+        po.status = (
+            PurchaseOrderStatus.ORDERED.value
+        )
         po.approved_by_user_id = user.id
 
         for phase in po.phases:
-            if phase.status == PurchasePhaseStatus.DRAFT.value:
-                phase.status = PurchasePhaseStatus.ORDERED.value
+            if (
+                phase.status
+                == PurchasePhaseStatus.DRAFT.value
+            ):
+                phase.status = (
+                    PurchasePhaseStatus.ORDERED.value
+                )
 
     elif action == "reject":
         if (
             po.approval_status
             != PurchaseApprovalStatus.PENDING.value
         ):
-            raise HTTPException(
-                status_code=422,
-                detail="Only pending orders can be rejected",
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_APPROVAL_INVALID_TRANSITION,
+                (
+                    "Only pending orders "
+                    "can be rejected"
+                ),
             )
 
-        po.approval_status = PurchaseApprovalStatus.REJECTED.value
+        po.approval_status = (
+            PurchaseApprovalStatus.REJECTED.value
+        )
+        po.approved_by_user_id = None
 
     else:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unknown approval action: {action}",
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_APPROVAL_ACTION_INVALID,
+            f"Unknown approval action: {action}",
         )
 
     db.commit()
     db.refresh(po)
+
     return po
 
 
@@ -1656,7 +2260,7 @@ def split_purchase_order_phase(
                 PurchaseOrder.company_id
                 == company_id,
             )
-            .with_for_update()
+            .with_for_update(of=PurchaseOrder)
             .first()
         )
 
@@ -2501,7 +3105,7 @@ def apply_goods_receipt(
             PurchaseOrder.company_id
             == _tenant_id(current_user),
         )
-        .with_for_update()
+        .with_for_update(of=PurchaseOrder)
         .first()
     )
 
@@ -2819,7 +3423,17 @@ def add_cost(
     exchange_rate_used: Decimal,
     allocation_method: str,
 ) -> PurchaseOrderCost:
-    po = get_po_or_404(db, po_id, user)
+    po = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    _assert_purchase_order_commercial_mutation_allowed(
+        db=db,
+        purchase_order=po,
+    )
+
     cost = PurchaseOrderCost(
         purchase_order_id=po.id,
         cost_type=cost_type,
@@ -2835,6 +3449,86 @@ def add_cost(
     db.commit()
     db.refresh(cost)
     return cost
+
+
+def update_cost(
+    db: Session,
+    user: User,
+    po_id: int,
+    cost_id: int,
+    data: dict,
+) -> PurchaseOrderCost:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    _assert_purchase_order_commercial_mutation_allowed(
+        db=db,
+        purchase_order=purchase_order,
+    )
+
+    cost = _get_purchase_order_cost_or_404(
+        db=db,
+        purchase_order_id=purchase_order.id,
+        cost_id=cost_id,
+    )
+
+    non_nullable_fields = {
+        "cost_type",
+        "amount",
+        "currency_id",
+        "amount_base",
+        "base_currency_id",
+        "exchange_rate_used",
+        "allocation_method",
+    }
+
+    for key, value in data.items():
+        if (
+            key in non_nullable_fields
+            and value is None
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_INVALID_STRUCTURE,
+                f"{key} cannot be null",
+            )
+
+        setattr(cost, key, value)
+
+    db.commit()
+    db.refresh(cost)
+
+    return cost
+
+
+def delete_cost(
+    db: Session,
+    user: User,
+    po_id: int,
+    cost_id: int,
+) -> None:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    _assert_purchase_order_commercial_mutation_allowed(
+        db=db,
+        purchase_order=purchase_order,
+    )
+
+    cost = _get_purchase_order_cost_or_404(
+        db=db,
+        purchase_order_id=purchase_order.id,
+        cost_id=cost_id,
+    )
+
+    db.delete(cost)
+    db.commit()
 
 
 # ── Receipt link ──────────────────────────────────────────────────────────────

@@ -413,7 +413,10 @@ def test_reject_moves_pending_purchase_order_to_rejected(monkeypatch):
         (
             PurchaseApprovalStatus.PENDING.value,
             "submit",
-            "Only draft orders can be submitted for approval",
+            (
+                "Only draft or rejected orders "
+                "can be submitted for approval"
+            ),
         ),
         (
             PurchaseApprovalStatus.REJECTED.value,
@@ -444,7 +447,13 @@ def test_invalid_purchase_order_approval_transitions_are_rejected(
         )
 
     assert exc_info.value.status_code == 422
-    assert exc_info.value.detail == expected_message
+    assert exc_info.value.detail == {
+        "code": (
+            "PURCHASE_ORDER_"
+            "APPROVAL_INVALID_TRANSITION"
+        ),
+        "message": expected_message,
+    }
     assert purchase_order.approval_status == approval_status
     assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
     assert db.commits == 0
@@ -467,7 +476,15 @@ def test_unknown_purchase_order_approval_action_is_rejected(monkeypatch):
         )
 
     assert exc_info.value.status_code == 422
-    assert exc_info.value.detail == "Unknown approval action: ordered"
+    assert exc_info.value.detail == {
+        "code": (
+            "PURCHASE_ORDER_"
+            "APPROVAL_ACTION_INVALID"
+        ),
+        "message": (
+            "Unknown approval action: ordered"
+        ),
+    }
     assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
     assert purchase_order.approval_status == PurchaseApprovalStatus.DRAFT.value
     assert db.commits == 0

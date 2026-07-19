@@ -95,6 +95,7 @@ from purchase_management.models import (
     PurchasePhase,
     PurchasePhaseAllocation,
     PurchasePhaseSplitEvent,
+    PurchaseOrderAmendment,
     PurchaseOrderCost,
     PurchaseOrderReceiptLink,
 )
@@ -211,6 +212,7 @@ __all__ = [
     "PurchasePhase",
     "PurchasePhaseAllocation",
     "PurchasePhaseSplitEvent",
+    "PurchaseOrderAmendment",
     "PurchaseOrderCost",
     "PurchaseOrderReceiptLink",
     "Currency",

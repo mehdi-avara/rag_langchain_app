@@ -16,6 +16,7 @@ from ..schemas import (
     PurchaseOrderFromMRCreate,
     PurchaseOrderRead,
     PurchaseOrderSummary,
+    PurchaseOrderSubmit,
     PurchaseOrderUpdate,
     ReceiptLinkCreate,
     ReceiptLinkRead,
@@ -184,6 +185,29 @@ def delete_order(
         db=db,
         user=current_user,
         po_id=po_id,
+    )
+
+
+@router.post(
+    "/purchase/orders/{po_id}/submit",
+    response_model=PurchaseOrderRead,
+)
+def submit_order(
+    po_id: int,
+    payload: PurchaseOrderSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "purchase_management:orders:submit"
+        )
+    ),
+):
+    return process_approval(
+        db=db,
+        user=current_user,
+        po_id=po_id,
+        action="submit",
+        note=payload.note,
     )
 
 

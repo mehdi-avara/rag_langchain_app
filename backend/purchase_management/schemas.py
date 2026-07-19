@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -17,6 +17,117 @@ class PurchaseOrderLineCreate(BaseModel):
     currency_id: int = Field(..., gt=0)
     exchange_rate_used: Decimal = Field(..., gt=0)
     notes: Optional[str] = None
+
+
+class PurchasePhaseAllocationWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phase_id: int = Field(..., gt=0)
+    allocated_quantity: Decimal = Field(
+        ...,
+        gt=0,
+    )
+
+
+class PurchaseOrderLineMutationCreate(
+    PurchaseOrderLineCreate
+):
+    model_config = ConfigDict(extra="forbid")
+
+    allocations: list[
+        PurchasePhaseAllocationWrite
+    ] = Field(
+        ...,
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def validate_allocations(self):
+        phase_ids = [
+            allocation.phase_id
+            for allocation in self.allocations
+        ]
+
+        if len(phase_ids) != len(set(phase_ids)):
+            raise ValueError(
+                "Each delivery phase may appear "
+                "only once"
+            )
+
+        total = sum(
+            (
+                allocation.allocated_quantity
+                for allocation in self.allocations
+            ),
+            Decimal("0"),
+        )
+
+        if total != self.ordered_quantity:
+            raise ValueError(
+                "Allocation total must equal "
+                "ordered quantity"
+            )
+
+        return self
+
+
+class PurchaseOrderLineMutationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    ordered_quantity: Optional[Decimal] = Field(
+        None,
+        gt=0,
+    )
+    unit_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    line_description: Optional[str] = None
+    unit_price: Optional[Decimal] = Field(
+        None,
+        ge=0,
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    exchange_rate_used: Optional[
+        Decimal
+    ] = Field(
+        None,
+        gt=0,
+    )
+    notes: Optional[str] = None
+    allocations: Optional[
+        list[PurchasePhaseAllocationWrite]
+    ] = None
+
+    @model_validator(mode="after")
+    def validate_allocation_scope(self):
+        if self.allocations is None:
+            return self
+
+        if not self.allocations:
+            raise ValueError(
+                "At least one allocation is required"
+            )
+
+        phase_ids = [
+            allocation.phase_id
+            for allocation in self.allocations
+        ]
+
+        if len(phase_ids) != len(set(phase_ids)):
+            raise ValueError(
+                "Each delivery phase may appear "
+                "only once"
+            )
+
+        return self
 
 
 class PurchasePhaseAllocationRead(BaseModel):
@@ -278,14 +389,119 @@ class PurchaseOrderUpdate(BaseModel):
         gt=0,
     )
     description: Optional[str] = None
-    status: Optional[str] = None
+
+
+class PurchaseOrderSubmit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: Optional[str] = Field(
+        None,
+        max_length=2000,
+    )
+
 
 class PurchaseOrderApproval(BaseModel):
-    action: str = Field(
-        ...,
-        description="submit | approve | reject",
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["approve", "reject"]
+    note: Optional[str] = Field(
+        None,
+        max_length=2000,
     )
-    note: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_rejection_note(self):
+        if (
+            self.action == "reject"
+            and not (self.note or "").strip()
+        ):
+            raise ValueError(
+                "A rejection note is required"
+            )
+
+        if self.note is not None:
+            self.note = self.note.strip() or None
+
+        return self
+
+
+class PurchaseOrderAmendmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+    )
+
+    @model_validator(mode="after")
+    def normalize_reason(self):
+        self.reason = self.reason.strip()
+
+        if not self.reason:
+            raise ValueError(
+                "Amendment reason is required"
+            )
+
+        return self
+
+
+class PurchaseOrderAmendmentSubmit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: Optional[str] = Field(
+        None,
+        max_length=2000,
+    )
+
+
+class PurchaseOrderAmendmentDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["approve", "reject"]
+    note: Optional[str] = Field(
+        None,
+        max_length=2000,
+    )
+
+    @model_validator(mode="after")
+    def validate_decision_note(self):
+        if (
+            self.action == "reject"
+            and not (self.note or "").strip()
+        ):
+            raise ValueError(
+                "A rejection note is required"
+            )
+
+        if self.note is not None:
+            self.note = self.note.strip() or None
+
+        return self
+
+
+class PurchaseOrderAmendmentRead(BaseModel):
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    id: int
+    company_id: int
+    purchase_order_id: int
+    amendment_number: int
+    status: str
+    reason: str
+    before_snapshot: dict
+    proposed_snapshot: Optional[dict]
+    submission_note: Optional[str]
+    decision_note: Optional[str]
+    created_by_user_id: Optional[int]
+    submitted_by_user_id: Optional[int]
+    decided_by_user_id: Optional[int]
+    created_at: datetime
+    submitted_at: Optional[datetime]
+    decided_at: Optional[datetime]
+    updated_at: datetime
 
 
 class PurchaseOrderRead(BaseModel):
@@ -310,6 +526,9 @@ class PurchaseOrderRead(BaseModel):
     approved_by_user_id: Optional[int]
     created_at: datetime
     updated_at: datetime
+    active_amendment_id: Optional[int]
+    active_amendment_status: Optional[str]
+    amendment_count: int
     lines: list[
         PurchaseOrderLineRead
     ] = Field(
@@ -336,6 +555,36 @@ class PurchaseOrderCostCreate(BaseModel):
         "per_value",
         description="per_item | per_value | manual",
     )
+
+
+class PurchaseOrderCostUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cost_type: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    amount_base: Optional[Decimal] = Field(
+        None,
+        ge=0,
+    )
+    base_currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    exchange_rate_used: Optional[
+        Decimal
+    ] = Field(
+        None,
+        gt=0,
+    )
+    allocation_method: Optional[str] = None
 
 
 class PurchaseOrderCostRead(BaseModel):
