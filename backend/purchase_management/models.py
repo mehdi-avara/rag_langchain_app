@@ -81,8 +81,8 @@ class PurchaseOrder(Base):
         ),
         UniqueConstraint(
             "company_id",
-            "rfq_id",
-            name="uq_purchase_orders_company_rfq",
+            "source_rfq_id",
+            name="uq_purchase_orders_company_source_rfq",
         ),
         UniqueConstraint(
             "company_id",
@@ -92,7 +92,7 @@ class PurchaseOrder(Base):
         CheckConstraint(
             """
             NOT (
-                rfq_id IS NOT NULL
+                source_rfq_id IS NOT NULL
                 AND source_material_requisition_id IS NOT NULL
             )
             """,
@@ -123,9 +123,13 @@ class PurchaseOrder(Base):
     reference_number = Column(String(50), nullable=False, index=True)
     title = Column(String(255), nullable=True)
 
-    rfq_id = Column(
+    source_rfq_id = Column(
         Integer,
-        ForeignKey("rfqs.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "rfqs.id",
+            ondelete="RESTRICT",
+            name="fk_purchase_orders_source_rfq",
+        ),
         nullable=True,
         index=True,
     )
@@ -138,16 +142,6 @@ class PurchaseOrder(Base):
         nullable=True,
     )
 
-    winning_quotation_response_id = Column(
-        Integer,
-        ForeignKey(
-            "quotation_responses.id",
-            ondelete="RESTRICT",
-        ),
-        nullable=True,
-        index=True,
-    )
-
     supplier_id = Column(
         Integer,
         ForeignKey("suppliers.id", ondelete="SET NULL"),
@@ -155,22 +149,6 @@ class PurchaseOrder(Base):
         index=True,
     )
     supplier_name = Column(String(255), nullable=True, index=True)
-
-    currency_id = Column(
-        Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    base_currency_id = Column(
-        Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    exchange_rate_used = Column(
-        Numeric(28, 10),
-        nullable=False,
-        default=1,
-    )
 
     status = Column(
         String(20),
@@ -209,14 +187,6 @@ class PurchaseOrder(Base):
     )
 
     company = relationship("Company")
-    currency = relationship(
-        "Currency",
-        foreign_keys=[currency_id],
-    )
-    base_currency = relationship(
-        "Currency",
-        foreign_keys=[base_currency_id],
-    )
     created_by = relationship(
         "User",
         foreign_keys=[created_by_user_id],
@@ -399,18 +369,7 @@ class PurchasePhase(Base):
         default=PurchasePhaseStatus.DRAFT.value,
     )
 
-    currency_id = Column(
-        Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    exchange_rate_used = Column(
-        Numeric(28, 10),
-        nullable=True,
-    )
-
     expected_delivery_date = Column(DateTime, nullable=True)
-    actual_delivery_date = Column(DateTime, nullable=True)
     created_at = Column(
         DateTime,
         nullable=False,
@@ -426,10 +385,6 @@ class PurchasePhase(Base):
     purchase_order = relationship(
         "PurchaseOrder",
         back_populates="phases",
-    )
-    currency = relationship(
-        "Currency",
-        foreign_keys=[currency_id],
     )
     allocations = relationship(
         "PurchasePhaseAllocation",

@@ -291,7 +291,6 @@ def create_purchase_order_from_mr(
             base_currency=base_currency,
         )
     )
-    first_line = prepared_lines[0]
     expected_delivery_date = (
         _expected_delivery_datetime(
             data.get(
@@ -347,22 +346,12 @@ def create_purchase_order_from_mr(
                         f"{source['mr_number']}"
                     )
                 ),
-                rfq_id=None,
+                source_rfq_id=None,
                 source_material_requisition_id=(
                     source["id"]
                 ),
-                winning_quotation_response_id=None,
                 supplier_id=supplier_id,
                 supplier_name=supplier_name,
-                currency_id=first_line[
-                    "currency_id"
-                ],
-                base_currency_id=(
-                    base_currency.id
-                ),
-                exchange_rate_used=first_line[
-                    "exchange_rate_used"
-                ],
                 description=description,
                 created_by_user_id=user.id,
                 status=(
@@ -394,12 +383,6 @@ def create_purchase_order_from_mr(
                     PurchasePhaseStatus
                     .DRAFT.value
                 ),
-                currency_id=first_line[
-                    "currency_id"
-                ],
-                exchange_rate_used=first_line[
-                    "exchange_rate_used"
-                ],
                 expected_delivery_date=(
                     expected_delivery_date
                 ),

@@ -223,16 +223,20 @@ def register_purchase_resources() -> None:
     )
 
 
-def _purchase_order_required(payload: dict, slots: dict) -> list[str]:
-    if payload.get("rfq_id") or payload.get("rfq_query"):
+def _purchase_order_required(
+    payload: dict,
+    slots: dict,
+) -> list[str]:
+    if (
+        payload.get("rfq_id")
+        or payload.get("rfq_query")
+    ):
         return []
-    missing: list[str] = []
-    if payload.get("currency_id") is None:
-        missing.append("currency_id")
-    if payload.get("base_currency_id") is None:
-        missing.append("base_currency_id")
-    return missing
 
+    if payload.get("lines"):
+        return []
+
+    return ["lines"]
 
 class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
     module = MODULE
@@ -257,98 +261,149 @@ class PurchaseAssistantToolSet(ConfiguredCommerceToolSet):
     write_specs = (
         WriteSpec(
             intent="add_purchase_order",
-            description="Create a purchase order draft, either directly or from an existing RFQ.",
+            description=(
+                "Create a normalized purchase "
+                "order draft directly or from "
+                "an existing RFQ."
+            ),
             permission=P_CREATE,
-            target_action="create_purchase_order",
+            target_action=(
+                "create_purchase_order"
+            ),
             method="POST",
             endpoint=API_PREFIX,
-            validate=_purchase_order_required,
+            validate=(
+                _purchase_order_required
+            ),
             reference_fields=(
                 ReferenceFieldSpec(
                     field="rfq_id",
                     resource_key="rfq",
-                    raw_aliases=("rfq_query", "rfq_number", "rfq", "request_for_quotation"),
-                    explicit_aliases=("rfq_id",),
+                    raw_aliases=(
+                        "rfq_query",
+                        "rfq_number",
+                        "rfq",
+                        "request_for_quotation",
+                    ),
+                    explicit_aliases=(
+                        "rfq_id",
+                    ),
                     missing_label="RFQ",
                 ),
                 ReferenceFieldSpec(
                     field="supplier_id",
                     resource_key="supplier",
-                    raw_aliases=("supplier_query", "supplier_name", "supplier"),
-                    explicit_aliases=("supplier_id",),
+                    raw_aliases=(
+                        "supplier_query",
+                        "supplier_name",
+                        "supplier",
+                    ),
+                    explicit_aliases=(
+                        "supplier_id",
+                    ),
                     missing_label="supplier",
-                ),
-                ReferenceFieldSpec(
-                    field="currency_id",
-                    resource_key="currency",
-                    raw_aliases=("currency_query", "currency_code", "currency"),
-                    explicit_aliases=("currency_id",),
-                    missing_label="currency",
-                ),
-                ReferenceFieldSpec(
-                    field="base_currency_id",
-                    resource_key="currency",
-                    raw_aliases=("base_currency_query", "base_currency_code", "base_currency"),
-                    explicit_aliases=("base_currency_id",),
-                    missing_label="base currency",
                 ),
             ),
             fields=(
-                PayloadField("rfq_id", kind="int"),
-                PayloadField("rfq_query", aliases=("rfq_number", "rfq", "request_for_quotation")),
+                PayloadField(
+                    "rfq_id",
+                    kind="int",
+                ),
+                PayloadField(
+                    "rfq_query",
+                    aliases=(
+                        "rfq_number",
+                        "rfq",
+                        "request_for_quotation",
+                    ),
+                ),
                 PayloadField("title"),
-                PayloadField("supplier_id", aliases=("supplier",), kind="int"),
-                PayloadField("supplier_name"),
-                PayloadField("supplier_query"),
-                PayloadField("currency_id", aliases=("currency",), kind="int"),
-                PayloadField("base_currency_id", aliases=("base_currency",), kind="int"),
-                PayloadField("exchange_rate_used", aliases=("exchange_rate",), kind="decimal", default="1"),
-                PayloadField("description"),
+                PayloadField(
+                    "supplier_id",
+                    aliases=("supplier",),
+                    kind="int",
+                ),
+                PayloadField(
+                    "supplier_name"
+                ),
+                PayloadField(
+                    "supplier_query"
+                ),
+                PayloadField(
+                    "description"
+                ),
+                PayloadField(
+                    "lines",
+                    kind="raw",
+                ),
             ),
-            **assistant_prompt.ADD_PURCHASE_ORDER,
+            **assistant_prompt
+            .ADD_PURCHASE_ORDER,
         ),
         WriteSpec(
-            intent="update_purchase_order",
-            description="Update an existing purchase order draft.",
+            intent=(
+                "update_purchase_order"
+            ),
+            description=(
+                "Update non-commercial fields "
+                "of an existing purchase order "
+                "draft."
+            ),
             permission=P_UPDATE,
-            target_action="update_purchase_order",
+            target_action=(
+                "update_purchase_order"
+            ),
             method="PATCH",
-            endpoint=f"{API_PREFIX}/{{entity_id}}",
-            id_aliases=("purchase_order_id", "po_id", "id"),
+            endpoint=(
+                f"{API_PREFIX}/"
+                "{entity_id}"
+            ),
+            id_aliases=(
+                "purchase_order_id",
+                "po_id",
+                "id",
+            ),
             reference_fields=(
                 ReferenceFieldSpec(
                     field="supplier_id",
                     resource_key="supplier",
-                    raw_aliases=("supplier_query", "supplier_name", "supplier"),
-                    explicit_aliases=("supplier_id",),
+                    raw_aliases=(
+                        "supplier_query",
+                        "supplier_name",
+                        "supplier",
+                    ),
+                    explicit_aliases=(
+                        "supplier_id",
+                    ),
                     missing_label="supplier",
-                ),
-                ReferenceFieldSpec(
-                    field="currency_id",
-                    resource_key="currency",
-                    raw_aliases=("currency_query", "currency_code", "currency"),
-                    explicit_aliases=("currency_id",),
-                    missing_label="currency",
-                ),
-                ReferenceFieldSpec(
-                    field="base_currency_id",
-                    resource_key="currency",
-                    raw_aliases=("base_currency_query", "base_currency_code", "base_currency"),
-                    explicit_aliases=("base_currency_id",),
-                    missing_label="base currency",
                 ),
             ),
             fields=(
                 PayloadField("title"),
-                PayloadField("supplier_id", aliases=("supplier",), kind="int"),
-                PayloadField("supplier_name"),
-                PayloadField("currency_id", aliases=("currency",), kind="int"),
-                PayloadField("base_currency_id", aliases=("base_currency",), kind="int"),
-                PayloadField("exchange_rate_used", aliases=("exchange_rate",), kind="decimal"),
-                PayloadField("description"),
-                PayloadField("status", kind="enum", enum_values=tuple(item.value for item in PurchaseOrderStatus)),
+                PayloadField(
+                    "supplier_id",
+                    aliases=("supplier",),
+                    kind="int",
+                ),
+                PayloadField(
+                    "supplier_name"
+                ),
+                PayloadField(
+                    "description"
+                ),
+                PayloadField(
+                    "status",
+                    kind="enum",
+                    enum_values=tuple(
+                        item.value
+                        for item in (
+                            PurchaseOrderStatus
+                        )
+                    ),
+                ),
             ),
-            **assistant_prompt.UPDATE_PURCHASE_ORDER,
+            **assistant_prompt
+            .UPDATE_PURCHASE_ORDER,
         ),
     )
 

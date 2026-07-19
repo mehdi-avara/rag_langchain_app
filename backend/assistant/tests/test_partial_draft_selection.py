@@ -29,7 +29,7 @@ def test_loads_latest_active_partial_for_each_module_and_action():
     po_partial = {
         "target_module": "purchase_management",
         "target_action": "create_purchase_order",
-        "payload": {"exchange_rate_used": "1"},
+        "payload": {"title": "Pump PO"},
     }
     rfq_partial = {
         "target_module": "rfq_management",
@@ -148,7 +148,7 @@ def test_graph_merges_matching_mr_partial_not_latest_po_partial(
                 {
                     "target_module": "purchase_management",
                     "target_action": "create_purchase_order",
-                    "payload": {"exchange_rate_used": "1"},
+                    "payload": {"title": "Pump PO"},
                 },
                 {
                     "target_module": "requisition_management",
@@ -170,7 +170,7 @@ def test_graph_merges_matching_mr_partial_not_latest_po_partial(
     assert draft["payload"]["priority"] == "normal"
     assert draft["payload"]["needed_by_date"] == "2026-08-01"
     assert draft["payload"]["reason"] == "Pump repair"
-    assert "exchange_rate_used" not in draft["payload"]
+    assert "title" not in draft["payload"]
 
 
 def test_persian_partial_draft_question_is_localized():

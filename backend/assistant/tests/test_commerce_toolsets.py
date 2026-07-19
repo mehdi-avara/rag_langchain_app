@@ -627,83 +627,132 @@ def test_purchase_order_from_rfq_uses_rfq_conversion_endpoint():
     }
 
 
-def test_purchase_order_resolves_currency_codes_to_ids():
-    saved_currency = get_resource("currency")
-    register_resource(ResourceSpec(
-        key="currency",
-        read_permission="currencies:read",
-        provider=FakeProvider([
-            Candidate(id=1, match_text="IRT", label="IRT - Toman", data={"code": "IRT"}),
-        ]),
-    ))
-    try:
-        draft = purchase_tools.PurchaseAssistantToolSet().build_draft(
+def test_purchase_order_manual_draft_uses_normalized_lines():
+    lines = [
+        {
+            "item_id": 99,
+            "ordered_quantity": "2",
+            "unit_id": 7,
+            "unit_price": "100",
+            "currency_id": 1,
+            "exchange_rate_used": "1",
+        }
+    ]
+
+    draft = (
+        purchase_tools
+        .PurchaseAssistantToolSet()
+        .build_draft(
             intent="add_purchase_order",
             db=None,
-            user=make_user(ALL_COMMERCE_PERMS),
+            user=make_user(
+                ALL_COMMERCE_PERMS
+            ),
             slots={
                 "title": "Direct pump PO",
-                "currency": "IRT",
-                "base_currency": "IRT",
+                "supplier_id": 44,
+                "lines": lines,
             },
             attachments=[],
         )
-    finally:
-        if saved_currency is not None:
-            register_resource(saved_currency)
+    )
 
     assert draft.valid is True
-    assert draft.payload["currency_id"] == 1
-    assert draft.payload["base_currency_id"] == 1
+    assert draft.payload[
+        "supplier_id"
+    ] == 44
+    assert draft.payload["lines"] == lines
+
+    for forbidden in (
+        "currency_id",
+        "base_currency_id",
+        "exchange_rate_used",
+    ):
+        assert forbidden not in draft.payload
+
     assert draft.commit_target == {
         "method": "POST",
         "endpoint": "/purchase/orders",
-        "permission": "purchase_management:orders:create",
+        "permission": (
+            "purchase_management:"
+            "orders:create"
+        ),
     }
 
+def test_update_purchase_order_resolves_supplier_text():
+    saved_supplier = get_resource(
+        "supplier"
+    )
 
-def test_update_purchase_order_resolves_supplier_and_currency_text():
-    saved_supplier = get_resource("supplier")
-    saved_currency = get_resource("currency")
-    register_resource(ResourceSpec(
-        key="supplier",
-        read_permission="supplier_management:search",
-        provider=FakeProvider([
-            Candidate(id=44, match_text="ACME", label="SUP-44 - ACME", data={})
-        ]),
-    ))
-    register_resource(ResourceSpec(
-        key="currency",
-        read_permission="currencies:read",
-        provider=FakeProvider([
-            Candidate(id=1, match_text="IRT", label="IRT - Toman", data={"code": "IRT"}),
-        ]),
-    ))
+    register_resource(
+        ResourceSpec(
+            key="supplier",
+            read_permission=(
+                "supplier_management:search"
+            ),
+            provider=FakeProvider(
+                [
+                    Candidate(
+                        id=44,
+                        match_text="ACME",
+                        label=(
+                            "SUP-44 - ACME"
+                        ),
+                        data={},
+                    )
+                ]
+            ),
+        )
+    )
+
     try:
-        draft = purchase_tools.PurchaseAssistantToolSet().build_draft(
-            intent="update_purchase_order",
-            db=None,
-            user=make_user(ALL_COMMERCE_PERMS),
-            slots={
-                "purchase_order_id": 12,
-                "supplier": "ACME",
-                "currency": "IRT",
-                "base_currency": "IRT",
-            },
-            attachments=[],
+        draft = (
+            purchase_tools
+            .PurchaseAssistantToolSet()
+            .build_draft(
+                intent=(
+                    "update_purchase_order"
+                ),
+                db=None,
+                user=make_user(
+                    ALL_COMMERCE_PERMS
+                ),
+                slots={
+                    "purchase_order_id": 12,
+                    "supplier": "ACME",
+                    "description": (
+                        "Updated commercial "
+                        "contact"
+                    ),
+                },
+                attachments=[],
+            )
         )
     finally:
         if saved_supplier is not None:
-            register_resource(saved_supplier)
-        if saved_currency is not None:
-            register_resource(saved_currency)
+            register_resource(
+                saved_supplier
+            )
 
     assert draft.valid is True
-    assert draft.payload["supplier_id"] == 44
-    assert draft.payload["currency_id"] == 1
-    assert draft.payload["base_currency_id"] == 1
-    assert draft.commit_target["endpoint"] == "/purchase/orders/12"
+    assert draft.payload[
+        "supplier_id"
+    ] == 44
+    assert draft.payload[
+        "description"
+    ] == "Updated commercial contact"
 
+    for forbidden in (
+        "currency_id",
+        "base_currency_id",
+        "exchange_rate_used",
+    ):
+        assert forbidden not in draft.payload
+
+    assert (
+        draft.commit_target["endpoint"]
+        == "/purchase/orders/12"
+    )
 
 def test_rfq_from_mr_and_supplier_names_resolve_to_ids():
     saved_mr = get_resource("material_requisition")

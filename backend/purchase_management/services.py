@@ -95,7 +95,7 @@ def _get_purchase_order_for_rfq(
         db.query(PurchaseOrder)
         .filter(
             PurchaseOrder.company_id == _tenant_id(user),
-            PurchaseOrder.rfq_id == rfq_id,
+            PurchaseOrder.source_rfq_id == rfq_id,
         )
         .first()
     )
@@ -425,8 +425,6 @@ def create_purchase_order(
         lines=data.get("lines") or [],
         base_currency=base_currency,
     )
-    first_line = prepared_lines[0]
-
     for _ in range(5):
         try:
             reference_number = _next_reference_number(
@@ -441,16 +439,10 @@ def create_purchase_order(
                     (data.get("title") or "").strip()
                     or None
                 ),
-                rfq_id=None,
+                source_rfq_id=None,
                 source_material_requisition_id=None,
-                winning_quotation_response_id=None,
                 supplier_id=resolved_supplier_id,
                 supplier_name=resolved_supplier_name,
-                currency_id=first_line["currency_id"],
-                base_currency_id=base_currency.id,
-                exchange_rate_used=first_line[
-                    "exchange_rate_used"
-                ],
                 description=(
                     (data.get("description") or "").strip()
                     or None
@@ -468,10 +460,6 @@ def create_purchase_order(
                 title="Phase 1",
                 description="Initial delivery phase",
                 status=PurchasePhaseStatus.DRAFT.value,
-                currency_id=first_line["currency_id"],
-                exchange_rate_used=first_line[
-                    "exchange_rate_used"
-                ],
                 expected_delivery_date=data.get(
                     "expected_delivery_date"
                 ),
@@ -701,16 +689,10 @@ def create_purchase_order_from_rfq(
                 company_id=_tenant_id(user),
                 reference_number=reference_number,
                 title=source["title"],
-                rfq_id=source["rfq_id"],
+                source_rfq_id=source["rfq_id"],
                 source_material_requisition_id=None,
-                winning_quotation_response_id=source[
-                    "winning_quotation_response_id"
-                ],
                 supplier_id=source["supplier_id"],
                 supplier_name=source["supplier_name"],
-                currency_id=header_currency_id,
-                base_currency_id=header_base_currency_id,
-                exchange_rate_used=header_exchange_rate,
                 description=description,
                 created_by_user_id=user.id,
                 status=PurchaseOrderStatus.DRAFT.value,
@@ -743,10 +725,6 @@ def create_purchase_order_from_rfq(
                     "quotation response"
                 ),
                 status=PurchasePhaseStatus.DRAFT.value,
-                currency_id=header_currency_id,
-                exchange_rate_used=(
-                    header_exchange_rate
-                ),
                 expected_delivery_date=(
                     expected_delivery_date
                 ),
@@ -862,23 +840,7 @@ def update_purchase_order(db: Session, user: User, po_id: int, **kwargs) -> Purc
     if po.status == PurchaseOrderStatus.CANCELLED.value:
         raise HTTPException(status_code=422, detail="Cannot edit a cancelled purchase order")
 
-    if (
-        list(getattr(po, "lines", []) or [])
-        and any(
-            field in kwargs
-            for field in (
-                "currency_id",
-                "base_currency_id",
-                "exchange_rate_used",
-            )
-        )
-    ):
-        purchase_error(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            PURCHASE_ORDER_COMMERCIAL_FIELDS_IMMUTABLE,
-            "Commercial header fields are derived from normalized purchase-order lines",
-        )
-
+    missing = object()
     missing = object()
     supplied_supplier_id = kwargs.pop("supplier_id", missing)
     supplied_supplier_name = kwargs.pop("supplier_name", missing)
@@ -958,19 +920,6 @@ def _assert_purchase_order_ready_for_submission(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             PURCHASE_ORDER_INVALID_STRUCTURE,
             "Purchase-order lines contain inconsistent commercial terms",
-        )
-
-    first_line = lines[0]
-
-    if (
-        purchase_order.currency_id != first_line.currency_id
-        or Decimal(str(purchase_order.exchange_rate_used))
-        != Decimal(str(first_line.exchange_rate_used))
-    ):
-        purchase_error(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            PURCHASE_ORDER_INVALID_STRUCTURE,
-            "Purchase-order header terms do not match its normalized lines",
         )
 
     for line in lines:
@@ -2106,12 +2055,6 @@ def split_purchase_order_phase(
             ),
             description=None,
             status=phase_status,
-            currency_id=(
-                purchase_order.currency_id
-            ),
-            exchange_rate_used=(
-                purchase_order.exchange_rate_used
-            ),
             expected_delivery_date=data[
                 "expected_delivery_date"
             ],
@@ -2495,7 +2438,14 @@ def get_phase_allocation_reference_for_goods_receipt(
         "unit_price": order_line.unit_price,
         "currency_id": order_line.currency_id,
         "unit_price_base": order_line.unit_price_base,
-        "base_currency_id": purchase_order.base_currency_id,
+        "base_currency_id": (
+            _get_company_base_currency_reference(
+                db=db,
+                company_id=(
+                    purchase_order.company_id
+                ),
+            ).id
+        ),
         "exchange_rate_used": order_line.exchange_rate_used,
     }
 
@@ -2732,10 +2682,6 @@ def apply_goods_receipt(
 
     if phase_is_complete:
         phase.status = PurchasePhaseStatus.RECEIVED.value
-        phase.actual_delivery_date = datetime.combine(
-            receipt_date,
-            datetime.min.time(),
-        )
     elif (
         phase_has_receipts
         and phase.status
@@ -2888,29 +2834,53 @@ def get_summary(
     user: User,
     po_id: int,
 ) -> dict:
-    po = get_po_or_404(db, po_id, user)
+    po = get_po_or_404(
+        db,
+        po_id,
+        user,
+    )
     lines = list(po.lines or [])
 
+    base_currency = (
+        _get_company_base_currency_reference(
+            db=db,
+            company_id=po.company_id,
+        )
+    )
+
     item_count = len(lines)
+
     total_in_currency = sum(
         (
-            Decimal(str(line.ordered_quantity))
-            * Decimal(str(line.unit_price))
+            Decimal(
+                str(line.ordered_quantity)
+            )
+            * Decimal(
+                str(line.unit_price)
+            )
             for line in lines
         ),
         Decimal("0"),
     )
+
     total_in_base = sum(
         (
-            Decimal(str(line.ordered_quantity))
-            * Decimal(str(line.unit_price_base))
+            Decimal(
+                str(line.ordered_quantity)
+            )
+            * Decimal(
+                str(line.unit_price_base)
+            )
             for line in lines
         ),
         Decimal("0"),
     )
+
     additional_costs_base = sum(
         (
-            Decimal(str(cost.amount_base))
+            Decimal(
+                str(cost.amount_base)
+            )
             for cost in po.costs
         ),
         Decimal("0"),
@@ -2918,13 +2888,25 @@ def get_summary(
 
     return {
         "purchase_order_id": po.id,
-        "reference_number": po.reference_number,
-        "phase_count": len(po.phases),
+        "reference_number": (
+            po.reference_number
+        ),
+        "phase_count": len(
+            po.phases
+        ),
         "item_count": item_count,
-        "total_in_currency": total_in_currency,
+        "total_in_currency": (
+            total_in_currency
+        ),
         "total_in_base": total_in_base,
-        "currency_id": po.currency_id,
-        "base_currency_id": po.base_currency_id,
+        "currency_id": (
+            lines[0].currency_id
+            if lines
+            else None
+        ),
+        "base_currency_id": (
+            base_currency.id
+        ),
         "additional_costs_base": (
             additional_costs_base
         ),
@@ -3071,7 +3053,9 @@ def export_purchase_order_rows(
                 "approval_status": (
                     order.approval_status
                 ),
-                "rfq_id": order.rfq_id,
+                "source_rfq_id": (
+                    order.source_rfq_id
+                ),
                 "phase_count": len(
                     order.phases or []
                 ),

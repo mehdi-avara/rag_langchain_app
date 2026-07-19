@@ -187,8 +187,12 @@ def test_manual_creation_builds_atomic_normalized_graph(
     assert purchase_order.reference_number == "PO-2026-0010"
     assert purchase_order.supplier_id == 14
     assert purchase_order.supplier_name == "Vendor A"
-    assert purchase_order.currency_id == 1
-    assert purchase_order.base_currency_id == 1
+    assert purchase_order.source_rfq_id is None
+    assert (
+        purchase_order
+        .source_material_requisition_id
+        is None
+    )
     assert purchase_order.status == PurchaseOrderStatus.DRAFT.value
     assert purchase_order.approval_status == (
         PurchaseApprovalStatus.DRAFT.value
@@ -203,6 +207,8 @@ def test_manual_creation_builds_atomic_normalized_graph(
     assert line.item_id == 101
     assert line.ordered_quantity == Decimal("2")
     assert line.unit_price_base == Decimal("12.50")
+    assert line.currency_id == 1
+    assert line.exchange_rate_used == Decimal("1")
 
     assert allocation.phase_id == phase.id
     assert allocation.purchase_order_line_id == line.id

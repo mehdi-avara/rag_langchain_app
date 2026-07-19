@@ -711,7 +711,7 @@ class BusinessFlowBuilder:
                 self.db.query(PurchaseOrder)
                 .filter(
                     PurchaseOrder.company_id == self.company_id,
-                    PurchaseOrder.rfq_id == rfq.id,
+                    PurchaseOrder.source_rfq_id == rfq.id,
                 )
                 .first()
             )
@@ -734,8 +734,12 @@ class BusinessFlowBuilder:
             details=_details(
                 id=po.id,
                 reference_number=po.reference_number,
-                rfq_id=po.rfq_id,
-                winning_quotation_response_id=po.winning_quotation_response_id,
+                source_rfq_id=(
+                    po.source_rfq_id
+                ),
+                source_material_requisition_id=(
+                    po.source_material_requisition_id
+                ),
                 supplier_id=po.supplier_id,
                 supplier_name=po.supplier_name,
                 status=po.status,
@@ -757,12 +761,19 @@ class BusinessFlowBuilder:
             details=_details(reference_number=po.reference_number),
         )
 
-        if include_upstream and po.rfq_id:
+        if (
+            include_upstream
+            and po.source_rfq_id
+        ):
             rfq = (
-                self.db.query(RequestForQuotation)
+                self.db.query(
+                    RequestForQuotation
+                )
                 .filter(
-                    RequestForQuotation.id == po.rfq_id,
-                    RequestForQuotation.company_id == self.company_id,
+                    RequestForQuotation.id
+                    == po.source_rfq_id,
+                    RequestForQuotation.company_id
+                    == self.company_id,
                 )
                 .first()
             )
@@ -770,10 +781,14 @@ class BusinessFlowBuilder:
             if rfq is not None:
                 if rfq.mr_id:
                     mr = (
-                        self.db.query(MaterialRequisition)
+                        self.db.query(
+                            MaterialRequisition
+                        )
                         .filter(
-                            MaterialRequisition.id == rfq.mr_id,
-                            MaterialRequisition.company_id == self.company_id,
+                            MaterialRequisition.id
+                            == rfq.mr_id,
+                            MaterialRequisition.company_id
+                            == self.company_id,
                         )
                         .first()
                     )
@@ -781,28 +796,89 @@ class BusinessFlowBuilder:
                     if mr is not None:
                         self.add_mr(mr)
 
-                self.add_rfq(rfq, include_downstream=False)
+                self.add_rfq(
+                    rfq,
+                    include_downstream=False,
+                )
 
-        if po.rfq_id:
-            self.connect(
-                f"rfq:{po.rfq_id}",
-                po_node_id,
-                label="Purchase order created from RFQ",
-                source="record",
-                details=_details(po_id=po.id, rfq_id=po.rfq_id),
+        elif (
+            include_upstream
+            and po.source_material_requisition_id
+        ):
+            mr = (
+                self.db.query(
+                    MaterialRequisition
+                )
+                .filter(
+                    MaterialRequisition.id
+                    == po.source_material_requisition_id,
+                    MaterialRequisition.company_id
+                    == self.company_id,
+                )
+                .first()
             )
+
+            if mr is not None:
+                self.add_mr(mr)
+
+        if po.source_rfq_id:
+            self.connect(
+                f"rfq:{po.source_rfq_id}",
+                po_node_id,
+                label=(
+                    "Purchase order created "
+                    "from RFQ"
+                ),
+                source="record",
+                details=_details(
+                    po_id=po.id,
+                    source_rfq_id=(
+                        po.source_rfq_id
+                    ),
+                ),
+            )
+
+        elif po.source_material_requisition_id:
+            self.connect(
+                (
+                    "mr:"
+                    f"{po.source_material_requisition_id}"
+                ),
+                po_node_id,
+                label=(
+                    "Direct purchase order "
+                    "created from MR"
+                ),
+                source="record",
+                details=_details(
+                    po_id=po.id,
+                    source_material_requisition_id=(
+                        po
+                        .source_material_requisition_id
+                    ),
+                ),
+            )
+
         else:
-            skipped_node_id = f"skipped:rfq:po:{po.id}"
+            skipped_node_id = (
+                f"skipped:rfq:po:{po.id}"
+            )
 
             self.node(
                 id=skipped_node_id,
                 kind="skipped",
                 state="skipped",
                 title="RFQ skipped",
-                description="This purchase order was created manually without an RFQ.",
+                description=(
+                    "This purchase order was "
+                    "created manually without "
+                    "an RFQ or MR source."
+                ),
                 source="record",
                 is_inferred=False,
-                details=_details(po_id=po.id),
+                details=_details(
+                    po_id=po.id
+                ),
             )
 
             self.connect(
@@ -810,7 +886,9 @@ class BusinessFlowBuilder:
                 po_node_id,
                 label="Manual purchase order",
                 source="record",
-                details=_details(po_id=po.id),
+                details=_details(
+                    po_id=po.id
+                ),
             )
 
         approval_node_id = f"po_approval:{po.id}"
@@ -877,9 +955,6 @@ class BusinessFlowBuilder:
                     phase_number=phase.phase_number,
                     expected_delivery_date=(
                         phase.expected_delivery_date
-                    ),
-                    actual_delivery_date=(
-                        phase.actual_delivery_date
                     ),
                 ),
             )

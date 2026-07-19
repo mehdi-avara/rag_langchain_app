@@ -327,12 +327,7 @@ def test_direct_mr_creation_is_atomic(
         .source_material_requisition_id
         == 31
     )
-    assert purchase_order.rfq_id is None
-    assert (
-        purchase_order
-        .winning_quotation_response_id
-        is None
-    )
+    assert purchase_order.source_rfq_id is None
 
     assert phase.phase_number == 1
     assert (

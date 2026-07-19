@@ -815,7 +815,10 @@ DATASETS: dict[tuple[str, str], ExportDataset] = {
             ("supplier_name", "Supplier"),
             ("status", "Status"),
             ("approval_status", "Approval Status"),
-            ("rfq_id", "RFQ ID"),
+            (
+                "source_rfq_id",
+                "Source RFQ ID",
+            ),
             ("phase_count", "Phase Count"),
             ("item_count", "Item Count"),
             ("total_in_base", "Total Base"),

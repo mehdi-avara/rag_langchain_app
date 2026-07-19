@@ -304,7 +304,7 @@ def purchase_kpis(
             JOIN rfqs rfq
               ON rfq.mr_id = mr.id
             JOIN purchase_orders po
-              ON po.rfq_id = rfq.id
+              ON po.source_rfq_id = rfq.id
             JOIN goods_receipt_notes grn
               ON grn.purchase_order_id = po.id
             WHERE {cycle_filter}
@@ -656,7 +656,7 @@ def purchase_report(
                 JOIN rfqs rfq
                   ON rfq.mr_id = mr.id
                 JOIN purchase_orders po
-                  ON po.rfq_id = rfq.id
+                  ON po.source_rfq_id = rfq.id
                 JOIN goods_receipt_notes grn
                   ON grn.purchase_order_id = po.id
                 WHERE {cycle_filter}

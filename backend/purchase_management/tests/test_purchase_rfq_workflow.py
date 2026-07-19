@@ -159,14 +159,10 @@ def test_create_purchase_order_from_rfq_creates_traceable_lines(monkeypatch):
         )
     )
 
-    assert purchase_order.rfq_id == 8
+    assert purchase_order.source_rfq_id == 8
     assert (
         purchase_order.source_material_requisition_id
         is None
-    )
-    assert (
-        purchase_order.winning_quotation_response_id
-        == 22
     )
     assert purchase_order.supplier_id == 14
     assert purchase_order.status == (
@@ -331,9 +327,6 @@ def _purchase_order(
 
     return SimpleNamespace(
         supplier_id=14,
-        currency_id=1,
-        base_currency_id=1,
-        exchange_rate_used=Decimal("1"),
         status=status,
         approval_status=approval_status,
         approved_by_user_id=None,
