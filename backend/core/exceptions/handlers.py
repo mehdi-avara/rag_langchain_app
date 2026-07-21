@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -16,6 +18,9 @@ from core.exceptions.error_codes import (
     UNAUTHORIZED_STATUS_CODE,
     VALIDATION_ERROR,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def error_payload(
@@ -107,6 +112,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(
+        "Unhandled API error: %s %s",
+        request.method,
+        request.url.path,
+        exc_info=(
+            type(exc),
+            exc,
+            exc.__traceback__,
+        ),
+    )
+
     return JSONResponse(
         status_code=INTERNAL_ERROR_STATUS_CODE,
         content=error_payload(
