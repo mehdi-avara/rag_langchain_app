@@ -541,50 +541,273 @@ class PurchaseOrderRead(BaseModel):
     )
 
 class PurchaseOrderCostCreate(BaseModel):
-    cost_type: str = Field(
-        ...,
-        description="freight | customs | tax | insurance | other",
+    model_config = ConfigDict(
+        extra="forbid",
     )
+
+    cost_type: Literal[
+        "goods",
+        "freight",
+        "customs",
+        "tax",
+        "insurance",
+        "other",
+    ]
+
     description: Optional[str] = None
-    amount: Decimal = Field(..., ge=0)
-    currency_id: int = Field(..., gt=0)
-    amount_base: Decimal = Field(..., ge=0)
-    base_currency_id: int = Field(..., gt=0)
-    exchange_rate_used: Decimal = Field(Decimal("1"), gt=0)
-    allocation_method: str = Field(
-        "per_value",
-        description="per_item | per_value | manual",
-    )
 
-
-class PurchaseOrderCostUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    cost_type: Optional[str] = None
-    description: Optional[str] = None
-    amount: Optional[Decimal] = Field(
-        None,
-        ge=0,
-    )
-    currency_id: Optional[int] = Field(
-        None,
-        gt=0,
-    )
-    amount_base: Optional[Decimal] = Field(
-        None,
-        ge=0,
-    )
-    base_currency_id: Optional[int] = Field(
-        None,
-        gt=0,
-    )
-    exchange_rate_used: Optional[
+    predicted_amount: Optional[
         Decimal
+    ] = Field(
+        None,
+        ge=0,
+    )
+    predicted_currency_id: Optional[
+        int
     ] = Field(
         None,
         gt=0,
     )
-    allocation_method: Optional[str] = None
+
+    amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        deprecated=True,
+        description=(
+            "Deprecated alias for "
+            "predicted_amount"
+        ),
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+        deprecated=True,
+        description=(
+            "Deprecated alias for "
+            "predicted_currency_id"
+        ),
+    )
+    allocation_method: Optional[
+        str
+    ] = Field(
+        None,
+        deprecated=True,
+    )
+
+    @model_validator(mode="after")
+    def normalize_predicted_money(self):
+        if (
+            self.predicted_amount
+            is not None
+            and self.amount is not None
+            and self.predicted_amount
+            != self.amount
+        ):
+            raise ValueError(
+                "amount and predicted_amount "
+                "must match"
+            )
+
+        if (
+            self.predicted_currency_id
+            is not None
+            and self.currency_id is not None
+            and self.predicted_currency_id
+            != self.currency_id
+        ):
+            raise ValueError(
+                "currency_id and "
+                "predicted_currency_id "
+                "must match"
+            )
+
+        if self.predicted_amount is None:
+            self.predicted_amount = (
+                self.amount
+            )
+
+        if (
+            self.predicted_currency_id
+            is None
+        ):
+            self.predicted_currency_id = (
+                self.currency_id
+            )
+
+        if (
+            self.predicted_amount is None
+            or self.predicted_currency_id
+            is None
+        ):
+            raise ValueError(
+                "predicted_amount and "
+                "predicted_currency_id "
+                "are required"
+            )
+
+        self.amount = self.predicted_amount
+        self.currency_id = (
+            self.predicted_currency_id
+        )
+
+        return self
+
+
+
+class PurchaseOrderCostUpdate(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    cost_type: Optional[
+        Literal[
+            "goods",
+            "freight",
+            "customs",
+            "tax",
+            "insurance",
+            "other",
+        ]
+    ] = None
+
+    description: Optional[str] = None
+
+    predicted_amount: Optional[
+        Decimal
+    ] = Field(
+        None,
+        ge=0,
+    )
+    predicted_currency_id: Optional[
+        int
+    ] = Field(
+        None,
+        gt=0,
+    )
+
+    amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        deprecated=True,
+        description=(
+            "Deprecated alias for "
+            "predicted_amount"
+        ),
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+        deprecated=True,
+        description=(
+            "Deprecated alias for "
+            "predicted_currency_id"
+        ),
+    )
+    allocation_method: Optional[
+        str
+    ] = Field(
+        None,
+        deprecated=True,
+    )
+
+    @model_validator(mode="after")
+    def normalize_predicted_aliases(self):
+        if (
+            self.predicted_amount
+            is not None
+            and self.amount is not None
+            and self.predicted_amount
+            != self.amount
+        ):
+            raise ValueError(
+                "amount and predicted_amount "
+                "must match"
+            )
+
+        if (
+            self.predicted_currency_id
+            is not None
+            and self.currency_id is not None
+            and self.predicted_currency_id
+            != self.currency_id
+        ):
+            raise ValueError(
+                "currency_id and "
+                "predicted_currency_id "
+                "must match"
+            )
+
+        if (
+            self.predicted_amount is None
+            and self.amount is not None
+        ):
+            self.predicted_amount = (
+                self.amount
+            )
+
+        if (
+            self.predicted_currency_id
+            is None
+            and self.currency_id
+            is not None
+        ):
+            self.predicted_currency_id = (
+                self.currency_id
+            )
+
+        return self
+
+
+
+class PurchaseOrderCostMoneyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(..., ge=0)
+    currency_id: int = Field(..., gt=0)
+
+
+class PurchaseOrderCostConfirmActual(
+    PurchaseOrderCostMoneyInput
+):
+    pass
+
+
+class PurchaseOrderCostPaymentRead(BaseModel):
+    cost_id: int
+    settlement_target_base: Decimal
+    paid_base: Decimal
+    outstanding_base: Decimal
+    variance_base: Optional[Decimal] = None
+    payment_state: Literal[
+        "unpaid",
+        "advance_paid",
+        "partially_paid",
+        "paid",
+        "payment_review_required",
+        "not_tracked",
+    ]
+
+
+class PurchaseOrderPaymentSummaryRead(BaseModel):
+    purchase_order_id: int
+    base_currency_id: int
+    predicted_total_base: Decimal
+    predicted_by_cost_type_base: dict[
+        str,
+        Decimal,
+    ]
+    actual_total_base: Decimal
+    unpredicted_total_base: Decimal
+    paid_total_base: Decimal
+    outstanding_total_base: Decimal
+    variance_total_base: Decimal
+    payment_tracking: Literal[
+        "tracked",
+        "not_tracked",
+    ]
+    costs: list[
+        PurchaseOrderCostPaymentRead
+    ] = Field(default_factory=list)
 
 
 class PurchaseOrderCostRead(BaseModel):
@@ -594,12 +817,34 @@ class PurchaseOrderCostRead(BaseModel):
     purchase_order_id: int
     cost_type: str
     description: Optional[str]
+
     amount: Decimal
     currency_id: int
     amount_base: Decimal
     base_currency_id: int
     exchange_rate_used: Decimal
     allocation_method: str
+
+    predicted_amount: Optional[Decimal] = None
+    predicted_currency_id: Optional[int] = None
+    predicted_amount_base: Optional[Decimal] = None
+    predicted_exchange_rate_used: Optional[
+        Decimal
+    ] = None
+
+    actual_amount: Optional[Decimal] = None
+    actual_currency_id: Optional[int] = None
+    actual_amount_base: Optional[Decimal] = None
+    actual_exchange_rate_used: Optional[
+        Decimal
+    ] = None
+
+    created_by_user_id: Optional[int] = None
+    actual_confirmed_at: Optional[datetime] = None
+    actual_confirmed_by_user_id: Optional[
+        int
+    ] = None
+
     created_at: datetime
     updated_at: datetime
 
@@ -616,6 +861,7 @@ class ReceiptLinkRead(BaseModel):
     financial_receipt_id: int
     linked_at: datetime
     linked_by_user_id: Optional[int]
+    allocation_status: str = "legacy_unallocated"
 
 
 class PurchaseOrderSummary(BaseModel):

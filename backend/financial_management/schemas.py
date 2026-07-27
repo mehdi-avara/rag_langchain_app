@@ -231,42 +231,155 @@ class FinancialReceiptFileUploadUrlCreate(BaseModel):
     checksum: Optional[str] = None
 
 
+class PurchaseCostPaymentAllocationCreate(
+    BaseModel
+):
+    model_config = ConfigDict(extra="forbid")
+
+    purchase_order_cost_id: int = Field(
+        ...,
+        gt=0,
+    )
+    allocated_amount: Decimal = Field(
+        ...,
+        gt=Decimal("0"),
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    exchange_rate_used: Optional[
+        Decimal
+    ] = Field(
+        None,
+        gt=Decimal("0"),
+    )
+
+
+class PurchaseCostPaymentAllocationRead(
+    BaseModel
+):
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    id: int
+    company_id: int
+    financial_receipt_id: int
+    purchase_order_cost_id: int
+    allocated_amount: Decimal
+    currency_id: int
+    allocated_amount_base: Decimal
+    exchange_rate_used: Decimal
+    created_by_user_id: Optional[int]
+    created_at: datetime
+
+
 class FinancialReceiptBase(BaseModel):
-    description: str = Field(..., min_length=1)
+    description: str = Field(
+        ...,
+        min_length=1,
+    )
     tracking_number: Optional[str] = None
-    amount: Decimal = Field(..., gt=Decimal("0"))
-    currency: FinancialCurrency = FinancialCurrency.TOMAN
-    exchange_rate_to_base: Optional[Decimal] = Field(default=None, gt=Decimal("0"))
+    amount: Decimal = Field(
+        ...,
+        gt=Decimal("0"),
+    )
+    currency: FinancialCurrency = (
+        FinancialCurrency.TOMAN
+    )
+    exchange_rate_to_base: Optional[
+        Decimal
+    ] = Field(
+        default=None,
+        gt=Decimal("0"),
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    exchange_rate_used: Optional[
+        Decimal
+    ] = Field(
+        None,
+        gt=Decimal("0"),
+    )
     direction: FinancialDirection
     counterparty_name: Optional[str] = None
     receipt_date: datetime
     credit_card_id: int
     customer_id: Optional[int] = None
 
-    @validator("receipt_date", pre=True)
-    def validate_receipt_date(cls, value):
+    @validator(
+        "receipt_date",
+        pre=True,
+    )
+    def validate_receipt_date(
+        cls,
+        value,
+    ):
         return normalize_receipt_date(value)
 
 
-class FinancialReceiptCreate(FinancialReceiptBase):
-    pass
+
+class FinancialReceiptCreate(
+    FinancialReceiptBase
+):
+    purchase_cost_allocations: Optional[
+        List[
+            PurchaseCostPaymentAllocationCreate
+        ]
+    ] = None
+
 
 
 class FinancialReceiptUpdate(BaseModel):
-    description: Optional[str] = Field(None, min_length=1)
+    description: Optional[str] = Field(
+        None,
+        min_length=1,
+    )
     tracking_number: Optional[str] = None
-    amount: Optional[Decimal] = Field(None, gt=Decimal("0"))
-    currency: Optional[FinancialCurrency] = None
-    exchange_rate_to_base: Optional[Decimal] = Field(default=None, gt=Decimal("0"))
-    direction: Optional[FinancialDirection] = None
+    amount: Optional[Decimal] = Field(
+        None,
+        gt=Decimal("0"),
+    )
+    currency: Optional[
+        FinancialCurrency
+    ] = None
+    exchange_rate_to_base: Optional[
+        Decimal
+    ] = Field(
+        default=None,
+        gt=Decimal("0"),
+    )
+    currency_id: Optional[int] = Field(
+        None,
+        gt=0,
+    )
+    exchange_rate_used: Optional[
+        Decimal
+    ] = Field(
+        None,
+        gt=Decimal("0"),
+    )
+    direction: Optional[
+        FinancialDirection
+    ] = None
     counterparty_name: Optional[str] = None
     receipt_date: Optional[datetime] = None
     credit_card_id: Optional[int] = None
     customer_id: Optional[int] = None
 
-    @validator("receipt_date", pre=True)
-    def validate_receipt_date(cls, value):
+    @validator(
+        "receipt_date",
+        pre=True,
+    )
+    def validate_receipt_date(
+        cls,
+        value,
+    ):
         return normalize_receipt_date(value)
+
 
 
 class FinancialReceiptOut(BaseModel):
@@ -275,22 +388,39 @@ class FinancialReceiptOut(BaseModel):
     owner_id: int
     description: str
     tracking_number: Optional[str] = None
+
     amount: Decimal
     currency: FinancialCurrency
     base_currency: FinancialCurrency
     exchange_rate_to_base: Decimal
     base_amount: Decimal
+
+    currency_id: Optional[int] = None
+    base_currency_id: Optional[int] = None
+    amount_base: Optional[Decimal] = None
+    exchange_rate_used: Optional[
+        Decimal
+    ] = None
+
     exchange_rate_source: str
     direction: FinancialDirection
     counterparty_name: Optional[str] = None
     receipt_date: datetime
     credit_card: FinancialCardSummaryOut
     customer_id: Optional[int] = None
-    customer: Optional[FinancialCustomerSummaryOut] = None
-    embedding_status: Literal["available", "pending"]
+    customer: Optional[
+        FinancialCustomerSummaryOut
+    ] = None
+    embedding_status: Literal[
+        "available",
+        "pending",
+    ]
     created_at: datetime
     updated_at: datetime
-    files: List[FinancialReceiptFileOut] = Field(default_factory=list)
+    files: List[
+        FinancialReceiptFileOut
+    ] = Field(default_factory=list)
+
 
 
 

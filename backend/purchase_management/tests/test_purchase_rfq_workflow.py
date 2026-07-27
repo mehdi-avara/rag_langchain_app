@@ -15,6 +15,17 @@ from purchase_management.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_phase_1_3_goods_prediction(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        purchase_services,
+        "_synchronize_purchase_order_goods_prediction",
+        lambda **_kwargs: "synced",
+    )
+
+
 class FakeSession:
     def __init__(self):
         self.added = []

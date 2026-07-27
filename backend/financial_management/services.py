@@ -13,8 +13,27 @@ from components import generate_embeddings_for_chunks
 from components.llm import llm_client
 from settings import get_settings
 from Models import User
+from Models.company import Company
+from core.exceptions.error_codes import (
+    FINANCIAL_RECEIPT_BASE_CURRENCY_NOT_CONFIGURED,
+    FINANCIAL_RECEIPT_EXCHANGE_RATE_NOT_FOUND,
+)
+from shared.currency.services import (
+    get_currency_by_code,
+    get_currency_or_404,
+    get_rate,
+    quantize_exchange_rate,
+    quantize_money,
+)
 
-from .models import FinancialCard, FinancialCurrency, FinancialCustomer, FinancialReceipt, FinancialReceiptFile
+from .models import (
+    FinancialCard,
+    FinancialCurrency,
+    FinancialCustomer,
+    FinancialReceipt,
+    FinancialReceiptFile,
+    PurchaseCostPaymentAllocation,
+)
 from .schemas import (
     FinancialCardOut,
     FinancialCardSummaryOut,
@@ -142,6 +161,266 @@ def calculate_receipt_currency_fields(
         "exchange_rate_to_base": rate,
         "base_amount": base_amount,
         "exchange_rate_source": source,
+    }
+
+
+def _raise_receipt_money_error(
+    code: str,
+    message: str,
+) -> None:
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": code,
+            "message": message,
+        },
+    )
+
+
+def _company_base_currency_record(
+    db: Session,
+    current_user: User,
+):
+    company_id = tenant_filter_id(
+        current_user
+    )
+
+    company = (
+        db.query(Company)
+        .filter(
+            Company.id == company_id
+        )
+        .first()
+    )
+
+    if (
+        company is None
+        or company.base_currency_id is None
+    ):
+        _raise_receipt_money_error(
+            FINANCIAL_RECEIPT_BASE_CURRENCY_NOT_CONFIGURED,
+            (
+                "Company base currency is "
+                "not configured"
+            ),
+        )
+
+    base_currency = get_currency_or_404(
+        db=db,
+        currency_id=int(
+            company.base_currency_id
+        ),
+    )
+
+    if not bool(base_currency.is_active):
+        _raise_receipt_money_error(
+            FINANCIAL_RECEIPT_BASE_CURRENCY_NOT_CONFIGURED,
+            (
+                "Company base currency is "
+                "inactive"
+            ),
+        )
+
+    return base_currency
+
+
+def resolve_receipt_money_fields(
+    db: Session,
+    current_user: User,
+    *,
+    amount,
+    receipt_date,
+    currency_id: int | None = None,
+    exchange_rate_used=None,
+    currency_code=None,
+) -> dict:
+    base_currency = (
+        _company_base_currency_record(
+            db=db,
+            current_user=current_user,
+        )
+    )
+
+    normalized_currency_code = (
+        getattr(
+            currency_code,
+            "value",
+            currency_code,
+        )
+        if currency_code is not None
+        else None
+    )
+
+    if normalized_currency_code is not None:
+        normalized_currency_code = str(
+            normalized_currency_code
+        ).strip().upper()
+
+    if currency_id is not None:
+        currency = get_currency_or_404(
+            db=db,
+            currency_id=int(currency_id),
+        )
+
+        if (
+            normalized_currency_code
+            is not None
+            and currency.code.upper()
+            != normalized_currency_code
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "currency_id and currency "
+                    "refer to different currencies"
+                ),
+            )
+
+    elif normalized_currency_code is not None:
+        currency = get_currency_by_code(
+            db=db,
+            code=normalized_currency_code,
+        )
+
+        if currency is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Selected receipt currency "
+                    "does not exist"
+                ),
+            )
+
+    else:
+        currency = base_currency
+
+    if not bool(currency.is_active):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Selected receipt currency "
+                "must be active"
+            ),
+        )
+
+    normalized_amount = quantize_money(
+        amount,
+        int(currency.decimal_places),
+    )
+
+    same_currency = (
+        int(currency.id)
+        == int(base_currency.id)
+    )
+
+    if same_currency:
+        if exchange_rate_used is not None:
+            supplied_rate = (
+                quantize_exchange_rate(
+                    exchange_rate_used
+                )
+            )
+
+            if supplied_rate != Decimal("1"):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Same-currency receipt "
+                        "exchange rate must be 1"
+                    ),
+                )
+
+        frozen_rate = (
+            quantize_exchange_rate(
+                Decimal("1")
+            )
+        )
+
+        rate_source = "system"
+
+    elif exchange_rate_used is not None:
+        frozen_rate = (
+            quantize_exchange_rate(
+                exchange_rate_used
+            )
+        )
+
+        if frozen_rate <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "exchange_rate_used must "
+                    "be greater than zero"
+                ),
+            )
+
+        rate_source = "manual"
+
+    else:
+        effective_date = (
+            receipt_date.date()
+            if isinstance(
+                receipt_date,
+                datetime,
+            )
+            else receipt_date
+        )
+
+        resolved_rate = get_rate(
+            db=db,
+            from_code=currency.code,
+            to_code=base_currency.code,
+            on_date=effective_date,
+        )
+
+        if resolved_rate is None:
+            _raise_receipt_money_error(
+                FINANCIAL_RECEIPT_EXCHANGE_RATE_NOT_FOUND,
+                (
+                    "No applicable exchange "
+                    "rate exists for the "
+                    "receipt date"
+                ),
+            )
+
+        frozen_rate = (
+            quantize_exchange_rate(
+                resolved_rate
+            )
+        )
+
+        rate_source = "system"
+
+    amount_base = quantize_money(
+        normalized_amount * frozen_rate,
+        int(
+            base_currency.decimal_places
+        ),
+    )
+
+    return {
+        "amount": normalized_amount,
+        "currency": currency.code,
+        "base_currency": (
+            base_currency.code
+        ),
+        "exchange_rate_to_base": (
+            frozen_rate
+        ),
+        "base_amount": amount_base,
+        "exchange_rate_source": (
+            rate_source
+        ),
+        "currency_id": int(
+            currency.id
+        ),
+        "base_currency_id": int(
+            base_currency.id
+        ),
+        "amount_base": amount_base,
+        "exchange_rate_used": (
+            frozen_rate
+        ),
     }
 
 
@@ -327,32 +606,111 @@ def receipt_file_to_out(file_rec: FinancialReceiptFile) -> FinancialReceiptFileO
     )
 
 
-def receipt_to_out(receipt: FinancialReceipt) -> FinancialReceiptOut:
-    files = [receipt_file_to_out(file_rec) for file_rec in list(receipt.files or [])]
+def receipt_to_out(
+    receipt: FinancialReceipt,
+) -> FinancialReceiptOut:
+    files = [
+        receipt_file_to_out(file_rec)
+        for file_rec in list(
+            receipt.files or []
+        )
+    ]
+
+    amount_base = getattr(
+        receipt,
+        "amount_base",
+        None,
+    )
+
+    exchange_rate_used = getattr(
+        receipt,
+        "exchange_rate_used",
+        None,
+    )
 
     return FinancialReceiptOut(
         id=receipt.id,
         company_id=receipt.company_id,
         owner_id=receipt.owner_id,
         description=receipt.description,
-        tracking_number=receipt.tracking_number,
-        amount=Decimal(str(receipt.amount)),
+        tracking_number=(
+            receipt.tracking_number
+        ),
+        amount=Decimal(
+            str(receipt.amount)
+        ),
         currency=receipt.currency,
-        base_currency=receipt.base_currency,
-        exchange_rate_to_base=Decimal(str(receipt.exchange_rate_to_base)),
-        base_amount=Decimal(str(receipt.base_amount)),
-        exchange_rate_source=receipt.exchange_rate_source,
+        base_currency=(
+            receipt.base_currency
+        ),
+        exchange_rate_to_base=Decimal(
+            str(
+                receipt
+                .exchange_rate_to_base
+            )
+        ),
+        base_amount=Decimal(
+            str(receipt.base_amount)
+        ),
+        currency_id=getattr(
+            receipt,
+            "currency_id",
+            None,
+        ),
+        base_currency_id=getattr(
+            receipt,
+            "base_currency_id",
+            None,
+        ),
+        amount_base=(
+            Decimal(str(amount_base))
+            if amount_base is not None
+            else None
+        ),
+        exchange_rate_used=(
+            Decimal(
+                str(exchange_rate_used)
+            )
+            if exchange_rate_used
+            is not None
+            else None
+        ),
+        exchange_rate_source=(
+            receipt.exchange_rate_source
+        ),
         direction=receipt.direction,
-        counterparty_name=receipt.counterparty_name,
-        receipt_date=receipt.receipt_date,
-        credit_card=card_to_summary(receipt.credit_card),
+        counterparty_name=(
+            receipt.counterparty_name
+        ),
+        receipt_date=(
+            receipt.receipt_date
+        ),
+        credit_card=card_to_summary(
+            receipt.credit_card
+        ),
         customer_id=receipt.customer_id,
-        customer=customer_to_summary(receipt.customer) if receipt.customer is not None else None,
-        embedding_status="available" if receipt.description_embedding is not None else "pending",
+        customer=(
+            customer_to_summary(
+                receipt.customer
+            )
+            if receipt.customer
+            is not None
+            else None
+        ),
+        embedding_status=(
+            "available"
+            if (
+                receipt
+                .description_embedding
+                is not None
+            )
+            else "pending"
+        ),
         created_at=receipt.created_at,
         updated_at=receipt.updated_at,
         files=files,
     )
+
 
 
 def build_receipt_context(references: Sequence) -> str:
@@ -537,4 +895,71 @@ async def answer_receipts_question(
         used_receipt_ids=citations,
         references=references,
     )
+
+
+
+def get_purchase_cost_payment_summaries(
+    db: Session,
+    current_user: User,
+    cost_ids: Sequence[int],
+) -> dict[int, dict]:
+    normalized_ids = list(
+        dict.fromkeys(
+            int(cost_id)
+            for cost_id in cost_ids
+            if int(cost_id) > 0
+        )
+    )
+
+    if not normalized_ids:
+        return {}
+
+    company_id = tenant_filter_id(
+        current_user
+    )
+
+    summaries = {
+        cost_id: {
+            "cost_id": cost_id,
+            "paid_base": Decimal("0"),
+        }
+        for cost_id in normalized_ids
+    }
+
+    rows = (
+        db.query(
+            PurchaseCostPaymentAllocation
+            .purchase_order_cost_id,
+            func.coalesce(
+                func.sum(
+                    PurchaseCostPaymentAllocation
+                    .allocated_amount_base
+                ),
+                0,
+            ),
+        )
+        .filter(
+            PurchaseCostPaymentAllocation
+            .company_id
+            == company_id,
+            PurchaseCostPaymentAllocation
+            .purchase_order_cost_id
+            .in_(normalized_ids),
+        )
+        .group_by(
+            PurchaseCostPaymentAllocation
+            .purchase_order_cost_id
+        )
+        .all()
+    )
+
+    for cost_id, paid_base in rows:
+        summaries[int(cost_id)] = {
+            "cost_id": int(cost_id),
+            "paid_base": Decimal(
+                str(paid_base or 0)
+            ),
+        }
+
+    return summaries
 

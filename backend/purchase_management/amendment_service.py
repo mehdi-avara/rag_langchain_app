@@ -36,6 +36,7 @@ from .services import (
     _tenant_id,
     get_po_or_404,
     purchase_error,
+    _synchronize_purchase_order_goods_prediction,
 )
 
 
@@ -937,6 +938,12 @@ def decide_purchase_order_amendment(
     )
 
     if action == "approve":
+        _synchronize_purchase_order_goods_prediction(
+            db=db,
+            user=user,
+            purchase_order=purchase_order,
+        )
+
         amendment.status = (
             PurchaseAmendmentStatus.APPROVED.value
         )

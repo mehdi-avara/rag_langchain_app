@@ -28,6 +28,11 @@ from core.exceptions.error_codes import (
     PURCHASE_ORDER_LINE_NOT_FOUND,
     PURCHASE_ORDER_NOT_FOUND,
     PURCHASE_ORDER_COST_NOT_FOUND,
+    PURCHASE_ORDER_COST_HAS_PAYMENTS,
+    PURCHASE_ORDER_COST_ACTUAL_BELOW_PAID,
+    PURCHASE_ORDER_COST_NOT_FINANCIALLY_EDITABLE,
+    PURCHASE_ORDER_COST_MONEY_INCOMPLETE,
+    PURCHASE_ORDER_COST_TYPE_INVALID,
     PURCHASE_ORDER_LINES_REQUIRED,
     PURCHASE_ORDER_NOT_RECEIVABLE,
     PURCHASE_ORDER_REFERENCE_GENERATION_FAILED,
@@ -48,6 +53,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from Models import User
 from shared.currency.services import (
+    get_currency_or_404,
+    get_rate,
     quantize_exchange_rate,
     quantize_money,
 )
@@ -1613,6 +1620,13 @@ def process_approval(
                 phase.status = (
                     PurchasePhaseStatus.ORDERED.value
                 )
+
+
+        _synchronize_purchase_order_goods_prediction(
+            db=db,
+            user=user,
+            purchase_order=po,
+        )
 
     elif action == "reject":
         if (
@@ -3402,45 +3416,705 @@ def apply_goods_receipt(
 
 # ── PurchaseOrderCost ─────────────────────────────────────────────────────────
 
+PURCHASE_ORDER_COST_TYPES = {
+    "goods",
+    "freight",
+    "customs",
+    "tax",
+    "insurance",
+    "other",
+}
+
+
+def _normalize_purchase_order_cost_type(
+    cost_type: str,
+) -> str:
+    normalized = str(
+        cost_type or ""
+    ).strip().lower()
+
+    if (
+        normalized
+        not in PURCHASE_ORDER_COST_TYPES
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COST_TYPE_INVALID,
+            "Invalid purchase-order cost type",
+        )
+
+    return normalized
+
+
+def _prepare_purchase_order_cost_money_bundle(
+    db: Session,
+    purchase_order: PurchaseOrder,
+    *,
+    amount,
+    currency_id,
+) -> dict:
+    if (
+        amount is None
+        or currency_id is None
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COST_MONEY_INCOMPLETE,
+            (
+                "Cost amount and currency "
+                "must be provided together"
+            ),
+        )
+
+    base_currency = (
+        _get_company_base_currency_reference(
+            db=db,
+            company_id=(
+                purchase_order.company_id
+            ),
+        )
+    )
+
+    currency = get_currency_or_404(
+        db=db,
+        currency_id=int(currency_id),
+    )
+
+    if not currency.is_active:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_CURRENCY_INVALID,
+            (
+                "Purchase-order cost "
+                "currency is inactive"
+            ),
+        )
+
+    normalized_amount = quantize_money(
+        amount,
+        currency.decimal_places,
+    )
+
+    if currency.id == base_currency.id:
+        exchange_rate = Decimal("1")
+    else:
+        exchange_rate = get_rate(
+            db=db,
+            from_code=currency.code,
+            to_code=base_currency.code,
+            on_date=date.today(),
+        )
+
+        if exchange_rate is None:
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_COST_MONEY_INCOMPLETE,
+                (
+                    "No exchange rate is "
+                    "available for the "
+                    "purchase-order cost"
+                ),
+            )
+
+    normalized_rate = (
+        quantize_exchange_rate(
+            exchange_rate
+        )
+    )
+
+    amount_base = quantize_money(
+        normalized_amount
+        * normalized_rate,
+        base_currency.decimal_places,
+    )
+
+    return {
+        "amount": normalized_amount,
+        "currency_id": currency.id,
+        "amount_base": amount_base,
+        "base_currency_id": (
+            base_currency.id
+        ),
+        "exchange_rate_used": (
+            normalized_rate
+        ),
+    }
+
+
+def _get_purchase_order_cost_paid_base(
+    db: Session,
+    user: User,
+    cost_id: int,
+) -> Decimal:
+    from financial_management.services import (
+        get_purchase_cost_payment_summaries,
+    )
+
+    summaries = (
+        get_purchase_cost_payment_summaries(
+            db=db,
+            current_user=user,
+            cost_ids=[cost_id],
+        )
+    )
+
+    summary = summaries.get(cost_id)
+
+    if summary is None:
+        return Decimal("0")
+
+    return Decimal(
+        str(
+            summary.get(
+                "paid_base",
+                Decimal("0"),
+            )
+        )
+    )
+
+
+GOODS_PREDICTION_DESCRIPTION = (
+    "Derived purchase-order line total"
+)
+
+
+def _build_purchase_order_goods_prediction_bundle(
+    db: Session,
+    purchase_order: PurchaseOrder,
+) -> dict:
+    lines = list(
+        getattr(
+            purchase_order,
+            "lines",
+            [],
+        )
+        or []
+    )
+
+    if not lines:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            (
+                "Purchase order requires at "
+                "least one normalized line"
+            ),
+        )
+
+    currency_ids = {
+        int(line.currency_id)
+        for line in lines
+    }
+
+    exchange_rates = {
+        quantize_exchange_rate(
+            Decimal(
+                str(
+                    line.exchange_rate_used
+                )
+            )
+        )
+        for line in lines
+    }
+
+    if (
+        len(currency_ids) != 1
+        or len(exchange_rates) != 1
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_INVALID_STRUCTURE,
+            (
+                "Purchase-order lines contain "
+                "inconsistent commercial terms"
+            ),
+        )
+
+    currency_id = next(
+        iter(currency_ids)
+    )
+
+    exchange_rate = next(
+        iter(exchange_rates)
+    )
+
+    currency = get_currency_or_404(
+        db=db,
+        currency_id=currency_id,
+    )
+
+    base_currency = (
+        _get_company_base_currency_reference(
+            db=db,
+            company_id=(
+                purchase_order.company_id
+            ),
+        )
+    )
+
+    amount = quantize_money(
+        sum(
+            (
+                Decimal(
+                    str(
+                        line.ordered_quantity
+                    )
+                )
+                * Decimal(
+                    str(
+                        line.unit_price
+                    )
+                )
+                for line in lines
+            ),
+            Decimal("0"),
+        ),
+        int(currency.decimal_places),
+    )
+
+    amount_base = quantize_money(
+        sum(
+            (
+                Decimal(
+                    str(
+                        line.ordered_quantity
+                    )
+                )
+                * Decimal(
+                    str(
+                        line.unit_price_base
+                    )
+                )
+                for line in lines
+            ),
+            Decimal("0"),
+        ),
+        int(base_currency.decimal_places),
+    )
+
+    return {
+        "amount": amount,
+        "currency_id": currency.id,
+        "amount_base": amount_base,
+        "base_currency_id": (
+            base_currency.id
+        ),
+        "exchange_rate_used": (
+            exchange_rate
+        ),
+    }
+
+
+def _apply_goods_prediction_bundle(
+    cost: PurchaseOrderCost,
+    bundle: dict,
+) -> None:
+    cost.cost_type = "goods"
+    cost.description = (
+        GOODS_PREDICTION_DESCRIPTION
+    )
+
+    cost.amount = bundle["amount"]
+    cost.currency_id = bundle[
+        "currency_id"
+    ]
+    cost.amount_base = bundle[
+        "amount_base"
+    ]
+    cost.base_currency_id = bundle[
+        "base_currency_id"
+    ]
+    cost.exchange_rate_used = bundle[
+        "exchange_rate_used"
+    ]
+    cost.allocation_method = (
+        CostAllocationMethod
+        .PER_VALUE
+        .value
+    )
+
+    cost.predicted_amount = bundle[
+        "amount"
+    ]
+    cost.predicted_currency_id = bundle[
+        "currency_id"
+    ]
+    cost.predicted_amount_base = bundle[
+        "amount_base"
+    ]
+    cost.predicted_exchange_rate_used = (
+        bundle[
+            "exchange_rate_used"
+        ]
+    )
+
+
+def _goods_prediction_differs(
+    cost: PurchaseOrderCost,
+    bundle: dict,
+) -> bool:
+    values = (
+        (
+            cost.predicted_amount,
+            bundle["amount"],
+        ),
+        (
+            cost.predicted_currency_id,
+            bundle["currency_id"],
+        ),
+        (
+            cost.predicted_amount_base,
+            bundle["amount_base"],
+        ),
+        (
+            cost.predicted_exchange_rate_used,
+            bundle[
+                "exchange_rate_used"
+            ],
+        ),
+        (
+            cost.base_currency_id,
+            bundle["base_currency_id"],
+        ),
+    )
+
+    for current, expected in values:
+        if current is None:
+            return True
+
+        if isinstance(
+            expected,
+            Decimal,
+        ):
+            if (
+                Decimal(str(current))
+                != Decimal(str(expected))
+            ):
+                return True
+        elif int(current) != int(expected):
+            return True
+
+    return False
+
+
+def _synchronize_purchase_order_goods_prediction(
+    db: Session,
+    user: User,
+    purchase_order: PurchaseOrder,
+) -> str:
+    bundle = (
+        _build_purchase_order_goods_prediction_bundle(
+            db=db,
+            purchase_order=purchase_order,
+        )
+    )
+
+    goods_costs = sorted(
+        [
+            cost
+            for cost in (
+                getattr(
+                    purchase_order,
+                    "costs",
+                    [],
+                )
+                or []
+            )
+            if str(cost.cost_type) == "goods"
+        ],
+        key=lambda cost: (
+            cost.id or 0
+        ),
+    )
+
+    if len(goods_costs) > 1:
+        purchase_error(
+            status.HTTP_409_CONFLICT,
+            (
+                PURCHASE_ORDER_COST_NOT_FINANCIALLY_EDITABLE
+            ),
+            (
+                "Purchase order contains "
+                "multiple goods predictions"
+            ),
+        )
+
+    if not goods_costs:
+        cost = PurchaseOrderCost(
+            purchase_order_id=(
+                purchase_order.id
+            ),
+            cost_type="goods",
+            description=(
+                GOODS_PREDICTION_DESCRIPTION
+            ),
+            amount=bundle["amount"],
+            currency_id=bundle[
+                "currency_id"
+            ],
+            amount_base=bundle[
+                "amount_base"
+            ],
+            base_currency_id=bundle[
+                "base_currency_id"
+            ],
+            exchange_rate_used=bundle[
+                "exchange_rate_used"
+            ],
+            allocation_method=(
+                CostAllocationMethod
+                .PER_VALUE
+                .value
+            ),
+            predicted_amount=bundle[
+                "amount"
+            ],
+            predicted_currency_id=bundle[
+                "currency_id"
+            ],
+            predicted_amount_base=bundle[
+                "amount_base"
+            ],
+            predicted_exchange_rate_used=(
+                bundle[
+                    "exchange_rate_used"
+                ]
+            ),
+            created_by_user_id=user.id,
+        )
+
+        db.add(cost)
+
+        costs = getattr(
+            purchase_order,
+            "costs",
+            None,
+        )
+
+        if (
+            isinstance(costs, list)
+            and cost not in costs
+        ):
+            costs.append(cost)
+
+        return "synced"
+
+    cost = goods_costs[0]
+
+    paid_base = (
+        _get_purchase_order_cost_paid_base(
+            db=db,
+            user=user,
+            cost_id=cost.id,
+        )
+    )
+
+    protected = (
+        cost.actual_amount_base
+        is not None
+        or paid_base > 0
+    )
+
+    differs = _goods_prediction_differs(
+        cost=cost,
+        bundle=bundle,
+    )
+
+    if protected and differs:
+        return "payment_review_required"
+
+    if differs:
+        _apply_goods_prediction_bundle(
+            cost=cost,
+            bundle=bundle,
+        )
+
+    return "synced"
+
+
+def _derived_purchase_order_goods_total_base(
+    purchase_order: PurchaseOrder,
+    decimal_places: int,
+) -> Decimal:
+    return quantize_money(
+        sum(
+            (
+                Decimal(
+                    str(
+                        line.ordered_quantity
+                    )
+                )
+                * Decimal(
+                    str(
+                        line.unit_price_base
+                    )
+                )
+                for line in (
+                    getattr(
+                        purchase_order,
+                        "lines",
+                        [],
+                    )
+                    or []
+                )
+            ),
+            Decimal("0"),
+        ),
+        decimal_places,
+    )
+
+
+def list_purchase_order_costs(
+    db: Session,
+    user: User,
+    po_id: int,
+) -> list[PurchaseOrderCost]:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    return (
+        db.query(PurchaseOrderCost)
+        .filter(
+            PurchaseOrderCost
+            .purchase_order_id
+            == purchase_order.id,
+        )
+        .order_by(
+            PurchaseOrderCost.id.asc()
+        )
+        .all()
+    )
+
+
+def get_purchase_order_cost(
+    db: Session,
+    user: User,
+    po_id: int,
+    cost_id: int,
+) -> PurchaseOrderCost:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    return _get_purchase_order_cost_or_404(
+        db=db,
+        purchase_order_id=(
+            purchase_order.id
+        ),
+        cost_id=cost_id,
+    )
+
 def add_cost(
     db: Session,
     user: User,
     po_id: int,
     cost_type: str,
     description: Optional[str],
-    amount: Decimal,
-    currency_id: int,
-    amount_base: Decimal,
-    base_currency_id: int,
-    exchange_rate_used: Decimal,
-    allocation_method: str,
+    predicted_amount: Decimal,
+    predicted_currency_id: int,
 ) -> PurchaseOrderCost:
-    po = get_po_or_404(
+    purchase_order = get_po_or_404(
         db=db,
         po_id=po_id,
         user=user,
     )
 
-    _assert_purchase_order_commercial_mutation_allowed(
-        db=db,
-        purchase_order=po,
+    normalized_type = (
+        _normalize_purchase_order_cost_type(
+            cost_type
+        )
+    )
+
+    if (
+        normalized_type == "goods"
+        and any(
+            str(cost.cost_type) == "goods"
+            for cost in (
+                purchase_order.costs or []
+            )
+        )
+    ):
+        purchase_error(
+            status.HTTP_409_CONFLICT,
+            (
+                PURCHASE_ORDER_COST_NOT_FINANCIALLY_EDITABLE
+            ),
+            (
+                "Purchase order already has "
+                "a goods prediction"
+            ),
+        )
+
+    predicted = (
+        _prepare_purchase_order_cost_money_bundle(
+            db=db,
+            purchase_order=purchase_order,
+            amount=predicted_amount,
+            currency_id=(
+                predicted_currency_id
+            ),
+        )
     )
 
     cost = PurchaseOrderCost(
-        purchase_order_id=po.id,
-        cost_type=cost_type,
-        description=description,
-        amount=amount,
-        currency_id=currency_id,
-        amount_base=amount_base,
-        base_currency_id=base_currency_id,
-        exchange_rate_used=exchange_rate_used,
-        allocation_method=allocation_method,
+        purchase_order_id=(
+            purchase_order.id
+        ),
+        cost_type=normalized_type,
+        description=(
+            (
+                description or ""
+            ).strip()
+            or None
+        ),
+        amount=predicted["amount"],
+        currency_id=(
+            predicted["currency_id"]
+        ),
+        amount_base=(
+            predicted["amount_base"]
+        ),
+        base_currency_id=(
+            predicted["base_currency_id"]
+        ),
+        exchange_rate_used=(
+            predicted[
+                "exchange_rate_used"
+            ]
+        ),
+        allocation_method=(
+            CostAllocationMethod
+            .PER_VALUE
+            .value
+        ),
+        predicted_amount=(
+            predicted["amount"]
+        ),
+        predicted_currency_id=(
+            predicted["currency_id"]
+        ),
+        predicted_amount_base=(
+            predicted["amount_base"]
+        ),
+        predicted_exchange_rate_used=(
+            predicted[
+                "exchange_rate_used"
+            ]
+        ),
+        created_by_user_id=user.id,
     )
+
     db.add(cost)
     db.commit()
     db.refresh(cost)
+
     return cost
+
 
 
 def update_cost(
@@ -3456,44 +4130,189 @@ def update_cost(
         user=user,
     )
 
-    _assert_purchase_order_commercial_mutation_allowed(
-        db=db,
-        purchase_order=purchase_order,
-    )
-
     cost = _get_purchase_order_cost_or_404(
         db=db,
-        purchase_order_id=purchase_order.id,
+        purchase_order_id=(
+            purchase_order.id
+        ),
         cost_id=cost_id,
     )
 
-    non_nullable_fields = {
-        "cost_type",
-        "amount",
-        "currency_id",
-        "amount_base",
-        "base_currency_id",
-        "exchange_rate_used",
-        "allocation_method",
-    }
+    paid_base = (
+        _get_purchase_order_cost_paid_base(
+            db=db,
+            user=user,
+            cost_id=cost.id,
+        )
+    )
 
-    for key, value in data.items():
+    if "cost_type" in data:
+        normalized_type = (
+            _normalize_purchase_order_cost_type(
+                data["cost_type"]
+            )
+        )
+
         if (
-            key in non_nullable_fields
-            and value is None
+            paid_base > 0
+            and normalized_type
+            != cost.cost_type
         ):
             purchase_error(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                PURCHASE_ORDER_INVALID_STRUCTURE,
-                f"{key} cannot be null",
+                PURCHASE_ORDER_COST_HAS_PAYMENTS,
+                (
+                    "Cost type cannot be "
+                    "changed after payment"
+                ),
             )
 
-        setattr(cost, key, value)
+        cost.cost_type = normalized_type
+
+    if "description" in data:
+        cost.description = (
+            (
+                data["description"] or ""
+            ).strip()
+            or None
+        )
+
+    predicted_change = any(
+        key in data
+        for key in (
+            "predicted_amount",
+            "predicted_currency_id",
+        )
+    )
+
+    if predicted_change:
+        predicted_amount = data.get(
+            "predicted_amount",
+            cost.predicted_amount,
+        )
+        predicted_currency_id = data.get(
+            "predicted_currency_id",
+            cost.predicted_currency_id,
+        )
+
+        if (
+            predicted_amount is None
+            or predicted_currency_id
+            is None
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_COST_MONEY_INCOMPLETE,
+                (
+                    "Predicted amount and "
+                    "currency must be "
+                    "provided together"
+                ),
+            )
+
+        if (
+            paid_base > 0
+            and int(
+                predicted_currency_id
+            )
+            != int(
+                cost.predicted_currency_id
+            )
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                PURCHASE_ORDER_COST_HAS_PAYMENTS,
+                (
+                    "Cost currency cannot "
+                    "be changed after payment"
+                ),
+            )
+
+        predicted = (
+            _prepare_purchase_order_cost_money_bundle(
+                db=db,
+                purchase_order=(
+                    purchase_order
+                ),
+                amount=predicted_amount,
+                currency_id=(
+                    predicted_currency_id
+                ),
+            )
+        )
+
+        candidate_target_base = (
+            Decimal(
+                str(
+                    cost.actual_amount_base
+                )
+            )
+            if (
+                cost.actual_amount_base
+                is not None
+            )
+            else Decimal(
+                str(
+                    predicted[
+                        "amount_base"
+                    ]
+                )
+            )
+        )
+
+        if (
+            paid_base > 0
+            and candidate_target_base
+            < paid_base
+        ):
+            purchase_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                (
+                    PURCHASE_ORDER_COST_NOT_FINANCIALLY_EDITABLE
+                ),
+                (
+                    "Cost target cannot be "
+                    "reduced below the paid "
+                    "amount"
+                ),
+            )
+
+        cost.predicted_amount = (
+            predicted["amount"]
+        )
+        cost.predicted_currency_id = (
+            predicted["currency_id"]
+        )
+        cost.predicted_amount_base = (
+            predicted["amount_base"]
+        )
+        cost.predicted_exchange_rate_used = (
+            predicted[
+                "exchange_rate_used"
+            ]
+        )
+
+        cost.amount = predicted["amount"]
+        cost.currency_id = (
+            predicted["currency_id"]
+        )
+        cost.amount_base = (
+            predicted["amount_base"]
+        )
+        cost.base_currency_id = (
+            predicted["base_currency_id"]
+        )
+        cost.exchange_rate_used = (
+            predicted[
+                "exchange_rate_used"
+            ]
+        )
 
     db.commit()
     db.refresh(cost)
 
     return cost
+
 
 
 def delete_cost(
@@ -3508,19 +4327,35 @@ def delete_cost(
         user=user,
     )
 
-    _assert_purchase_order_commercial_mutation_allowed(
-        db=db,
-        purchase_order=purchase_order,
-    )
-
     cost = _get_purchase_order_cost_or_404(
         db=db,
-        purchase_order_id=purchase_order.id,
+        purchase_order_id=(
+            purchase_order.id
+        ),
         cost_id=cost_id,
     )
 
+    paid_base = (
+        _get_purchase_order_cost_paid_base(
+            db=db,
+            user=user,
+            cost_id=cost.id,
+        )
+    )
+
+    if paid_base > 0:
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COST_HAS_PAYMENTS,
+            (
+                "A paid purchase-order "
+                "cost cannot be deleted"
+            ),
+        )
+
     db.delete(cost)
     db.commit()
+
 
 
 # ── Receipt link ──────────────────────────────────────────────────────────────
@@ -3544,6 +4379,378 @@ def add_receipt_link(
 
 
 # ── Summary ───────────────────────────────────────────────────────────────────
+
+def _purchase_order_has_untracked_legacy_payments(
+    db: Session,
+    purchase_order_id: int,
+) -> bool:
+    return (
+        db.query(
+            PurchaseOrderReceiptLink.id
+        )
+        .filter(
+            PurchaseOrderReceiptLink
+            .purchase_order_id
+            == purchase_order_id,
+            PurchaseOrderReceiptLink
+            .allocation_status
+            == "legacy_unallocated",
+        )
+        .first()
+        is not None
+    )
+
+
+def _purchase_order_cost_payment_state(
+    *,
+    payment_tracking: str,
+    actual_confirmed: bool,
+    settlement_target_base: Decimal,
+    paid_base: Decimal,
+    review_required: bool = False,
+) -> str:
+    if review_required:
+        return "payment_review_required"
+
+    if payment_tracking == "not_tracked":
+        return "not_tracked"
+
+    if paid_base > settlement_target_base:
+        return "payment_review_required"
+
+    if not actual_confirmed and paid_base > 0:
+        return "advance_paid"
+
+    if paid_base == 0:
+        if (
+            actual_confirmed
+            and settlement_target_base == 0
+        ):
+            return "paid"
+
+        return "unpaid"
+
+    if paid_base < settlement_target_base:
+        return "partially_paid"
+
+    return "paid"
+
+
+def get_purchase_order_payment_summary(
+    db: Session,
+    user: User,
+    po_id: int,
+) -> dict:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    base_currency = (
+        _get_company_base_currency_reference(
+            db=db,
+            company_id=(
+                purchase_order.company_id
+            ),
+        )
+    )
+
+    costs = sorted(
+        list(
+            purchase_order.costs or []
+        ),
+        key=lambda cost: (
+            cost.id or 0
+        ),
+    )
+
+    cost_ids = [
+        int(cost.id)
+        for cost in costs
+        if cost.id is not None
+    ]
+
+    from financial_management.services import (
+        get_purchase_cost_payment_summaries,
+    )
+
+    paid_summaries = (
+        get_purchase_cost_payment_summaries(
+            db=db,
+            current_user=user,
+            cost_ids=cost_ids,
+        )
+    )
+
+    payment_tracking = (
+        "not_tracked"
+        if (
+            _purchase_order_has_untracked_legacy_payments(
+                db=db,
+                purchase_order_id=(
+                    purchase_order.id
+                ),
+            )
+        )
+        else "tracked"
+    )
+
+    decimal_places = int(
+        base_currency.decimal_places
+    )
+
+    zero = quantize_money(
+        Decimal("0"),
+        decimal_places,
+    )
+
+    derived_goods_total_base = (
+        _derived_purchase_order_goods_total_base(
+            purchase_order=purchase_order,
+            decimal_places=decimal_places,
+        )
+    )
+
+    cost_types = (
+        "goods",
+        "freight",
+        "customs",
+        "tax",
+        "insurance",
+        "other",
+    )
+
+    predicted_by_cost_type = {
+        cost_type: zero
+        for cost_type in cost_types
+    }
+
+    predicted_total = zero
+    actual_total = zero
+    unpredicted_total = zero
+    paid_total = zero
+    outstanding_total = zero
+    variance_total = zero
+
+    cost_rows = []
+
+    for cost in costs:
+        predicted_base = (
+            quantize_money(
+                Decimal(
+                    str(
+                        cost
+                        .predicted_amount_base
+                    )
+                ),
+                decimal_places,
+            )
+            if (
+                cost.predicted_amount_base
+                is not None
+            )
+            else zero
+        )
+
+        actual_confirmed = (
+            cost.actual_amount_base
+            is not None
+        )
+
+        actual_base = (
+            quantize_money(
+                Decimal(
+                    str(
+                        cost.actual_amount_base
+                    )
+                ),
+                decimal_places,
+            )
+            if actual_confirmed
+            else zero
+        )
+
+        settlement_target = (
+            actual_base
+            if actual_confirmed
+            else predicted_base
+        )
+
+        paid_summary = (
+            paid_summaries.get(
+                int(cost.id),
+                {},
+            )
+            if cost.id is not None
+            else {}
+        )
+
+        paid_base = quantize_money(
+            Decimal(
+                str(
+                    paid_summary.get(
+                        "paid_base",
+                        Decimal("0"),
+                    )
+                )
+            ),
+            decimal_places,
+        )
+
+        outstanding_base = (
+            quantize_money(
+                settlement_target
+                - paid_base,
+                decimal_places,
+            )
+        )
+
+        variance_base = None
+
+        if actual_confirmed:
+            variance_base = (
+                quantize_money(
+                    actual_base
+                    - predicted_base,
+                    decimal_places,
+                )
+            )
+
+        cost_type = str(
+            cost.cost_type
+        )
+
+        predicted_total = (
+            quantize_money(
+                predicted_total
+                + predicted_base,
+                decimal_places,
+            )
+        )
+
+        predicted_by_cost_type[
+            cost_type
+        ] = quantize_money(
+            predicted_by_cost_type.get(
+                cost_type,
+                zero,
+            )
+            + predicted_base,
+            decimal_places,
+        )
+
+        actual_total = quantize_money(
+            actual_total + actual_base,
+            decimal_places,
+        )
+
+        if (
+            actual_confirmed
+            and cost.predicted_amount_base
+            is None
+        ):
+            unpredicted_total = (
+                quantize_money(
+                    unpredicted_total
+                    + actual_base,
+                    decimal_places,
+                )
+            )
+
+        paid_total = quantize_money(
+            paid_total + paid_base,
+            decimal_places,
+        )
+
+        outstanding_total = (
+            quantize_money(
+                outstanding_total
+                + outstanding_base,
+                decimal_places,
+            )
+        )
+
+        if variance_base is not None:
+            variance_total = (
+                quantize_money(
+                    variance_total
+                    + variance_base,
+                    decimal_places,
+                )
+            )
+
+        cost_rows.append(
+            {
+                "cost_id": cost.id,
+                "settlement_target_base": (
+                    settlement_target
+                ),
+                "paid_base": paid_base,
+                "outstanding_base": (
+                    outstanding_base
+                ),
+                "variance_base": (
+                    variance_base
+                ),
+                "payment_state": (
+                    _purchase_order_cost_payment_state(
+                        payment_tracking=(
+                            payment_tracking
+                        ),
+                        actual_confirmed=(
+                            actual_confirmed
+                        ),
+                        settlement_target_base=(
+                            settlement_target
+                        ),
+                        paid_base=paid_base,
+                        review_required=(
+                            cost_type == "goods"
+                            and (
+                                actual_confirmed
+                                or paid_base > 0
+                            )
+                            and (
+                                predicted_base
+                                != derived_goods_total_base
+                            )
+                        ),
+                    )
+                ),
+            }
+        )
+
+    return {
+        "purchase_order_id": (
+            purchase_order.id
+        ),
+        "base_currency_id": (
+            base_currency.id
+        ),
+        "predicted_total_base": (
+            predicted_total
+        ),
+        "predicted_by_cost_type_base": (
+            predicted_by_cost_type
+        ),
+        "actual_total_base": actual_total,
+        "unpredicted_total_base": (
+            unpredicted_total
+        ),
+        "paid_total_base": paid_total,
+        "outstanding_total_base": (
+            outstanding_total
+        ),
+        "variance_total_base": (
+            variance_total
+        ),
+        "payment_tracking": (
+            payment_tracking
+        ),
+        "costs": cost_rows,
+    }
+
 
 def get_summary(
     db: Session,
@@ -3598,6 +4805,7 @@ def get_summary(
                 str(cost.amount_base)
             )
             for cost in po.costs
+            if str(cost.cost_type) != "goods"
         ),
         Decimal("0"),
     )
@@ -3843,3 +5051,199 @@ def export_purchase_order_rows(
         )
 
     return result
+
+def confirm_purchase_order_cost_actual(
+    db: Session,
+    user: User,
+    po_id: int,
+    cost_id: int,
+    *,
+    amount: Decimal,
+    currency_id: int,
+) -> PurchaseOrderCost:
+    purchase_order = get_po_or_404(
+        db=db,
+        po_id=po_id,
+        user=user,
+    )
+
+    cost = _get_purchase_order_cost_or_404(
+        db=db,
+        purchase_order_id=(
+            purchase_order.id
+        ),
+        cost_id=cost_id,
+    )
+
+    paid_base = (
+        _get_purchase_order_cost_paid_base(
+            db=db,
+            user=user,
+            cost_id=cost.id,
+        )
+    )
+
+    current_currency_id = (
+        cost.actual_currency_id
+        if (
+            cost.actual_currency_id
+            is not None
+        )
+        else cost.predicted_currency_id
+    )
+
+    if (
+        paid_base > 0
+        and current_currency_id
+        is not None
+        and int(currency_id)
+        != int(current_currency_id)
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COST_HAS_PAYMENTS,
+            (
+                "Cost currency cannot be "
+                "changed after payment"
+            ),
+        )
+
+    actual = (
+        _prepare_purchase_order_cost_money_bundle(
+            db=db,
+            purchase_order=purchase_order,
+            amount=amount,
+            currency_id=currency_id,
+        )
+    )
+
+    if (
+        paid_base > 0
+        and Decimal(
+            str(actual["amount_base"])
+        )
+        < paid_base
+    ):
+        purchase_error(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            PURCHASE_ORDER_COST_ACTUAL_BELOW_PAID,
+            (
+                "Actual cost cannot be "
+                "lower than the paid amount"
+            ),
+        )
+
+    cost.actual_amount = actual["amount"]
+    cost.actual_currency_id = (
+        actual["currency_id"]
+    )
+    cost.actual_amount_base = (
+        actual["amount_base"]
+    )
+    cost.actual_exchange_rate_used = (
+        actual["exchange_rate_used"]
+    )
+    cost.actual_confirmed_at = (
+        datetime.utcnow()
+    )
+    cost.actual_confirmed_by_user_id = (
+        user.id
+    )
+
+    db.commit()
+    db.refresh(cost)
+
+    return cost
+
+
+def get_purchase_cost_reference_for_finance(
+    db: Session,
+    current_user: User,
+    cost_id: int,
+) -> dict:
+    company_id = _tenant_id(
+        current_user
+    )
+
+    cost = (
+        db.query(PurchaseOrderCost)
+        .join(
+            PurchaseOrder,
+            PurchaseOrder.id
+            == PurchaseOrderCost
+            .purchase_order_id,
+        )
+        .filter(
+            PurchaseOrderCost.id
+            == cost_id,
+            PurchaseOrder.company_id
+            == company_id,
+        )
+        .first()
+    )
+
+    if cost is None:
+        purchase_error(
+            status.HTTP_404_NOT_FOUND,
+            PURCHASE_ORDER_COST_NOT_FOUND,
+            "Purchase-order cost not found",
+        )
+
+    target_is_actual = (
+        cost.actual_amount_base
+        is not None
+    )
+
+    return {
+        "cost_id": cost.id,
+        "purchase_order_id": (
+            cost.purchase_order_id
+        ),
+        "company_id": company_id,
+        "supplier_id": (
+            cost.purchase_order
+            .supplier_id
+        ),
+        "cost_type": cost.cost_type,
+        "description": cost.description,
+        "target_source": (
+            "actual"
+            if target_is_actual
+            else "predicted"
+        ),
+        "target_amount": (
+            cost.actual_amount
+            if target_is_actual
+            else cost.predicted_amount
+        ),
+        "target_currency_id": (
+            cost.actual_currency_id
+            if target_is_actual
+            else (
+                cost
+                .predicted_currency_id
+            )
+        ),
+        "target_amount_base": (
+            cost.actual_amount_base
+            if target_is_actual
+            else (
+                cost
+                .predicted_amount_base
+            )
+        ),
+        "target_exchange_rate_used": (
+            cost.actual_exchange_rate_used
+            if target_is_actual
+            else (
+                cost
+                .predicted_exchange_rate_used
+            )
+        ),
+        "base_currency_id": (
+            cost.base_currency_id
+        ),
+        "actual_confirmed": (
+            target_is_actual
+        ),
+    }

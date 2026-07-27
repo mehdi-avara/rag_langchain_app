@@ -66,6 +66,7 @@ class PurchasePhaseStatus(str, enum.Enum):
 
 
 class PurchaseCostType(str, enum.Enum):
+    GOODS = "goods"
     FREIGHT = "freight"
     CUSTOMS = "customs"
     TAX = "tax"
@@ -801,16 +802,108 @@ class PurchaseOrderAmendment(Base):
 class PurchaseOrderCost(Base):
     __tablename__ = "purchase_order_costs"
     __table_args__ = (
+        CheckConstraint(
+            """
+            cost_type IN (
+                'goods',
+                'freight',
+                'customs',
+                'tax',
+                'insurance',
+                'other'
+            )
+            """,
+            name="cost_type_valid",
+        ),
+        CheckConstraint(
+            """
+            (
+                predicted_amount IS NULL
+                AND predicted_currency_id IS NULL
+                AND predicted_amount_base IS NULL
+                AND predicted_exchange_rate_used IS NULL
+            )
+            OR
+            (
+                predicted_amount IS NOT NULL
+                AND predicted_currency_id IS NOT NULL
+                AND predicted_amount_base IS NOT NULL
+                AND predicted_exchange_rate_used IS NOT NULL
+            )
+            """,
+            name="predicted_bundle",
+        ),
+        CheckConstraint(
+            """
+            (
+                actual_amount IS NULL
+                AND actual_currency_id IS NULL
+                AND actual_amount_base IS NULL
+                AND actual_exchange_rate_used IS NULL
+            )
+            OR
+            (
+                actual_amount IS NOT NULL
+                AND actual_currency_id IS NOT NULL
+                AND actual_amount_base IS NOT NULL
+                AND actual_exchange_rate_used IS NOT NULL
+            )
+            """,
+            name="actual_bundle",
+        ),
+        CheckConstraint(
+            """
+            predicted_amount IS NULL
+            OR predicted_amount >= 0
+            """,
+            name="predicted_amount_nonnegative",
+        ),
+        CheckConstraint(
+            """
+            actual_amount IS NULL
+            OR actual_amount >= 0
+            """,
+            name="actual_amount_nonnegative",
+        ),
+        CheckConstraint(
+            """
+            predicted_exchange_rate_used IS NULL
+            OR predicted_exchange_rate_used > 0
+            """,
+            name="predicted_rate_positive",
+        ),
+        CheckConstraint(
+            """
+            actual_exchange_rate_used IS NULL
+            OR actual_exchange_rate_used > 0
+            """,
+            name="actual_rate_positive",
+        ),
         Index(
             "ix_purchase_order_costs_purchase_order_id",
             "purchase_order_id",
+        ),
+        Index(
+            "ix_purchase_order_costs_predicted_currency_id",
+            "predicted_currency_id",
+        ),
+        Index(
+            "ix_purchase_order_costs_actual_currency_id",
+            "actual_currency_id",
+        ),
+        Index(
+            "ix_purchase_order_costs_created_by_user_id",
+            "created_by_user_id",
         ),
     )
 
     id = Column(Integer, primary_key=True)
     purchase_order_id = Column(
         Integer,
-        ForeignKey("purchase_orders.id", ondelete="CASCADE"),
+        ForeignKey(
+            "purchase_orders.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
     )
     cost_type = Column(String(30), nullable=False)
@@ -819,13 +912,22 @@ class PurchaseOrderCost(Base):
     amount = Column(Numeric(28, 10), nullable=False)
     currency_id = Column(
         Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
-    amount_base = Column(Numeric(28, 10), nullable=False)
+    amount_base = Column(
+        Numeric(28, 10),
+        nullable=False,
+    )
     base_currency_id = Column(
         Integer,
-        ForeignKey("currencies.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
     )
     exchange_rate_used = Column(
@@ -833,12 +935,77 @@ class PurchaseOrderCost(Base):
         nullable=False,
         default=1,
     )
-
     allocation_method = Column(
         String(20),
         nullable=False,
-        default=CostAllocationMethod.PER_VALUE.value,
+        default=(
+            CostAllocationMethod.PER_VALUE.value
+        ),
     )
+
+    predicted_amount = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+    predicted_currency_id = Column(
+        Integer,
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    predicted_amount_base = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+    predicted_exchange_rate_used = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+
+    actual_amount = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+    actual_currency_id = Column(
+        Integer,
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    actual_amount_base = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+    actual_exchange_rate_used = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    actual_confirmed_at = Column(
+        DateTime,
+        nullable=True,
+    )
+    actual_confirmed_by_user_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+
     created_at = Column(
         DateTime,
         nullable=False,
@@ -855,6 +1022,7 @@ class PurchaseOrderCost(Base):
         "PurchaseOrder",
         back_populates="costs",
     )
+
     currency = relationship(
         "Currency",
         foreign_keys=[currency_id],
@@ -863,11 +1031,33 @@ class PurchaseOrderCost(Base):
         "Currency",
         foreign_keys=[base_currency_id],
     )
+    predicted_currency = relationship(
+        "Currency",
+        foreign_keys=[predicted_currency_id],
+    )
+    actual_currency = relationship(
+        "Currency",
+        foreign_keys=[actual_currency_id],
+    )
+    created_by_user = relationship(
+        "User",
+        foreign_keys=[created_by_user_id],
+    )
+    actual_confirmed_by_user = relationship(
+        "User",
+        foreign_keys=[
+            actual_confirmed_by_user_id
+        ],
+    )
 
 
 class PurchaseOrderReceiptLink(Base):
     __tablename__ = "purchase_order_receipt_links"
     __table_args__ = (
+        CheckConstraint(
+            "allocation_status = 'legacy_unallocated'",
+            name="allocation_status",
+        ),
         Index(
             "ix_po_receipt_links_purchase_order_id",
             "purchase_order_id",
@@ -884,7 +1074,15 @@ class PurchaseOrderReceiptLink(Base):
         ForeignKey("purchase_orders.id", ondelete="CASCADE"),
         nullable=False,
     )
-    financial_receipt_id = Column(Integer, nullable=False)
+    financial_receipt_id = Column(
+        Integer,
+        ForeignKey(
+            "financial_receipts.id",
+            name="fk_po_receipt_links_receipt",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     linked_at = Column(
         DateTime,
         nullable=False,
@@ -894,6 +1092,11 @@ class PurchaseOrderReceiptLink(Base):
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    allocation_status = Column(
+        String(30),
+        nullable=False,
+        default="legacy_unallocated",
     )
 
     purchase_order = relationship(

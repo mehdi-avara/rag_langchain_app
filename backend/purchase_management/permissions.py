@@ -12,7 +12,10 @@ PERMISSIONS = [
     ("purchase_management:orders:ask", "purchase_management.orders", "ask", "Ask AI about purchase orders"),
     ("purchase_management:phases:manage", "purchase_management.phases", "manage", "Update delivery phase schedules"),
     ("purchase_management:phases:split", "purchase_management.phases", "split", "Split unreceived delivery quantities"),
-    ("purchase_management:costs:manage", "purchase_management.costs", "manage", "Add/update additional costs"),
+    ("purchase_management:costs:read", "purchase_management.costs", "read", "View purchase-order costs"),
+    ("purchase_management:costs:manage", "purchase_management.costs", "manage", "Add and update purchase-order costs"),
+    ("purchase_management:costs:confirm_actual", "purchase_management.costs", "confirm_actual", "Confirm actual purchase-order costs"),
+    ("purchase_management:payment_summary:read", "purchase_management.payment_summary", "read", "View purchase-order payment summaries"),
     ("purchase_management:summary", "purchase_management", "summary", "View procurement totals"),
     ("purchase_management:export", "purchase_management", "export", "Export purchase orders"),
 ]

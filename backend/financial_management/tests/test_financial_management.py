@@ -203,6 +203,22 @@ def test_create_receipt_keeps_tracking_number_nullable(monkeypatch):
 
     monkeypatch.setattr(receipt_routes, "get_card_or_404", lambda *_args, **_kwargs: card)
     monkeypatch.setattr(receipt_routes, "safe_embed_text", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        receipt_routes,
+        "resolve_receipt_money_fields",
+        lambda **kwargs: {
+        "amount": kwargs["amount"],
+        "currency": "IRT",
+        "base_currency": "IRT",
+        "exchange_rate_to_base": Decimal("1"),
+        "base_amount": kwargs["amount"],
+        "exchange_rate_source": "system",
+        "currency_id": 1,
+        "base_currency_id": 1,
+        "amount_base": kwargs["amount"],
+        "exchange_rate_used": Decimal("1"),
+    },
+    )
 
     payload = FinancialReceiptCreate(
         description="Paid electricity bill",

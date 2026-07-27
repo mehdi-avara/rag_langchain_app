@@ -5,6 +5,7 @@ from db.session import SessionLocal
 from Models.user import User
 from Models.rbac import Role, Permission
 from purchase_management.permissions import PERMISSIONS as PURCHASE_MANAGEMENT_PERMISSIONS
+from financial_management.permissions import PERMISSIONS as FINANCIAL_MANAGEMENT_PERMISSIONS
 from shared.currency.permissions import PERMISSIONS as CURRENCY_PERMISSIONS
 from material_management.permissions import PERMISSIONS as MATERIAL_MANAGEMENT_PERMISSIONS
 from requisition_management.permissions import PERMISSIONS as REQUISITION_MANAGEMENT_PERMISSIONS
@@ -207,6 +208,7 @@ def seed() -> None:
         ]
 
         permissions_data.extend(PURCHASE_MANAGEMENT_PERMISSIONS)
+        permissions_data.extend(FINANCIAL_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(CURRENCY_PERMISSIONS)
         permissions_data.extend(SUPPLIER_MANAGEMENT_PERMISSIONS)
         permissions_data.extend(MATERIAL_MANAGEMENT_PERMISSIONS)

@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -34,6 +35,9 @@ class FinancialCurrency(str, enum.Enum):
     DIRHAM = "AED"
     DINAR = "IQD"
     YUAN = "CNY"
+    EURO = "EUR"
+    POUND = "GBP"
+    LIRA = "TRY"
 
 
 class FinancialAccessMethod(str, enum.Enum):
@@ -97,40 +101,219 @@ class FinancialCustomer(Base):
 class FinancialReceipt(Base):
     __tablename__ = "financial_receipts"
     __table_args__ = (
-        Index("ix_financial_receipts_company_id", "company_id"),
-        Index("ix_financial_receipts_owner_id", "owner_id"),
-        Index("ix_financial_receipts_credit_card_id", "credit_card_id"),
-        Index("ix_financial_receipts_customer_id", "customer_id"),
-        Index("ix_financial_receipts_tracking_number", "tracking_number"),
-        Index("ix_financial_receipts_counterparty_name", "counterparty_name"),
-        Index("ix_financial_receipts_direction", "direction"),
-        Index("ix_financial_receipts_receipt_date", "receipt_date"),
+        CheckConstraint(
+            """
+            (
+                currency_id IS NULL
+                AND base_currency_id IS NULL
+                AND amount_base IS NULL
+                AND exchange_rate_used IS NULL
+            )
+            OR
+            (
+                currency_id IS NOT NULL
+                AND base_currency_id IS NOT NULL
+                AND amount_base IS NOT NULL
+                AND exchange_rate_used IS NOT NULL
+            )
+            """,
+            name="canonical_money_bundle",
+        ),
+        CheckConstraint(
+            """
+            amount_base IS NULL
+            OR amount_base >= 0
+            """,
+            name="canonical_amount_base_nonnegative",
+        ),
+        CheckConstraint(
+            """
+            exchange_rate_used IS NULL
+            OR exchange_rate_used > 0
+            """,
+            name="canonical_rate_positive",
+        ),
+        Index(
+            "ix_financial_receipts_company_id",
+            "company_id",
+        ),
+        Index(
+            "ix_financial_receipts_owner_id",
+            "owner_id",
+        ),
+        Index(
+            "ix_financial_receipts_credit_card_id",
+            "credit_card_id",
+        ),
+        Index(
+            "ix_financial_receipts_customer_id",
+            "customer_id",
+        ),
+        Index(
+            "ix_financial_receipts_tracking_number",
+            "tracking_number",
+        ),
+        Index(
+            "ix_financial_receipts_counterparty_name",
+            "counterparty_name",
+        ),
+        Index(
+            "ix_financial_receipts_direction",
+            "direction",
+        ),
+        Index(
+            "ix_financial_receipts_receipt_date",
+            "receipt_date",
+        ),
+        Index(
+            "ix_financial_receipts_currency_id",
+            "currency_id",
+        ),
+        Index(
+            "ix_financial_receipts_base_currency_id",
+            "base_currency_id",
+        ),
     )
 
     id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
-    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    credit_card_id = Column(Integer, ForeignKey("financial_cards.id"), nullable=False)
-    customer_id = Column(Integer, ForeignKey("financial_customers.id"), nullable=True)
+    company_id = Column(
+        Integer,
+        ForeignKey("companies.id"),
+        nullable=False,
+    )
+    owner_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    credit_card_id = Column(
+        Integer,
+        ForeignKey("financial_cards.id"),
+        nullable=False,
+    )
+    customer_id = Column(
+        Integer,
+        ForeignKey("financial_customers.id"),
+        nullable=True,
+    )
     description = Column(Text, nullable=False)
-    description_embedding = Column(Vector(1024), nullable=True)
-    tracking_number = Column(String, nullable=True)
-    amount = Column(Numeric(14, 2), nullable=False)
-    currency = Column(String(12), nullable=False, default=FinancialCurrency.TOMAN.value, index=True)
-    base_currency = Column(String(12), nullable=False, default=FinancialCurrency.TOMAN.value, index=True)
-    exchange_rate_to_base = Column(Numeric(18, 6), nullable=False, default=1)
-    base_amount = Column(Numeric(18, 2), nullable=False, default=0)
-    exchange_rate_source = Column(String(20), nullable=False, default="system")
-    direction = Column(String, nullable=False, index=True)
-    counterparty_name = Column(String, nullable=False, index=True)
-    receipt_date = Column(DateTime, nullable=False, default=datetime.utcnow)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    description_embedding = Column(
+        Vector(1024),
+        nullable=True,
+    )
+    tracking_number = Column(
+        String,
+        nullable=True,
+    )
+    amount = Column(
+        Numeric(14, 2),
+        nullable=False,
+    )
+
+    currency = Column(
+        String(12),
+        nullable=False,
+        default=FinancialCurrency.TOMAN.value,
+        index=True,
+    )
+    base_currency = Column(
+        String(12),
+        nullable=False,
+        default=FinancialCurrency.TOMAN.value,
+        index=True,
+    )
+    exchange_rate_to_base = Column(
+        Numeric(18, 6),
+        nullable=False,
+        default=1,
+    )
+    base_amount = Column(
+        Numeric(18, 2),
+        nullable=False,
+        default=0,
+    )
+    exchange_rate_source = Column(
+        String(20),
+        nullable=False,
+        default="system",
+    )
+
+    currency_id = Column(
+        Integer,
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    base_currency_id = Column(
+        Integer,
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    amount_base = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+    exchange_rate_used = Column(
+        Numeric(28, 10),
+        nullable=True,
+    )
+
+    direction = Column(
+        String,
+        nullable=False,
+        index=True,
+    )
+    counterparty_name = Column(
+        String,
+        nullable=False,
+        index=True,
+    )
+    receipt_date = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
 
     company = relationship("Company")
-    owner = relationship("User", back_populates="financial_receipts")
-    credit_card = relationship("FinancialCard", back_populates="receipts")
-    customer = relationship("FinancialCustomer", back_populates="receipts")
+    owner = relationship(
+        "User",
+        back_populates="financial_receipts",
+    )
+    credit_card = relationship(
+        "FinancialCard",
+        back_populates="receipts",
+    )
+    customer = relationship(
+        "FinancialCustomer",
+        back_populates="receipts",
+    )
+    canonical_currency = relationship(
+        "Currency",
+        foreign_keys=[currency_id],
+    )
+    canonical_base_currency = relationship(
+        "Currency",
+        foreign_keys=[base_currency_id],
+    )
     files = relationship(
         "FinancialReceiptFile",
         back_populates="receipt",
@@ -142,6 +325,137 @@ class FinancialReceipt(Base):
         back_populates="receipt",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    purchase_cost_allocations = relationship(
+        "PurchaseCostPaymentAllocation",
+        back_populates="financial_receipt",
+        passive_deletes=True,
+        order_by=(
+            "PurchaseCostPaymentAllocation."
+            "created_at"
+        ),
+    )
+
+
+class PurchaseCostPaymentAllocation(Base):
+    __tablename__ = (
+        "purchase_cost_payment_allocations"
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "allocated_amount > 0",
+            name="amount_positive",
+        ),
+        CheckConstraint(
+            "allocated_amount_base > 0",
+            name="amount_base_positive",
+        ),
+        CheckConstraint(
+            "exchange_rate_used > 0",
+            name="rate_positive",
+        ),
+        Index(
+            (
+                "ix_purchase_cost_payment_allocations_"
+                "company_id"
+            ),
+            "company_id",
+        ),
+        Index(
+            (
+                "ix_purchase_cost_payment_allocations_"
+                "financial_receipt_id"
+            ),
+            "financial_receipt_id",
+        ),
+        Index(
+            (
+                "ix_purchase_cost_payment_allocations_"
+                "purchase_order_cost_id"
+            ),
+            "purchase_order_cost_id",
+        ),
+        Index(
+            (
+                "ix_purchase_cost_payment_allocations_"
+                "currency_id"
+            ),
+            "currency_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    company_id = Column(
+        Integer,
+        ForeignKey(
+            "companies.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    financial_receipt_id = Column(
+        Integer,
+        ForeignKey(
+            "financial_receipts.id",
+            name="fk_pcpa_receipt",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    purchase_order_cost_id = Column(
+        Integer,
+        ForeignKey(
+            "purchase_order_costs.id",
+            name="fk_pcpa_cost",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    allocated_amount = Column(
+        Numeric(28, 10),
+        nullable=False,
+    )
+    currency_id = Column(
+        Integer,
+        ForeignKey(
+            "currencies.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    allocated_amount_base = Column(
+        Numeric(28, 10),
+        nullable=False,
+    )
+    exchange_rate_used = Column(
+        Numeric(28, 10),
+        nullable=False,
+    )
+    created_by_user_id = Column(
+        Integer,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    financial_receipt = relationship(
+        "FinancialReceipt",
+        back_populates=(
+            "purchase_cost_allocations"
+        ),
+    )
+    company = relationship("Company")
+    currency = relationship("Currency")
+    created_by_user = relationship(
+        "User",
+        foreign_keys=[created_by_user_id],
     )
 
 
