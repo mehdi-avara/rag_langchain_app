@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
 from assistant.registry import register_toolset
-from model_management.services import search_models_for_assistant
 from shared.commerce_assistant import (
     ConfiguredCommerceToolSet,
     PayloadField,
@@ -23,8 +22,6 @@ P_SEARCH = "material_management:search"
 P_ASK = "material_management:ask"
 P_CREATE = "material_management:create"
 P_UPDATE = "material_management:update"
-P_MODELS_READ = "models:read"
-P_MODELS_CREATE = "models:create"
 
 
 def _search_items_for_resolution(db, current_user, query_text, ids=None, limit=10):
@@ -92,29 +89,6 @@ def _unit_to_candidate(unit) -> Candidate:
     )
 
 
-def _model_to_candidate(model) -> Candidate:
-    label = " - ".join(
-        part for part in (
-            getattr(model, "manufacturer", None),
-            getattr(model, "model", None),
-            getattr(model, "type", None),
-        )
-        if part
-    )
-    return Candidate(
-        id=model.id,
-        match_text=getattr(model, "model", None) or getattr(model, "manufacturer", None) or "",
-        label=label or f"Model #{model.id}",
-        data={
-            "id": model.id,
-            "manufacturer": getattr(model, "manufacturer", None),
-            "model": getattr(model, "model", None),
-            "type": getattr(model, "type", None),
-            "description": getattr(model, "description", None),
-        },
-    )
-
-
 def register_material_resources() -> None:
     register_resource(ResourceSpec(
         key="material_item",
@@ -149,22 +123,151 @@ def register_material_resources() -> None:
             "name": raw,
         },
     ))
-    register_resource(ResourceSpec(
-        key="managed_model",
-        read_permission=P_MODELS_READ,
-        provider=FunctionSearchProvider(search_models_for_assistant, _model_to_candidate),
-        create_permission=P_MODELS_CREATE,
-        create_endpoint="/models",
-        suggestion_from=lambda raw, slots: {
-            "manufacturer": slots.get("manufacturer") or "",
-            "model": raw,
-            "type": slots.get("model_type") or slots.get("type"),
-        },
-    ))
+
+
+def _normalize_material_write_slots(
+    slots: dict,
+) -> dict:
+    normalized = dict(slots or {})
+
+    alias_pairs = (
+        ("item_name", "name"),
+        ("item_description", "description"),
+        ("item_category", "category"),
+        ("item_unit", "unit"),
+        ("item_critical", "is_critical"),
+    )
+
+    for source, target in alias_pairs:
+        if (
+            target not in normalized
+            and normalized.get(source) is not None
+        ):
+            normalized[target] = normalized[source]
+
+    item_code = normalized.get("item_code")
+
+    if item_code is not None:
+        normalized["item_code"] = str(
+            item_code
+        ).translate(
+            str.maketrans(
+                "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+                "01234567890123456789",
+            )
+        )
+
+    unit_value = normalized.get("unit")
+
+    if unit_value is not None:
+        unit_text = (
+            str(unit_value)
+            .strip()
+            .lower()
+            .replace("‌", " ")
+            .replace("ي", "ی")
+            .replace("ك", "ک")
+        )
+
+        compact_unit = "".join(
+            unit_text.split()
+        )
+
+        if compact_unit in {
+            "kg",
+            "kgs",
+            "kilogram",
+            "کیلو",
+            "کیلوگرم",
+        }:
+            normalized["unit"] = "kilogram"
+
+    explicit_criticality = any(
+        key in normalized
+        for key in (
+            "is_critical",
+            "critical",
+            "item_critical",
+            "criticality",
+        )
+    )
+
+    if not explicit_criticality:
+        description = str(
+            normalized.get("description") or ""
+        )
+
+        normalized_description = (
+            description
+            .strip()
+            .lower()
+            .replace("‌", " ")
+            .replace("ي", "ی")
+            .replace("ك", "ک")
+        )
+
+        negative_phrases = (
+            "حیاتی نیست",
+            "حیاتی نمی باشد",
+            "حیاتی نمی‌باشد",
+            "غیر حیاتی",
+            "غیرحیاتی",
+            "not critical",
+            "non critical",
+            "non-critical",
+        )
+
+        positive_phrases = (
+            "کالای حیاتی",
+            "کالا حیاتی",
+            "حیاتی می باشد",
+            "حیاتی می‌باشد",
+            "حیاتی میباشد",
+            "critical item",
+            "is critical",
+        )
+
+        if any(
+            phrase in normalized_description
+            for phrase in negative_phrases
+        ):
+            normalized["is_critical"] = False
+        elif any(
+            phrase in normalized_description
+            for phrase in positive_phrases
+        ):
+            normalized["is_critical"] = True
+
+    return normalized
 
 
 class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
     module = MODULE
+
+    def build_draft(
+        self,
+        *,
+        intent,
+        db,
+        user,
+        slots,
+        attachments,
+    ):
+        if intent in {
+            "add_item",
+            "update_item",
+        }:
+            slots = _normalize_material_write_slots(
+                slots
+            )
+
+        return super().build_draft(
+            intent=intent,
+            db=db,
+            user=user,
+            slots=slots,
+            attachments=attachments,
+        )
     search_specs = (
         SearchSpec(
             intent="search_items",
@@ -200,14 +303,30 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 ReferenceFieldSpec(
                     field="category_id",
                     resource_key="item_category",
-                    raw_aliases=("category_query", "category_name", "category_code", "category"),
+                    raw_aliases=(
+                        "category_query",
+                        "category_name",
+                        "category_code",
+                        "category",
+                        "item_category",
+                        "item_category_name",
+                        "item_category_code",
+                    ),
                     explicit_aliases=("category_id",),
                     missing_label="category",
                 ),
                 ReferenceFieldSpec(
                     field="unit_id",
                     resource_key="material_unit",
-                    raw_aliases=("unit_query", "unit_name", "unit_code", "unit"),
+                    raw_aliases=(
+                        "unit_query",
+                        "unit_name",
+                        "unit_code",
+                        "unit",
+                        "item_unit",
+                        "item_unit_name",
+                        "item_unit_code",
+                    ),
                     explicit_aliases=("unit_id",),
                     missing_label="unit",
                 ),
@@ -222,7 +341,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
             fields=(
                 PayloadField("item_code", aliases=("code",)),
                 PayloadField("name", aliases=("item_name",)),
-                PayloadField("description"),
+                PayloadField("description", aliases=("item_description",)),
                 PayloadField("category_id", aliases=("category",), kind="int"),
                 PayloadField("unit_id", aliases=("unit",), kind="int"),
                 PayloadField("model_id", aliases=("model",), kind="int"),
@@ -231,7 +350,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("qr_code"),
                 PayloadField("item_type", kind="enum", enum_values=tuple(item.value for item in ItemType), default=ItemType.MATERIAL.value),
                 PayloadField("is_active", aliases=("active",), kind="bool", default=True),
-                PayloadField("is_critical", aliases=("critical",), kind="bool", default=False),
+                PayloadField("is_critical", aliases=("critical", "item_critical", "criticality"), kind="bool", default=False),
                 PayloadField("lead_time_days", aliases=("lead_time",), kind="int"),
             ),
         ),
@@ -247,14 +366,30 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 ReferenceFieldSpec(
                     field="category_id",
                     resource_key="item_category",
-                    raw_aliases=("category_query", "category_name", "category_code", "category"),
+                    raw_aliases=(
+                        "category_query",
+                        "category_name",
+                        "category_code",
+                        "category",
+                        "item_category",
+                        "item_category_name",
+                        "item_category_code",
+                    ),
                     explicit_aliases=("category_id",),
                     missing_label="category",
                 ),
                 ReferenceFieldSpec(
                     field="unit_id",
                     resource_key="material_unit",
-                    raw_aliases=("unit_query", "unit_name", "unit_code", "unit"),
+                    raw_aliases=(
+                        "unit_query",
+                        "unit_name",
+                        "unit_code",
+                        "unit",
+                        "item_unit",
+                        "item_unit_name",
+                        "item_unit_code",
+                    ),
                     explicit_aliases=("unit_id",),
                     missing_label="unit",
                 ),
@@ -269,7 +404,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
             fields=(
                 PayloadField("item_code", aliases=("code",)),
                 PayloadField("name", aliases=("item_name",)),
-                PayloadField("description"),
+                PayloadField("description", aliases=("item_description",)),
                 PayloadField("category_id", aliases=("category",), kind="int"),
                 PayloadField("unit_id", aliases=("unit",), kind="int"),
                 PayloadField("model_id", aliases=("model",), kind="int"),
@@ -278,7 +413,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("qr_code"),
                 PayloadField("item_type", kind="enum", enum_values=tuple(item.value for item in ItemType)),
                 PayloadField("is_active", aliases=("active",), kind="bool"),
-                PayloadField("is_critical", aliases=("critical",), kind="bool"),
+                PayloadField("is_critical", aliases=("critical", "item_critical", "criticality"), kind="bool"),
                 PayloadField("lead_time_days", aliases=("lead_time",), kind="int"),
             ),
         ),

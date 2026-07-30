@@ -1060,3 +1060,156 @@ def test_followup_merges_previous_commerce_partial_draft(monkeypatch):
     assert draft["payload"]["name"] == "Pump seal"
     assert draft["payload"]["category_id"] == 5
     assert draft["payload"]["unit_id"] == 2
+
+
+def test_material_item_normalizes_chat_253_slots():
+    normalized = (
+        material_tools
+        ._normalize_material_write_slots(
+            {
+                "item_code": "۱۵۴۳",
+                "item_name": (
+                    "پمپ زیمنس مدل ۱۸۷۶"
+                ),
+                "item_unit": "kg",
+                "item_category": "general",
+                "item_description": (
+                    "کالا عمومی هست و "
+                    "کالای حیاتی میباشد"
+                ),
+            }
+        )
+    )
+
+    assert normalized["item_code"] == "1543"
+    assert normalized["name"] == (
+        "پمپ زیمنس مدل ۱۸۷۶"
+    )
+    assert normalized["category"] == "general"
+    assert normalized["unit"] == "kilogram"
+    assert normalized["description"] == (
+        "کالا عمومی هست و "
+        "کالای حیاتی میباشد"
+    )
+    assert normalized["is_critical"] is True
+
+
+def test_material_item_does_not_infer_negative_criticality():
+    normalized = (
+        material_tools
+        ._normalize_material_write_slots(
+            {
+                "item_description": (
+                    "این کالا حیاتی نیست"
+                ),
+            }
+        )
+    )
+
+    assert normalized["is_critical"] is False
+
+
+def test_material_item_build_draft_uses_normalized_prefixed_slots(
+    monkeypatch,
+):
+    toolset = (
+        material_tools
+        .MaterialAssistantToolSet()
+    )
+
+    def fake_resolve_references(
+        spec,
+        db,
+        user,
+        slots,
+        payload,
+    ):
+        assert slots["category"] == "general"
+        assert slots["unit"] == "kilogram"
+
+        payload["category_id"] = 8
+        payload["unit_id"] = 10
+
+        return [
+            {
+                "field": "category_id",
+                "raw": "general",
+                "status": "resolved",
+                "chosen": {
+                    "id": 8,
+                    "label": "GENERAL۱ - General",
+                },
+                "alternatives": [],
+                "create_suggestion": None,
+                "note": None,
+            },
+            {
+                "field": "unit_id",
+                "raw": "kilogram",
+                "status": "resolved",
+                "chosen": {
+                    "id": 10,
+                    "label": "KG - Kilogram - mass",
+                },
+                "alternatives": [],
+                "create_suggestion": None,
+                "note": None,
+            },
+        ]
+
+    monkeypatch.setattr(
+        toolset,
+        "_resolve_references",
+        fake_resolve_references,
+    )
+
+    draft = toolset.build_draft(
+        intent="add_item",
+        db=None,
+        user=make_user(
+            ALL_COMMERCE_PERMS
+        ),
+        slots={
+            "item_code": "۱۵۴۳",
+            "item_name": (
+                "پمپ زیمنس مدل ۱۸۷۶"
+            ),
+            "item_unit": "kg",
+            "item_category": "general",
+            "item_description": (
+                "کالا عمومی هست و "
+                "کالای حیاتی میباشد"
+            ),
+        },
+        attachments=[],
+    )
+
+    assert draft.valid is True
+    assert draft.payload == {
+        "item_code": "1543",
+        "name": "پمپ زیمنس مدل ۱۸۷۶",
+        "description": (
+            "کالا عمومی هست و "
+            "کالای حیاتی میباشد"
+        ),
+        "category_id": 8,
+        "unit_id": 10,
+        "item_type": "material",
+        "is_active": True,
+        "is_critical": True,
+    }
+
+    assert draft.commit_target == {
+        "method": "POST",
+        "endpoint": "/materials",
+        "permission": (
+            "material_management:create"
+        ),
+    }
+
+    assert (
+        draft.validation[
+            "references_pending"
+        ]
+        == []
+    )

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 import financial_management.assistant_tools  # noqa: F401
 import goods_receipt_management.assistant_tools  # noqa: F401
 import material_management.assistant_tools  # noqa: F401
+import model_management.assistant_tools  # noqa: F401
 import purchase_management.assistant_tools  # noqa: F401
 import requisition_management.assistant_tools  # noqa: F401
 import rfq_management.assistant_tools  # noqa: F401
