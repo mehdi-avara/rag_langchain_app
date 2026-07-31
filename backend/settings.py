@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import Optional, List
+from typing import Literal, Optional, List
 from functools import lru_cache
 from pydantic import computed_field
 from pathlib import Path
@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret: str
     jwt_exp_hours: int = 24
+
+    # Public tenant self-registration is denied unless the deployment
+    # explicitly opts into the open policy. No invitation or email-
+    # verification workflow is silently assumed by this setting.
+    self_registration_mode: Literal["disabled", "open"] = "disabled"
+    self_registration_rate_window_seconds: int = 3600
+    self_registration_rate_max_per_email: int = 5
+    self_registration_rate_max_global: int = 25
 
     
     

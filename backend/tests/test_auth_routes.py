@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from Models import Company, Permission, Role, User
 from deps import require_permission
+from routs import auth as auth_module
 from routs.auth import (
     create_access_token,
     create_refresh_token,
@@ -143,9 +144,60 @@ def make_user(
 
 
 @pytest.mark.asyncio
-async def test_register_creates_company_admin_user_and_tokens():
-    admin_role = Role(id=1, name="admin", is_active=True)
-    db = FakeDB(roles=[admin_role])
+async def test_register_creates_company_admin_user_and_tokens(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        auth_module.settings,
+        "self_registration_mode",
+        "open",
+    )
+
+    monkeypatch.setattr(
+        auth_module,
+        "enforce_registration_rate_limit",
+        lambda **_kwargs: None,
+    )
+
+    monkeypatch.setattr(
+        auth_module,
+        "provision_company_defaults",
+        lambda *_args, **_kwargs: None,
+    )
+
+    tenant_admin_role = Role(
+        id=1,
+        company_id=1,
+        name=auth_module.TENANT_ADMIN_ROLE_NAME,
+        description="Tenant administrator",
+        is_active=True,
+        is_system=False,
+    )
+
+    tenant_admin_role.permissions = [
+        Permission(
+            id=1,
+            name="profile:read",
+            resource="profile",
+            action="read",
+        )
+    ]
+
+    def resolve_tenant_admin_role(
+        _db,
+        *,
+        company_id,
+    ):
+        tenant_admin_role.company_id = company_id
+        return tenant_admin_role
+
+    monkeypatch.setattr(
+        auth_module,
+        "_get_or_create_company_admin_role",
+        resolve_tenant_admin_role,
+    )
+
+    db = FakeDB()
 
     response = await register(
         RegisterRequest(
@@ -174,12 +226,28 @@ async def test_register_creates_company_admin_user_and_tokens():
     assert user.username == "owner@example.com"
     assert user.First_name == "Owner"
     assert user.Last_name == "Main"
-    assert user.role == "admin"
-    assert user.roles == [admin_role]
-    assert bcrypt.verify("StrongPass123", user.pw_hash)
+    assert (
+        user.role
+        == auth_module.TENANT_ADMIN_ROLE_NAME
+    )
+    assert user.roles == [tenant_admin_role]
 
-    access_payload = decode_token(response.access_token)
-    refresh_payload = decode_token(response.refresh_token)
+    assert tenant_admin_role.company_id == company.id
+    assert tenant_admin_role.is_system is False
+    assert tenant_admin_role.is_active is True
+
+    assert bcrypt.verify(
+        "StrongPass123",
+        user.pw_hash,
+    )
+
+    access_payload = decode_token(
+        response.access_token
+    )
+
+    refresh_payload = decode_token(
+        response.refresh_token
+    )
 
     assert access_payload["sub"] == str(user.id)
     assert access_payload["company_id"] == company.id
@@ -191,11 +259,32 @@ async def test_register_creates_company_admin_user_and_tokens():
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_duplicate_email():
-    existing_user = make_user(username="owner@example.com")
-    db = FakeDB(users=[existing_user])
+async def test_register_rejects_duplicate_email(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        auth_module.settings,
+        "self_registration_mode",
+        "open",
+    )
 
-    with pytest.raises(HTTPException) as exc:
+    monkeypatch.setattr(
+        auth_module,
+        "enforce_registration_rate_limit",
+        lambda **_kwargs: None,
+    )
+
+    existing_user = make_user(
+        username="owner@example.com"
+    )
+
+    db = FakeDB(
+        users=[existing_user]
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
         await register(
             RegisterRequest(
                 email="owner@example.com",
@@ -206,7 +295,14 @@ async def test_register_rejects_duplicate_email():
         )
 
     assert exc.value.status_code == 409
-    assert exc.value.detail == "Email already registered"
+    assert (
+        exc.value.detail["code"]
+        == "REGISTRATION_CONFLICT"
+    )
+
+    assert db.committed is False
+    assert db.companies == []
+    assert db.users == [existing_user]
 
 
 @pytest.mark.asyncio
