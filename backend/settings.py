@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     # services Chat_model 
     openai_api_key: str
     openai_base_url: str = "http://10.0.0.10:11434/v1"
+    llm_allowed_base_urls: str = ""
     # openai_model: str =  "openai.gpt-oss-20b-1:0"
     openai_model: str =  "gpt-oss-120b"
     

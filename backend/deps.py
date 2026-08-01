@@ -5,7 +5,11 @@ from jose.exceptions import ExpiredSignatureError
 from sqlalchemy.orm import Session
 
 from Models import User
-from core.exceptions.error_codes import AUTH_REQUIRED, INVALID_TOKEN
+from core.exceptions.error_codes import (
+    AUTH_REQUIRED,
+    INVALID_TOKEN,
+    PLATFORM_PERMISSION_REQUIRED,
+)
 from db.init_db import get_db
 from settings import get_settings
 
@@ -104,6 +108,47 @@ def require_permission(permission_name: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission denied",
+            )
+
+        return current_user
+
+    return checker
+
+
+def get_platform_permissions(
+    current_user: User,
+) -> set[str]:
+    return {
+        permission.name
+        for role in current_user.roles
+        if role.is_active
+        and role.is_system is True
+        and role.company_id is None
+        for permission in role.permissions
+    }
+
+
+def require_platform_permission(
+    permission_name: str,
+):
+    def checker(
+        current_user: User = Depends(
+            get_current_user
+        ),
+    ) -> User:
+        permissions = get_platform_permissions(
+            current_user
+        )
+
+        if permission_name not in permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": PLATFORM_PERMISSION_REQUIRED,
+                    "message": (
+                        "Platform-level permission is required"
+                    ),
+                },
             )
 
         return current_user
