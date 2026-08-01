@@ -20,7 +20,7 @@ services:
       redis_url: redis://redis:6379/0
       request_log_file: /app/logs/api.log
       STT_URL: http://stt:8010
-      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB}
       TIKTOKEN_CACHE_DIR: /app/.tiktoken-cache
     depends_on:
       - postgres
@@ -52,9 +52,9 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
       POSTGRES_DB: rag
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 67e8fce7b09fb9251889df2061
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
       POSTGRES_IP: postgres
-      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB}
 
     depends_on:
       - redis
@@ -89,8 +89,8 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
     command: server /data --console-address ":9001"
     ports:
       - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
@@ -107,7 +107,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
       # Optional: change where PG stores data inside the container
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:

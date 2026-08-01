@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     embedding_model: str = "jina-embeddings-v3"
     
     embedding_base_url: str = "http://10.0.0.10:8088/v1"
-    embedding_api_key: str = "None"
+    embedding_api_key: str = ""
     jina_api_key: str
     
     BACKEND_PORT: int = 8001
@@ -102,8 +102,8 @@ class Settings(BaseSettings):
 
     S3_ENDPOINT_URL: str = "http://minio:9000"
     S3_PUBLIC_ENDPOINT_URL: str | None = None
-    S3_ACCESS_KEY_ID: str = "minioadmin"
-    S3_SECRET_ACCESS_KEY: str = "minioadmin"
+    S3_ACCESS_KEY_ID: str
+    S3_SECRET_ACCESS_KEY: str
     S3_BUCKET_NAME: str = "porsa-assets"
     S3_REGION_NAME: str = "us-east-1"
     S3_USE_SSL: bool = False
