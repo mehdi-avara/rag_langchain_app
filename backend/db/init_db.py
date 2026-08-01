@@ -44,56 +44,110 @@ def _get_or_create_default_company(db) -> Company:
     return company
 
 
-def seed_default_user() -> None:
-    """Ensure the default admin user exists and is linked to the admin role.
+def _validated_bootstrap_credentials() -> tuple[str, str, str]:
+    username = settings.default_username.strip()
+    password = settings.default_password
+    first_name = settings.default_firstname.strip()
 
-    Idempotent. Intended to be called once at application startup (see the
-    startup hook in ``api.py``), after ``seed_rbac`` has created the system
-    ``admin`` role. Schema is owned by Alembic migrations.
-
-    The legacy ``users.role`` column alone grants nothing — authorization is
-    driven by RBAC (``user.roles -> role.permissions``). So this also attaches
-    the system-wide admin role (``company_id IS NULL``); without it the default
-    user looks like an admin but has zero permissions.
-    """
-    db = SessionLocal()
-    try:
-        company = _get_or_create_default_company(db)
-
-        user = (
-            db.query(User)
-            .filter_by(username=settings.default_username)
-            .first()
+    if not username:
+        raise RuntimeError(
+            "Bootstrap admin username is required when bootstrap is enabled"
         )
-        if user is None:
-            user = User(
-                company_id=company.id,
-                username=settings.default_username,
-                First_name=settings.default_firstname,
-                pw_hash=bcrypt.hash(settings.default_password),
-                role="admin",
+
+    if not first_name:
+        raise RuntimeError(
+            "Bootstrap admin first name is required when bootstrap is enabled"
+        )
+
+    if len(password) < 16:
+        raise RuntimeError(
+            "Bootstrap admin password must contain at least 16 characters"
+        )
+
+    normalized_password = password.strip().lower()
+
+    forbidden_passwords = {
+        "admin",
+        "admin123456",
+        "password",
+        "password123456",
+        "changeme",
+        "secret",
+        "test",
+        username.lower(),
+    }
+
+    if normalized_password in forbidden_passwords:
+        raise RuntimeError(
+            "Bootstrap admin password is insecure"
+        )
+
+    return username, password, first_name
+
+
+def seed_default_user() -> None:
+    if not settings.bootstrap_admin_enabled:
+        return
+
+    username, password, first_name = (
+        _validated_bootstrap_credentials()
+    )
+
+    db = SessionLocal()
+
+    try:
+        existing_user = db.query(User.id).first()
+
+        if existing_user is not None:
+            raise RuntimeError(
+                "Bootstrap admin can only run when the user table is empty"
             )
-            db.add(user)
-            db.flush()
-        elif user.company_id is None:
-            # Backfill admins created before this seeding assigned a company.
-            user.company_id = company.id
+
+        company = _get_or_create_default_company(db)
 
         admin_role = (
             db.query(Role)
-            .filter(Role.name == "admin", Role.company_id.is_(None))
+            .filter(
+                Role.name == "admin",
+                Role.company_id.is_(None),
+                Role.is_system.is_(True),
+                Role.is_active.is_(True),
+            )
             .first()
         )
-        if admin_role is not None and admin_role not in user.roles:
-            user.roles.append(admin_role)
 
-        db.flush()  # ensure user.id is assigned before provisioning
-        provision_company_defaults(db, company, created_by_user_id=user.id)
+        if admin_role is None:
+            raise RuntimeError(
+                "Active global system admin role is required for bootstrap"
+            )
+
+        user = User(
+            company_id=company.id,
+            username=username,
+            First_name=first_name,
+            pw_hash=bcrypt.hash(password),
+            role="admin",
+        )
+
+        user.roles.append(admin_role)
+
+        db.add(user)
+        db.flush()
+
+        provision_company_defaults(
+            db,
+            company,
+            created_by_user_id=user.id,
+        )
 
         db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
     finally:
         db.close()
-
 
 if __name__ == "__main__":
     seed_default_user()

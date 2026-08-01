@@ -116,9 +116,8 @@ app.include_router(di_router)
 
 @app.on_event("startup")
 def seed_default_user_on_startup() -> None:
-    # Schema is created by Alembic migrations (entrypoint runs `alembic upgrade
-    # head`); this only seeds the default admin user, once, at startup.
-    seed_default_user()
+    if settings.bootstrap_admin_enabled:
+        seed_default_user()
 
 
 @app.on_event("startup")

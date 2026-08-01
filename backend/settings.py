@@ -29,10 +29,10 @@ class Settings(BaseSettings):
     
     
     # Default user
-    default_username: str
-    default_password: str
-    default_firstname: str
-
+    default_username: str = ""
+    default_password: str = ""
+    default_firstname: str = ""
+    bootstrap_admin_enabled: bool = False
     cors_allow_origins: List[str] = ["https://porsa.mahta-tech.com","http://localhost:5000"]
     
 
