@@ -1,10 +1,22 @@
+from dataclasses import dataclass
+
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
+from jose import JWTError
 from jose.exceptions import ExpiredSignatureError
 from sqlalchemy.orm import Session
 
-from Models import User
+from Models import AuthSession, User
+from core.auth_sessions import (
+    validate_access_session,
+)
+from core.auth_tokens import (
+    decode_token,
+    is_token_stale_for_user,
+)
 from core.exceptions.error_codes import (
     AUTH_REQUIRED,
     INVALID_TOKEN,
@@ -18,44 +30,59 @@ settings = get_settings()
 security = HTTPBearer()
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db),
-) -> User:
-    credentials_exception = HTTPException(
+@dataclass(frozen=True)
+class AuthContext:
+    user: User
+    session: AuthSession
+    payload: dict
+
+
+def _credentials_exception() -> HTTPException:
+    return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
+        headers={
+            "WWW-Authenticate": "Bearer",
+        },
     )
 
+
+def _resolve_auth_context(
+    *,
+    credentials: HTTPAuthorizationCredentials,
+    db: Session,
+) -> AuthContext:
     try:
-        token = credentials.credentials
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-        user_id = payload.get("sub")
-        token_type = payload.get("type")
-
-        if user_id is None or token_type != "access":
-            raise credentials_exception
-
-    except ExpiredSignatureError:
+        payload = decode_token(
+            credentials.credentials,
+            expected_type="access",
+        )
+    except ExpiredSignatureError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    except JWTError:
-        raise credentials_exception
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
+        ) from exc
+    except JWTError as exc:
+        raise _credentials_exception() from exc
 
     try:
-        user_id_int = int(user_id)
-    except ValueError:
-        raise credentials_exception
+        user_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _credentials_exception() from exc
 
-    user = db.query(User).filter(User.id == user_id_int).first()
+    user = (
+        db.query(User)
+        .filter(
+            User.id == user_id
+        )
+        .first()
+    )
 
     if user is None:
-        raise credentials_exception
+        raise _credentials_exception()
 
     if getattr(user, "is_active", True) is False:
         raise HTTPException(
@@ -64,31 +91,61 @@ def get_current_user(
                 "code": AUTH_REQUIRED,
                 "message": "User is inactive",
             },
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
         )
 
-    password_changed_at = getattr(user, "password_changed_at", None)
-    token_iat = payload.get("iat")
+    if is_token_stale_for_user(
+        payload,
+        user,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": INVALID_TOKEN,
+                "message": "Token is no longer valid",
+            },
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
+        )
 
-    if password_changed_at is not None:
-        stale = True
-        if token_iat is not None:
-            try:
-                stale = int(token_iat) < int(password_changed_at.timestamp())
-            except (TypeError, ValueError):
-                stale = True
+    session = validate_access_session(
+        db,
+        user,
+        payload,
+    )
 
-        if stale:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "code": INVALID_TOKEN,
-                    "message": "Token is no longer valid",
-                },
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    return AuthContext(
+        user=user,
+        session=session,
+        payload=payload,
+    )
 
-    return user
+
+def get_current_auth_context(
+    credentials: HTTPAuthorizationCredentials = Depends(
+        security
+    ),
+    db: Session = Depends(get_db),
+) -> AuthContext:
+    return _resolve_auth_context(
+        credentials=credentials,
+        db=db,
+    )
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(
+        security
+    ),
+    db: Session = Depends(get_db),
+) -> User:
+    return _resolve_auth_context(
+        credentials=credentials,
+        db=db,
+    ).user
 
 
 def get_user_permissions(current_user: User) -> set[str]:

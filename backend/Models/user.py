@@ -20,11 +20,23 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     deactivated_at = Column(DateTime, nullable=True)
     password_changed_at = Column(DateTime, nullable=True)
+    auth_token_version = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     notification_token = Column(String, nullable=True)
     image_path = Column(String, nullable=True)
     profile_asset_id = Column(Integer, ForeignKey("file_assets.id", ondelete="SET NULL"), nullable=True, index=True)
 
     company = relationship("Company", back_populates="users")
+    auth_sessions = relationship(
+        "AuthSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     profile_asset = relationship("FileAsset", foreign_keys=[profile_asset_id])
 
     roles = relationship("Role", secondary="user_role", back_populates="users", lazy="selectin")

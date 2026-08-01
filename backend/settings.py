@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret: str
     jwt_exp_hours: int = 24
+    jwt_access_exp_minutes: int = 15
+    jwt_refresh_exp_days: int = 7
+    jwt_issuer: str = "porsa-api"
+    jwt_audience: str = "porsa-client"
+
+    auth_rate_limit_enabled: bool = True
+    auth_login_rate_window_seconds: int = 900
+    auth_login_rate_max_per_identity: int = 10
+    auth_login_rate_max_global: int = 200
+    auth_refresh_rate_window_seconds: int = 300
+    auth_refresh_rate_max_per_token: int = 30
+    auth_refresh_rate_max_global: int = 600
 
     # Public tenant self-registration is denied unless the deployment
     # explicitly opts into the open policy. No invitation or email-

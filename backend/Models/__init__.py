@@ -1,5 +1,6 @@
 from .company import Company
 from .user import User
+from .auth_session import AuthSession
 from .rbac import Role, Permission, user_role, role_permission
 from .document import Document, DocumentVersion, DocumentStatusType
 from .document_access import UserDocumentAccess
@@ -144,6 +145,7 @@ from assistant.models import (
 __all__ = [
     "Company",
     "User",
+    "AuthSession",
     "Role",
     "Permission",
     "user_role",

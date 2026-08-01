@@ -1,8 +1,7 @@
-from datetime import datetime, timedelta
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from jose import JWTError, jwt
+from jose import JWTError
 from passlib.hash import bcrypt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,11 +17,32 @@ from core.exceptions.error_codes import (
 )
 from db.init_db import get_db
 from db.provision_company_defaults import provision_company_defaults
+from core.auth_rate_limit import (
+    enforce_login_rate_limit,
+    enforce_refresh_rate_limit,
+)
+from core.auth_sessions import (
+    create_auth_session,
+    revoke_auth_session,
+    revoke_user_authentication,
+    rotate_refresh_session,
+)
+from core.auth_tokens import (
+    create_token_pair,
+    decode_token,
+    is_token_stale_for_user,
+)
 from core.registration_security import enforce_registration_rate_limit
-from deps import require_permission
+from deps import (
+    AuthContext,
+    get_current_auth_context,
+    get_current_user,
+    require_permission,
+)
 from schemas.auth import (
     LoginRequest,
     LoginResponse,
+    LogoutResponse,
     RegisterRequest,
     RegisterResponse,
     RefreshRequest,
@@ -36,73 +56,39 @@ router = APIRouter()
 settings = get_settings()
 
 
-def _token_iat() -> datetime:
-    return datetime.utcnow()
-
-
-def create_access_token(user: User) -> str:
-    issued_at = _token_iat()
-    expire = issued_at + timedelta(hours=settings.jwt_exp_hours)
-    payload = {
-        "sub": str(user.id),
-        "company_id": user.company_id,
-        "iat": int(issued_at.timestamp()),
-        "exp": expire,
-        "type": "access",
-    }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
-
-
-def create_refresh_token(user: User) -> str:
-    issued_at = _token_iat()
-    expire = issued_at + timedelta(days=1)
-    payload = {
-        "sub": str(user.id),
-        "company_id": user.company_id,
-        "iat": int(issued_at.timestamp()),
-        "exp": expire,
-        "type": "refresh",
-    }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
-
-
 def _error_detail(code: str, message: str):
     return {
         "code": code,
         "message": message,
     }
 
-
-def _is_token_stale_for_user(token_data: dict, user: User) -> bool:
-    password_changed_at = getattr(user, "password_changed_at", None)
-    if password_changed_at is None:
-        return False
-
-    token_iat = token_data.get("iat")
-    if token_iat is None:
-        return True
-
-    try:
-        token_iat = int(token_iat)
-    except (TypeError, ValueError):
-        return True
-
-    return token_iat < int(password_changed_at.timestamp())
-
-
-def _ensure_user_can_authenticate(user: User, token_data: dict | None = None) -> None:
+def _ensure_user_can_authenticate(
+    user: User,
+    token_data: dict | None = None,
+) -> None:
     if getattr(user, "is_active", True) is False:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_error_detail(AUTH_REQUIRED, "User is inactive"),
+            detail=_error_detail(
+                AUTH_REQUIRED,
+                "User is inactive",
+            ),
         )
 
-    if token_data is not None and _is_token_stale_for_user(token_data, user):
+    if (
+        token_data is not None
+        and is_token_stale_for_user(
+            token_data,
+            user,
+        )
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_error_detail(INVALID_TOKEN, "Token is no longer valid"),
+            detail=_error_detail(
+                INVALID_TOKEN,
+                "Token is no longer valid",
+            ),
         )
-
 
 
 TENANT_ADMIN_ROLE_NAME = "company_admin"
@@ -345,6 +331,21 @@ async def register(
             created_by_user_id=user.id,
         )
 
+        auth_session, refresh_jti = (
+            create_auth_session(
+                db,
+                user,
+            )
+        )
+
+        access_token, refresh_token = (
+            create_token_pair(
+                user,
+                session_id=auth_session.id,
+                refresh_jti=refresh_jti,
+            )
+        )
+
         db.commit()
         db.refresh(user)
 
@@ -370,81 +371,213 @@ async def register(
         raise
 
     return RegisterResponse(
-        access_token=create_access_token(
-            user
-        ),
-        refresh_token=create_refresh_token(
-            user
-        ),
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 
-@router.post("/login", response_model=LoginResponse)
-async def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == payload.username).first()
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+)
+async def login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    enforce_login_rate_limit(
+        username=payload.username,
+    )
+
+    user = (
+        db.query(User)
+        .filter(
+            User.username == payload.username
+        )
+        .first()
+    )
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_error_detail(AUTH_REQUIRED, "Incorrect username or password"),
+            detail=_error_detail(
+                AUTH_REQUIRED,
+                "Incorrect username or password",
+            ),
         )
 
-    if not bcrypt.verify(payload.password, user.pw_hash):
+    if not bcrypt.verify(
+        payload.password,
+        user.pw_hash,
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_error_detail(AUTH_REQUIRED, "Incorrect username or password"),
+            detail=_error_detail(
+                AUTH_REQUIRED,
+                "Incorrect username or password",
+            ),
         )
 
     _ensure_user_can_authenticate(user)
 
+    auth_session, refresh_jti = (
+        create_auth_session(
+            db,
+            user,
+        )
+    )
+
+    access_token, refresh_token = (
+        create_token_pair(
+            user,
+            session_id=auth_session.id,
+            refresh_jti=refresh_jti,
+        )
+    )
+
+    db.commit()
+
     return LoginResponse(
-        access_token=create_access_token(user),
-        refresh_token=create_refresh_token(user),
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 
-@router.post("/refresh", response_model=RefreshResponse)
-async def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db)):
+@router.post(
+    "/refresh",
+    response_model=RefreshResponse,
+)
+async def refresh_tokens(
+    payload: RefreshRequest,
+    db: Session = Depends(get_db),
+):
+    enforce_refresh_rate_limit(
+        refresh_token=payload.refresh_token,
+    )
+
     try:
-        token_data = jwt.decode(
+        token_data = decode_token(
             payload.refresh_token,
-            settings.jwt_secret,
-            algorithms=["HS256"],
+            expected_type="refresh",
         )
-
-        if token_data.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=_error_detail(INVALID_TOKEN, "Invalid refresh token type"),
-            )
-
-        user_id = token_data.get("sub")
-
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=_error_detail(INVALID_TOKEN, "Invalid refresh token"),
-            )
-
-    except JWTError:
+    except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_error_detail(INVALID_TOKEN, "Invalid refresh token"),
-        )
+            detail=_error_detail(
+                INVALID_TOKEN,
+                "Invalid refresh token",
+            ),
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
+        ) from exc
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    try:
+        user_id = int(token_data["sub"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_error_detail(
+                INVALID_TOKEN,
+                "Invalid refresh token",
+            ),
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
+        ) from exc
+
+    user = (
+        db.query(User)
+        .filter(
+            User.id == user_id
+        )
+        .first()
+    )
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_error_detail(USER_NOT_FOUND, "User not found"),
+            detail=_error_detail(
+                USER_NOT_FOUND,
+                "User not found",
+            ),
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
         )
 
-    _ensure_user_can_authenticate(user, token_data)
+    _ensure_user_can_authenticate(
+        user,
+        token_data,
+    )
+
+    auth_session, refresh_jti = (
+        rotate_refresh_session(
+            db,
+            user,
+            token_data,
+        )
+    )
+
+    access_token, refresh_token = (
+        create_token_pair(
+            user,
+            session_id=auth_session.id,
+            refresh_jti=refresh_jti,
+        )
+    )
+
+    db.commit()
 
     return RefreshResponse(
-        access_token=create_access_token(user),
-        refresh_token=create_refresh_token(user),
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+)
+def logout(
+    auth_context: AuthContext = Depends(
+        get_current_auth_context
+    ),
+    db: Session = Depends(get_db),
+):
+    revoked = revoke_auth_session(
+        auth_context.session,
+        reason="user_logout",
+    )
+
+    db.commit()
+
+    return LogoutResponse(
+        success=True,
+        revoked_sessions=1 if revoked else 0,
+    )
+
+
+@router.post(
+    "/logout-all",
+    response_model=LogoutResponse,
+)
+def logout_all(
+    current_user: User = Depends(
+        get_current_user
+    ),
+    db: Session = Depends(get_db),
+):
+    revoked_count = revoke_user_authentication(
+        db,
+        current_user,
+        reason="user_logout_all",
+    )
+
+    db.commit()
+
+    return LogoutResponse(
+        success=True,
+        revoked_sessions=revoked_count,
     )
 
 

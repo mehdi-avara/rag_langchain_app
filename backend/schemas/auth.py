@@ -45,6 +45,11 @@ class RefreshResponse(BaseModel):
     refresh_token: str
 
 
+class LogoutResponse(BaseModel):
+    success: bool = True
+    revoked_sessions: int = 1
+
+
 class CurrentUserOut(BaseModel):
     id: int
     company_id: int

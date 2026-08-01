@@ -21,12 +21,16 @@ os.environ.setdefault("jina_api_key", "test")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from Models import Company, Permission, Role, User
+from Models import (
+    AuthSession,
+    Company,
+    Permission,
+    Role,
+    User,
+)
 from deps import require_permission
 from routs import auth as auth_module
 from routs.auth import (
-    create_access_token,
-    create_refresh_token,
     login,
     refresh_tokens,
     register,
@@ -43,7 +47,17 @@ class FakeQuery:
     def filter(self, *args, **kwargs):
         return self
 
+    def with_for_update(self):
+        return self
+
     def first(self):
+        if self.model is AuthSession:
+            return (
+                self.db.sessions[0]
+                if self.db.sessions
+                else None
+            )
+
         if self.model is User:
             return self.db.users[0] if self.db.users else None
 
@@ -62,10 +76,18 @@ class FakeQuery:
 
 
 class FakeDB:
-    def __init__(self, users=None, companies=None, roles=None, company_slug_exists=False):
+    def __init__(
+        self,
+        users=None,
+        companies=None,
+        roles=None,
+        sessions=None,
+        company_slug_exists=False,
+    ):
         self.users = users or []
         self.companies = companies or []
         self.roles = roles or []
+        self.sessions = sessions or []
         self.company_slug_exists = company_slug_exists
         self.added = []
         self.committed = False
@@ -83,6 +105,9 @@ class FakeDB:
 
         if isinstance(obj, User):
             self.users.append(obj)
+
+        if isinstance(obj, AuthSession):
+            self.sessions.append(obj)
 
     def flush(self):
         self.flushed = True
@@ -112,7 +137,14 @@ class FakeDB:
 
 def decode_token(token: str) -> dict:
     settings = get_settings()
-    return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+
+    return jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=["HS256"],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
+    )
 
 
 def make_user(
@@ -131,6 +163,7 @@ def make_user(
         Last_name="User",
         pw_hash=bcrypt.hash(password),
         role=role,
+        auth_token_version=0,
     )
 
     role_obj = Role(id=1, name=role, is_active=True)
@@ -367,7 +400,21 @@ async def test_login_rejects_unknown_user():
 async def test_refresh_accepts_refresh_token_and_returns_new_tokens():
     user = make_user(user_id=9, company_id=4)
     db = FakeDB(users=[user])
-    refresh_token = create_refresh_token(user)
+
+    session, refresh_jti = (
+        auth_module.create_auth_session(
+            db,
+            user,
+        )
+    )
+
+    _, refresh_token = (
+        auth_module.create_token_pair(
+            user,
+            session_id=session.id,
+            refresh_jti=refresh_jti,
+        )
+    )
 
     response = await refresh_tokens(
         RefreshRequest(refresh_token=refresh_token),
@@ -390,7 +437,21 @@ async def test_refresh_accepts_refresh_token_and_returns_new_tokens():
 async def test_refresh_rejects_access_token():
     user = make_user(user_id=9, company_id=4)
     db = FakeDB(users=[user])
-    access_token = create_access_token(user)
+
+    session, refresh_jti = (
+        auth_module.create_auth_session(
+            db,
+            user,
+        )
+    )
+
+    access_token, _ = (
+        auth_module.create_token_pair(
+            user,
+            session_id=session.id,
+            refresh_jti=refresh_jti,
+        )
+    )
 
     with pytest.raises(HTTPException) as exc:
         await refresh_tokens(

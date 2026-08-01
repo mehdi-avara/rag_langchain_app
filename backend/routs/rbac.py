@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from Models.company import Company
 from Models.user import User
 from Models.rbac import Role, Permission
+from core.auth_sessions import revoke_user_authentication
 from db.init_db import get_db
 from db.provision_company_defaults import provision_company_defaults
 from deps import get_current_user, require_permission
@@ -552,6 +553,12 @@ def deactivate_company_user(
     user.is_active = False
     user.deactivated_at = datetime.utcnow()
 
+    revoke_user_authentication(
+        db,
+        user,
+        reason="user_deactivated",
+    )
+
     db.commit()
     db.refresh(user)
 
@@ -570,6 +577,12 @@ def reset_company_user_password(
 
     user.pw_hash = bcrypt.hash(payload.new_password)
     user.password_changed_at = datetime.utcnow()
+
+    revoke_user_authentication(
+        db,
+        user,
+        reason="admin_password_reset",
+    )
 
     db.commit()
     db.refresh(user)

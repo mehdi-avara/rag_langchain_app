@@ -179,14 +179,22 @@ def configure_open_registration(
 
     monkeypatch.setattr(
         auth,
-        "create_access_token",
-        lambda _user: "test-access-token",
+        "create_auth_session",
+        lambda _db, _user: (
+            SimpleNamespace(
+                id="a" * 32,
+            ),
+            "b" * 32,
+        ),
     )
 
     monkeypatch.setattr(
         auth,
-        "create_refresh_token",
-        lambda _user: "test-refresh-token",
+        "create_token_pair",
+        lambda _user, **_kwargs: (
+            "test-access-token",
+            "test-refresh-token",
+        ),
     )
 
 

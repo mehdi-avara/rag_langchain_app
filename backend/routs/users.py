@@ -8,6 +8,7 @@ from passlib.hash import bcrypt
 from sqlalchemy.orm import Session
 
 from Models import User, FileAssetStatus
+from core.auth_sessions import revoke_user_authentication
 from db.init_db import get_db
 from deps import require_permission
 from schemas.users import (
@@ -127,6 +128,13 @@ def change_password(
 
     user.pw_hash = bcrypt.hash(payload.new_password)
     user.password_changed_at = datetime.utcnow()
+
+    revoke_user_authentication(
+        db,
+        user,
+        reason="password_changed",
+    )
+
     db.commit()
 
     return ChangePasswordOut(success=True)
