@@ -13,6 +13,7 @@ import posixpath
 
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from deps import require_permission
+from core.authorization import is_company_admin as _is_company_admin
 from Models import User, Document, DocumentVersion, Chunk, DocumentStatusType, UserDocumentAccess
 from db.init_db import get_db
 from db.search_connector import search_documents_text, search_document_part_hits_semantic
@@ -90,10 +91,6 @@ def _extract_zip_safely(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfi
         target_path.parent.mkdir(parents=True, exist_ok=True)
         with zip_file.open(info) as src, open(target_path, "wb") as dst:
             shutil.copyfileobj(src, dst)
-
-
-def _is_company_admin(user: User) -> bool:
-    return user.role == "admin" or any(role.name == "admin" and role.is_active for role in user.roles)
 
 
 def _has_document_access(db: Session, doc: Document, current_user: User, action: str) -> bool:

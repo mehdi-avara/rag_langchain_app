@@ -80,8 +80,18 @@ class FakeDB:
         return FakeQuery(self, target)
 
 
-def make_role(name="user", is_active=True):
-    return SimpleNamespace(name=name, is_active=is_active)
+def make_role(
+    name="user",
+    is_active=True,
+    company_id=1,
+    is_system=False,
+):
+    return SimpleNamespace(
+        name=name,
+        is_active=is_active,
+        company_id=company_id,
+        is_system=is_system,
+    )
 
 
 def make_user(user_id=3, company_id=1, role="user", roles=None):
@@ -131,22 +141,75 @@ def make_access(
     )
 
 
-def test_is_company_admin_allows_role_string_admin():
+def test_is_company_admin_rejects_legacy_role_string():
     user = make_user(role="admin")
 
+    assert document_routes._is_company_admin(user) is False
+
+
+def test_is_company_admin_allows_matching_tenant_role():
+    user = make_user(
+        role="company_admin",
+        roles=[
+            make_role(
+                "company_admin",
+                True,
+                company_id=1,
+                is_system=False,
+            )
+        ],
+    )
+
     assert document_routes._is_company_admin(user) is True
 
 
-def test_is_company_admin_allows_active_admin_role():
-    user = make_user(role="user", roles=[make_role("admin", True)])
-
-    assert document_routes._is_company_admin(user) is True
-
-
-def test_is_company_admin_rejects_inactive_admin_role():
-    user = make_user(role="user", roles=[make_role("admin", False)])
+def test_is_company_admin_rejects_foreign_tenant_role():
+    user = make_user(
+        company_id=1,
+        role="company_admin",
+        roles=[
+            make_role(
+                "company_admin",
+                True,
+                company_id=2,
+                is_system=False,
+            )
+        ],
+    )
 
     assert document_routes._is_company_admin(user) is False
+
+
+def test_is_company_admin_rejects_inactive_tenant_role():
+    user = make_user(
+        role="company_admin",
+        roles=[
+            make_role(
+                "company_admin",
+                False,
+                company_id=1,
+                is_system=False,
+            )
+        ],
+    )
+
+    assert document_routes._is_company_admin(user) is False
+
+
+def test_is_company_admin_allows_platform_admin_role():
+    user = make_user(
+        role="admin",
+        roles=[
+            make_role(
+                "admin",
+                True,
+                company_id=None,
+                is_system=True,
+            )
+        ],
+    )
+
+    assert document_routes._is_company_admin(user) is True
 
 
 def test_get_company_document_returns_document_when_found():
@@ -193,7 +256,17 @@ def test_has_document_access_allows_owner_for_all_actions():
 def test_has_document_access_allows_company_admin_for_all_actions():
     doc = make_doc(owner_id=4)
     db = FakeDB(access_result=None)
-    user = make_user(user_id=3, role="admin")
+    user = make_user(
+        user_id=3,
+        role="company_admin",
+        roles=[
+            make_role(
+                "company_admin",
+                company_id=1,
+                is_system=False,
+            )
+        ],
+    )
 
     for action in ["read", "download", "ask", "update", "delete"]:
         assert document_routes._has_document_access(db, doc, user, action) is True
@@ -260,7 +333,18 @@ def test_get_accessible_document_raises_404_when_not_allowed():
 
 def test_get_accessible_document_ids_returns_none_for_company_admin():
     db = FakeDB(owned_ids=[1], granted_ids=[2])
-    user = make_user(user_id=4, company_id=1, role="admin")
+    user = make_user(
+        user_id=4,
+        company_id=1,
+        role="company_admin",
+        roles=[
+            make_role(
+                "company_admin",
+                company_id=1,
+                is_system=False,
+            )
+        ],
+    )
 
     result = document_routes._get_accessible_document_ids(db, current_user=user, action="read")
 

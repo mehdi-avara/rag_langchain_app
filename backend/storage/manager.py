@@ -10,15 +10,12 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from core.authorization import is_company_admin as _is_company_admin
 from Models import FileAsset, FileAssetStatus, User
 from settings import get_settings
 
 
 settings = get_settings()
-
-
-def _is_company_admin(user: User) -> bool:
-    return user.role == "admin" or any(role.name == "admin" and role.is_active for role in user.roles)
 
 
 def _clean_filename(filename: str) -> str:

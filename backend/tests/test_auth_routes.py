@@ -166,7 +166,13 @@ def make_user(
         auth_token_version=0,
     )
 
-    role_obj = Role(id=1, name=role, is_active=True)
+    role_obj = Role(
+        id=1,
+        name=role,
+        is_active=True,
+        company_id=None,
+        is_system=True,
+    )
     role_obj.permissions = [
         Permission(id=i + 1, name=permission, resource="test", action="read")
         for i, permission in enumerate(permissions or [])

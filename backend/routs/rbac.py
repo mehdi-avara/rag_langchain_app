@@ -2,12 +2,18 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from passlib.hash import bcrypt
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from Models.company import Company
 from Models.user import User
 from Models.rbac import Role, Permission
+from core.authorization import (
+    GLOBAL_USER_ROLE_NAME,
+    TENANT_ADMIN_ROLE_NAME,
+    is_company_admin,
+    is_tenant_permission_name,
+)
 from core.auth_sessions import revoke_user_authentication
 from db.init_db import get_db
 from db.provision_company_defaults import provision_company_defaults
@@ -59,14 +65,31 @@ def list_permissions(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("permissions:read")),
 ):
-    return db.query(Permission).order_by(Permission.id.asc()).all()
+    return [
+        permission
+        for permission in (
+            db.query(Permission)
+            .order_by(Permission.id.asc())
+            .all()
+        )
+        if is_tenant_permission_name(
+            permission.name
+        )
+    ]
 
 
 def _role_scope_query(db: Session, company_id: int):
     return db.query(Role).filter(
         or_(
-            Role.is_system.is_(True),
-            Role.company_id == company_id,
+            and_(
+                Role.company_id == company_id,
+                Role.is_system.is_(False),
+            ),
+            and_(
+                Role.company_id.is_(None),
+                Role.is_system.is_(True),
+                Role.name == GLOBAL_USER_ROLE_NAME,
+            ),
         )
     )
 
@@ -291,7 +314,7 @@ def _get_company_user_or_404(db: Session, user_id: int, company_id: int) -> User
 def _load_roles_or_400(db: Session, role_ids: list[int], company_id: int) -> list[Role]:
     if not role_ids:
         role = db.query(Role).filter(
-            Role.name == "user",
+            Role.name == GLOBAL_USER_ROLE_NAME,
             Role.is_system.is_(True),
             Role.is_active.is_(True),
         ).first()
@@ -310,16 +333,21 @@ def _load_roles_or_400(db: Session, role_ids: list[int], company_id: int) -> lis
 
 
 def _legacy_role_from_roles(roles: list[Role]) -> str:
-    return "admin" if any(role.name == "admin" and role.is_active for role in roles) else "user"
+    if any(
+        role.name == TENANT_ADMIN_ROLE_NAME
+        and role.is_active
+        for role in roles
+    ):
+        return TENANT_ADMIN_ROLE_NAME
+
+    return GLOBAL_USER_ROLE_NAME
 
 
 def _is_active_admin(user: User) -> bool:
     if user.is_active is False:
         return False
 
-    return user.role == "admin" or any(
-        role.name == "admin" and role.is_active for role in user.roles
-    )
+    return is_company_admin(user)
 
 
 def _active_admin_count(db: Session, company_id: int) -> int:
@@ -618,6 +646,8 @@ def get_current_user_access(
         username=current_user.username,
         roles=roles,
         permissions=permissions,
-        is_admin="admin" in roles,
+        is_admin=is_company_admin(
+            current_user
+        ),
         is_active=getattr(current_user, "is_active", True) is not False,
     )

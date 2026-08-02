@@ -10,6 +10,10 @@ from jose.exceptions import ExpiredSignatureError
 from sqlalchemy.orm import Session
 
 from Models import AuthSession, User
+from core.authorization import (
+    get_scoped_permission_names,
+    get_scoped_role_names,
+)
 from core.auth_sessions import (
     validate_access_session,
 )
@@ -149,12 +153,9 @@ def get_current_user(
 
 
 def get_user_permissions(current_user: User) -> set[str]:
-    return {
-        permission.name
-        for role in current_user.roles
-        if role.is_active
-        for permission in role.permissions
-    }
+    return get_scoped_permission_names(
+        current_user
+    )
 
 
 def require_permission(permission_name: str):
@@ -236,7 +237,9 @@ def require_permissions(*permission_names: str):
 
 def require_role(role_name: str):
     def checker(current_user: User = Depends(get_current_user)) -> User:
-        roles = {role.name for role in current_user.roles if role.is_active}
+        roles = get_scoped_role_names(
+            current_user
+        )
 
         if role_name not in roles:
             raise HTTPException(

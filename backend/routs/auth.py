@@ -7,6 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from Models import User, Company, Permission, Role
+from core.authorization import (
+    TENANT_ADMIN_ROLE_NAME,
+    is_tenant_permission_name,
+)
 from core.exceptions.error_codes import (
     AUTH_REQUIRED,
     INVALID_TOKEN,
@@ -91,53 +95,6 @@ def _ensure_user_can_authenticate(
         )
 
 
-TENANT_ADMIN_ROLE_NAME = "company_admin"
-
-_TENANT_ADMIN_PERMISSION_PREFIXES = (
-    "assistant:",
-    "business_management:",
-    "chat:",
-    "comments:",
-    "company:",
-    "documents:",
-    "financial_management:",
-    "goods_receipt_management:",
-    "material_management:",
-    "models:",
-    "organization:",
-    "profile:",
-    "property_management:",
-    "purchase_management:",
-    "requisition_management:",
-    "rfq_management:",
-    "stt:",
-    "supplier_management:",
-    "tags:",
-    "warehouse_management:",
-    "workflow:",
-)
-
-_TENANT_ADMIN_PERMISSION_NAMES = frozenset(
-    {
-        "currencies:read",
-        "exchange_rates:read",
-        "permissions:read",
-        "roles:read",
-        "users:read",
-    }
-)
-
-
-def _is_tenant_admin_permission(
-    permission_name: str,
-) -> bool:
-    if permission_name in _TENANT_ADMIN_PERMISSION_NAMES:
-        return True
-
-    return permission_name.startswith(
-        _TENANT_ADMIN_PERMISSION_PREFIXES
-    )
-
 
 def _get_or_create_company_admin_role(
     db: Session,
@@ -174,7 +131,7 @@ def _get_or_create_company_admin_role(
         (
             permission
             for permission in db.query(Permission).all()
-            if _is_tenant_admin_permission(
+            if is_tenant_permission_name(
                 permission.name
             )
         ),
