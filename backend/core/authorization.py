@@ -41,10 +41,19 @@ TENANT_PERMISSION_NAMES = frozenset(
     }
 )
 
+TENANT_PERMISSION_DENYLIST = frozenset(
+    {
+        "assistant:debug",
+    }
+)
+
 
 def is_tenant_permission_name(
     permission_name: str,
 ) -> bool:
+    if permission_name in TENANT_PERMISSION_DENYLIST:
+        return False
+
     if permission_name in TENANT_PERMISSION_NAMES:
         return True
 
