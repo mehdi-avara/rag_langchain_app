@@ -1,8 +1,6 @@
 from sqlalchemy.orm import Session
-from passlib.hash import bcrypt
 
 from db.session import SessionLocal
-from Models.user import User
 from Models.rbac import Role, Permission
 from purchase_management.permissions import PERMISSIONS as PURCHASE_MANAGEMENT_PERMISSIONS
 from financial_management.permissions import PERMISSIONS as FINANCIAL_MANAGEMENT_PERMISSIONS
@@ -74,35 +72,6 @@ def get_or_create_role(
 
     return role
 
-
-def get_or_create_user(
-    db: Session,
-    username: str,
-    password: str,
-    first_name: str,
-    last_name: str | None = None,
-    legacy_role: str = "user",
-) -> User:
-    user = db.query(User).filter(User.username == username).first()
-
-    if user:
-        user.First_name = first_name
-        user.Last_name = last_name
-        user.role = legacy_role
-        return user
-
-    user = User(
-        username=username,
-        First_name=first_name,
-        Last_name=last_name,
-        pw_hash=bcrypt.hash(password),
-        role=legacy_role,
-    )
-
-    db.add(user)
-    db.flush()
-
-    return user
 
 
 def seed() -> None:
@@ -309,27 +278,6 @@ def seed() -> None:
                 for name in normal_permission_names
                 if name in permission_map
             ]
-
-        admin_user = get_or_create_user(
-            db=db,
-            username="admin",
-            password="admin123",
-            first_name="Admin",
-            last_name="User",
-            legacy_role="admin",
-        )
-
-        normal_user = get_or_create_user(
-            db=db,
-            username="user1",
-            password="user123",
-            first_name="Normal",
-            last_name="User",
-            legacy_role="user",
-        )
-
-        admin_user.roles = [admin_role]
-        normal_user.roles = [normal_role]
 
         db.commit()
 

@@ -197,11 +197,6 @@ def test_seed_rbac_includes_property_and_customer_permissions(monkeypatch):
             self.permissions = []
             self.is_active = True
 
-    class FakeUser:
-        def __init__(self, username):
-            self.username = username
-            self.roles = []
-
     fake_db = FakeDB()
 
     monkeypatch.setattr(seed_rbac, "SessionLocal", lambda: fake_db)
@@ -216,7 +211,6 @@ def test_seed_rbac_includes_property_and_customer_permissions(monkeypatch):
         ),
     )
     monkeypatch.setattr(seed_rbac, "get_or_create_role", lambda _db, name, description=None: FakeRole(name))
-    monkeypatch.setattr(seed_rbac, "get_or_create_user", lambda *args, **kwargs: FakeUser(kwargs.get("username") or args[1]))
 
     seed_rbac.seed()
 
