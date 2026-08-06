@@ -60,7 +60,6 @@ services:
       - redis
       - postgres
     volumes:
-      - ./backend:/app
       - $files_dir:/app/uploaded_files
 
   stt:
@@ -72,7 +71,6 @@ services:
     #     reservations:
     #       devices:
     #         - capabilities: [gpu]
-    env_file: .env
     environment:
       WHISPER_MODEL: medium
       WHISPER_LANGUAGE: fa
@@ -87,7 +85,6 @@ services:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: porsa_minio
     restart: unless-stopped
-    env_file: .env
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
@@ -103,7 +100,6 @@ services:
     image: pgvector/pgvector:pg16
     container_name: postgres_pgvector
     restart: unless-stopped
-    env_file: .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}

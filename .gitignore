@@ -13,3 +13,16 @@ backend/logs/
 .DS_Store
 .coverage
 backend/components/embedding_errors.log
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secret*.json
+secrets*.json
+*.bak
+*.bak.*
+*.backup
+*.old
