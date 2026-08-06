@@ -96,6 +96,44 @@ def _run_alembic(
     )
 
 
+def _ensure_global_admin_role(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO roles (
+                    company_id,
+                    name,
+                    description,
+                    is_active,
+                    is_system
+                )
+                VALUES (
+                    NULL,
+                    'admin',
+                    'Populated migration test fixture',
+                    TRUE,
+                    TRUE
+                )
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                UPDATE roles
+                SET
+                    is_active = TRUE,
+                    is_system = TRUE
+                WHERE name = 'admin'
+                  AND company_id IS NULL
+                """
+            )
+        )
+
+
 def test_populated_database_roundtrip_preserves_purchase_data():
     assert DATABASE_URL is not None
 
@@ -117,6 +155,8 @@ def test_populated_database_roundtrip_preserves_purchase_data():
         DATABASE_URL,
         future=True,
     )
+
+    _ensure_global_admin_role(engine)
 
     before = _snapshot(engine)
 
