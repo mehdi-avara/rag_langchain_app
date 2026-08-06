@@ -73,12 +73,47 @@ def build_client(db):
     app.include_router(tag_router)
     app.include_router(model_router)
 
-    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=7, role="admin", company_id=1)
+    permission_names = (
+        "documents:search",
+        "documents:ask",
+        "comments:search",
+        "comments:ask",
+        "tags:search",
+        "tags:ask",
+        "models:search",
+        "models:ask",
+    )
+
+    current_user = SimpleNamespace(
+        id=7,
+        role="admin",
+        company_id=1,
+        roles=[
+            SimpleNamespace(
+                name="semantic_test_role",
+                company_id=1,
+                is_system=False,
+                is_active=True,
+                permissions=[
+                    SimpleNamespace(name=name)
+                    for name in permission_names
+                ],
+            )
+        ],
+    )
+
+    app.dependency_overrides[
+        deps.get_current_user
+    ] = lambda: current_user
     app.dependency_overrides[get_db] = lambda: db
     return TestClient(app)
 
 
 def test_document_semantic_search_contract_and_top_k(monkeypatch):
+    monkeypatch.setattr(
+        "routs.documents._get_accessible_document_ids",
+        lambda *_args, **_kwargs: [10],
+    )
     captured = {}
 
     def fake_search(**kwargs):
@@ -145,6 +180,10 @@ def test_comment_semantic_search_types_and_top_k(monkeypatch):
 
 
 def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
+    monkeypatch.setattr(
+        "tag_management.routes.tags._get_accessible_document_ids",
+        lambda *_args, **_kwargs: [100, 101],
+    )
     monkeypatch.setattr("tag_management.routes.tags.get_tag_or_404", lambda *args, **kwargs: SimpleNamespace(id=1))
     monkeypatch.setattr("tag_management.routes.tags.get_descendant_tag_ids", lambda *_args, **_kwargs: [1, 2])
     monkeypatch.setattr("tag_management.routes.tags.get_doc_ids_for_tags", lambda *_args, **_kwargs: [100])
@@ -232,6 +271,11 @@ def test_tag_semantic_search_includes_descendants_and_model_docs(monkeypatch):
 
 
 def test_model_semantic_search_contract_top_k_and_types(monkeypatch):
+    monkeypatch.setattr(
+        model_routes_module,
+        "_get_accessible_document_ids",
+        lambda *_args, **_kwargs: [60],
+    )
     monkeypatch.setattr(model_routes_module, "get_model_or_404", lambda *_args, **_kwargs: SimpleNamespace(id=8))
     monkeypatch.setattr(model_routes_module, "get_doc_ids_for_models", lambda *_args, **_kwargs: [60])
     monkeypatch.setattr(model_routes_module, "get_comment_ids_for_models", lambda *_args, **_kwargs: [70])
@@ -360,6 +404,10 @@ def test_model_ask_returns_semantic_references_and_scope_limits(monkeypatch):
 
 
 def test_document_ask_returns_document_semantic_references(monkeypatch):
+    monkeypatch.setattr(
+        "routs.documents._get_accessible_document_ids",
+        lambda *_args, **_kwargs: [10],
+    )
     captured = {}
     references = [
         {

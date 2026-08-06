@@ -107,7 +107,14 @@ def import_zip_context(tmp_path, monkeypatch):
         poolclass=StaticPool,
     )
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-    Base.metadata.create_all(engine)
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            User.__table__,
+            Document.__table__,
+            Chunk.__table__,
+        ],
+    )
 
     with SessionLocal() as db:
         db.add(User(username="tester", First_name="Tester", pw_hash="x", role="user"))
@@ -115,7 +122,28 @@ def import_zip_context(tmp_path, monkeypatch):
 
     app = FastAPI()
     app.include_router(document_router, prefix="/documents")
-    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=1, role="user", company_id=1)
+    current_user = SimpleNamespace(
+        id=1,
+        role="user",
+        company_id=1,
+        roles=[
+            SimpleNamespace(
+                name="import_zip_test_role",
+                company_id=1,
+                is_system=False,
+                is_active=True,
+                permissions=[
+                    SimpleNamespace(
+                        name="documents:create"
+                    )
+                ],
+            )
+        ],
+    )
+
+    app.dependency_overrides[
+        deps.get_current_user
+    ] = lambda: current_user
 
     def override_get_db():
         db = SessionLocal()
@@ -185,9 +213,9 @@ def test_import_processed_zip_success(import_zip_context, monkeypatch):
         chunks = db.query(Chunk).filter(Chunk.doc_id == doc.id).order_by(Chunk.id.asc()).all()
         assert len(chunks) == 2
         assert chunks[0].chunk_type == "text"
-        assert chunks[0].vdb_id == f"{doc.id}_0"
-        assert chunks[0].es_id == f"{doc.id}_0"
-        assert chunks[1].vdb_id == f"{doc.id}_1"
+        assert chunks[0].vdb_id == f"{doc.id}_current_0"
+        assert chunks[0].es_id == f"{doc.id}_current_0"
+        assert chunks[1].vdb_id == f"{doc.id}_current_1"
 
         doc_dir = files_root / str(doc.id)
         assert (doc_dir / "original.pdf").exists()

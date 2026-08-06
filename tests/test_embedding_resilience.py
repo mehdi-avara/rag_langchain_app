@@ -43,6 +43,12 @@ class DummyDB:
 
 def test_embed_documents_returns_empty_when_request_fails(monkeypatch):
     emb = JinaAPIEmbeddings()
+    emb.fail_soft = True
+    monkeypatch.setattr(
+        emb,
+        "_log_error",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr("components.embedding.requests.post", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
     assert emb.embed_documents(["hello"]) == []
 

@@ -378,3 +378,154 @@ def test_get_accessible_document_ids_returns_empty_for_unknown_action():
     result = document_routes._get_accessible_document_ids(db, current_user=user, action="unknown")
 
     assert result == []
+
+class DeleteTrackingDB(FakeDB):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deleted_objects = []
+        self.delete_commit_count = 0
+
+    def delete(self, value):
+        self.deleted_objects.append(value)
+
+    def commit(self):
+        self.delete_commit_count += 1
+
+
+def test_delete_access_guard_hides_cross_user_document_with_404():
+    doc = make_doc(owner_id=3)
+    db = DeleteTrackingDB(
+        document_result=doc,
+        access_result=None,
+    )
+    current_user = make_user(
+        user_id=4,
+        company_id=1,
+        role="user",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        document_routes._get_accessible_document(
+            db,
+            doc_id=10,
+            current_user=current_user,
+            action="delete",
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Document not found"
+    assert db.deleted_objects == []
+    assert db.delete_commit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_document_deletes_and_commits_with_204(
+    monkeypatch,
+):
+    doc = make_doc(owner_id=3)
+    db = DeleteTrackingDB(document_result=doc)
+    current_user = make_user(
+        user_id=3,
+        company_id=1,
+        role="user",
+    )
+    calls = []
+
+    def allow_access(
+        db_arg,
+        doc_id,
+        user_arg,
+        action,
+    ):
+        calls.append(
+            (
+                db_arg,
+                doc_id,
+                user_arg,
+                action,
+            )
+        )
+        return doc
+
+    monkeypatch.setattr(
+        document_routes,
+        "_get_accessible_document",
+        allow_access,
+    )
+
+    response = await document_routes.delete_document(
+        doc_id=10,
+        current_user=current_user,
+        db=db,
+    )
+
+    assert response.status_code == 204
+    assert calls == [
+        (
+            db,
+            10,
+            current_user,
+            "delete",
+        )
+    ]
+    assert db.deleted_objects == [doc]
+    assert db.delete_commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_document_does_not_mutate_when_access_denied(
+    monkeypatch,
+):
+    doc = make_doc(owner_id=3)
+    db = DeleteTrackingDB(document_result=doc)
+    current_user = make_user(
+        user_id=4,
+        company_id=1,
+        role="user",
+    )
+    calls = []
+
+    def deny_access(
+        db_arg,
+        doc_id,
+        user_arg,
+        action,
+    ):
+        calls.append(
+            (
+                db_arg,
+                doc_id,
+                user_arg,
+                action,
+            )
+        )
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    monkeypatch.setattr(
+        document_routes,
+        "_get_accessible_document",
+        deny_access,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await document_routes.delete_document(
+            doc_id=10,
+            current_user=current_user,
+            db=db,
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Document not found"
+    assert calls == [
+        (
+            db,
+            10,
+            current_user,
+            "delete",
+        )
+    ]
+    assert db.deleted_objects == []
+    assert db.delete_commit_count == 0
