@@ -2,6 +2,10 @@ from sqlalchemy.orm import Session
 
 from db.session import SessionLocal
 from Models.rbac import Role, Permission
+from core.authorization import (
+    TENANT_ADMIN_ROLE_NAME,
+    is_tenant_permission_name,
+)
 from purchase_management.permissions import PERMISSIONS as PURCHASE_MANAGEMENT_PERMISSIONS
 from financial_management.permissions import PERMISSIONS as FINANCIAL_MANAGEMENT_PERMISSIONS
 from shared.currency.permissions import PERMISSIONS as CURRENCY_PERMISSIONS
@@ -50,7 +54,14 @@ def get_or_create_role(
     name: str,
     description: str | None = None,
 ) -> Role:
-    role = db.query(Role).filter(Role.name == name).first()
+    role = (
+        db.query(Role)
+        .filter(
+            Role.name == name,
+            Role.company_id.is_(None),
+        )
+        .first()
+    )
 
     if role:
         role.description = description
@@ -72,6 +83,43 @@ def get_or_create_role(
 
     return role
 
+
+def sync_company_admin_permissions(
+    db: Session,
+    permissions: list[Permission],
+) -> None:
+    allowed_permissions = sorted(
+        (
+            permission
+            for permission in permissions
+            if is_tenant_permission_name(
+                permission.name
+            )
+        ),
+        key=lambda permission: permission.name,
+    )
+
+    tenant_admin_roles = (
+        db.query(Role)
+        .filter(
+            Role.name
+            == TENANT_ADMIN_ROLE_NAME,
+            Role.company_id.is_not(None),
+            Role.is_system.is_(False),
+        )
+        .all()
+    )
+
+    for role in tenant_admin_roles:
+        if (
+            role.name
+            != TENANT_ADMIN_ROLE_NAME
+            or role.company_id is None
+            or role.is_system is not False
+        ):
+            continue
+
+        role.permissions = allowed_permissions
 
 
 def seed() -> None:
@@ -196,6 +244,11 @@ def seed() -> None:
         ]
 
         permission_map = {permission.name: permission for permission in permissions}
+
+        sync_company_admin_permissions(
+            db,
+            permissions,
+        )
 
         admin_role = get_or_create_role(db, "admin", "Administrator role")
 

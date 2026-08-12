@@ -283,7 +283,12 @@ async def test_enabled_registration_creates_only_tenant_scoped_admin(
             permission("exchange_rates:create"),
             permission("roles:create"),
             permission("roles:update"),
+            permission("roles:delete"),
             permission("users:create"),
+            permission("users:update"),
+            permission("users:roles:manage"),
+            permission("users:status:manage"),
+            permission("users:password:reset"),
         ]
     )
 
@@ -338,7 +343,15 @@ async def test_enabled_registration_creates_only_tenant_scoped_admin(
         "documents:create",
         "permissions:read",
         "roles:read",
+        "roles:create",
+        "roles:update",
+        "roles:delete",
         "users:read",
+        "users:create",
+        "users:update",
+        "users:roles:manage",
+        "users:status:manage",
+        "users:password:reset",
     }
 
     assert not any(
@@ -353,9 +366,9 @@ async def test_enabled_registration_creates_only_tenant_scoped_admin(
 
     assert "currencies:manage" not in permission_names
     assert "exchange_rates:create" not in permission_names
-    assert "roles:create" not in permission_names
-    assert "roles:update" not in permission_names
-    assert "users:create" not in permission_names
+    assert "roles:create" in permission_names
+    assert "roles:update" in permission_names
+    assert "users:create" in permission_names
 
     assert (
         require_permission(
@@ -373,14 +386,19 @@ async def test_enabled_registration_creates_only_tenant_scoped_admin(
 
     assert exc.value.status_code == 403
 
-    with pytest.raises(
-        HTTPException
-    ) as exc:
+    assert (
         require_permission(
             "roles:create"
         )(user)
+        is user
+    )
 
-    assert exc.value.status_code == 403
+    assert (
+        require_permission(
+            "users:roles:manage"
+        )(user)
+        is user
+    )
 
     assert db.commit_count == 1
     assert db.rollback_count == 0

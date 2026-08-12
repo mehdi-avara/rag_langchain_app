@@ -115,8 +115,7 @@ def _get_or_create_company_admin_role(
             company_id=company_id,
             name=TENANT_ADMIN_ROLE_NAME,
             description=(
-                "Company administrator role without "
-                "platform-global or RBAC mutation access"
+                "Company administrator role"
             ),
             is_active=True,
             is_system=False,

@@ -37,7 +37,15 @@ TENANT_PERMISSION_NAMES = frozenset(
         "exchange_rates:read",
         "permissions:read",
         "roles:read",
+        "roles:create",
+        "roles:update",
+        "roles:delete",
         "users:read",
+        "users:create",
+        "users:update",
+        "users:roles:manage",
+        "users:status:manage",
+        "users:password:reset",
     }
 )
 

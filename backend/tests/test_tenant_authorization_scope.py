@@ -5,6 +5,7 @@ from core.authorization import (
     get_scoped_role_names,
     is_company_admin,
     is_platform_admin,
+    is_tenant_permission_name,
 )
 
 
@@ -153,3 +154,32 @@ def test_inactive_roles_are_ignored():
 
     assert is_company_admin(current_user) is False
     assert get_scoped_permission_names(current_user) == set()
+
+
+
+def test_tenant_admin_management_permissions_are_scoped():
+    management_permissions = {
+        "roles:create",
+        "roles:update",
+        "roles:delete",
+        "users:create",
+        "users:update",
+        "users:roles:manage",
+        "users:status:manage",
+        "users:password:reset",
+    }
+
+    for permission_name in management_permissions:
+        assert (
+            is_tenant_permission_name(
+                permission_name
+            )
+            is True
+        )
+
+    assert (
+        is_tenant_permission_name(
+            "llm:update"
+        )
+        is False
+    )

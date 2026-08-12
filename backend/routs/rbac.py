@@ -10,6 +10,7 @@ from Models.company import Company
 from Models.user import User
 from Models.rbac import Role, Permission
 from core.authorization import (
+    GLOBAL_ADMIN_ROLE_NAME,
     GLOBAL_USER_ROLE_NAME,
     TENANT_ADMIN_ROLE_NAME,
     is_company_admin,
@@ -50,6 +51,14 @@ from core.exceptions.error_codes import (
 
 router = APIRouter()
 
+RESERVED_ROLE_NAMES = frozenset(
+    {
+        GLOBAL_ADMIN_ROLE_NAME.casefold(),
+        GLOBAL_USER_ROLE_NAME.casefold(),
+        TENANT_ADMIN_ROLE_NAME.casefold(),
+    }
+)
+
 
 def _error(status_code: int, code: str, message: str, details=None) -> None:
     raise HTTPException(
@@ -59,6 +68,30 @@ def _error(status_code: int, code: str, message: str, details=None) -> None:
             "message": message,
             "details": details,
         },
+    )
+
+
+def _ensure_custom_role_name_allowed(
+    name: str,
+) -> None:
+    if name.strip().casefold() in RESERVED_ROLE_NAMES:
+        _error(
+            status.HTTP_403_FORBIDDEN,
+            SYSTEM_ROLE_PROTECTED,
+            "Reserved role name cannot be used",
+        )
+
+
+def _is_reserved_company_admin_role(
+    role: Role,
+) -> bool:
+    return (
+        getattr(role, "name", "").casefold()
+        == TENANT_ADMIN_ROLE_NAME.casefold()
+        and getattr(role, "company_id", None)
+        is not None
+        and getattr(role, "is_system", False)
+        is False
     )
 
 
@@ -239,6 +272,8 @@ def create_role(
     company_id = _require_company_id(current_user)
     name = data.name.strip()
 
+    _ensure_custom_role_name_allowed(name)
+
     existing = _role_scope_query(db, company_id).filter(Role.name == name).first()
 
     if existing:
@@ -282,13 +317,34 @@ def update_role(
             detail="System roles cannot be updated",
         )
 
+    if _is_reserved_company_admin_role(role):
+        _error(
+            status.HTTP_403_FORBIDDEN,
+            SYSTEM_ROLE_PROTECTED,
+            "Company administrator role is protected",
+        )
+
     if data.name is not None:
-        existing = _role_scope_query(db, company_id).filter(Role.name == data.name, Role.id != role_id).first()
+        name = data.name.strip()
+
+        _ensure_custom_role_name_allowed(name)
+
+        existing = _role_scope_query(
+            db,
+            company_id,
+        ).filter(
+            Role.name == name,
+            Role.id != role_id,
+        ).first()
 
         if existing:
-            _error(status.HTTP_400_BAD_REQUEST, ROLE_ALREADY_EXISTS, "Role already exists")
+            _error(
+                status.HTTP_400_BAD_REQUEST,
+                ROLE_ALREADY_EXISTS,
+                "Role already exists",
+            )
 
-        role.name = data.name
+        role.name = name
 
     if data.description is not None:
         role.description = data.description
@@ -325,6 +381,13 @@ def delete_role(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System roles cannot be deleted",
+        )
+
+    if _is_reserved_company_admin_role(role):
+        _error(
+            status.HTTP_403_FORBIDDEN,
+            SYSTEM_ROLE_PROTECTED,
+            "Company administrator role is protected",
         )
 
     _ensure_role_has_no_active_users(role)

@@ -178,7 +178,8 @@ def test_seed_rbac_includes_property_and_customer_permissions(monkeypatch):
         def query(self, _model):
             return SimpleNamespace(
                 filter=lambda *_args, **_kwargs: SimpleNamespace(
-                    first=lambda: None
+                    first=lambda: None,
+                    all=lambda: [],
                 )
             )
 

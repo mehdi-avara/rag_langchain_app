@@ -681,3 +681,154 @@ def test_list_roles_supports_offset_and_limit():
 
     assert len(result) == 1
     assert result[0].id == 2
+
+
+
+@pytest.mark.parametrize(
+    "reserved_name",
+    [
+        "admin",
+        "user",
+        "company_admin",
+        " ADMIN ",
+        " Company_Admin ",
+    ],
+)
+def test_create_reserved_role_name_is_rejected(
+    reserved_name,
+):
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    db = FakeDB()
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.create_role(
+            data=rbac.RoleCreate(
+                name=reserved_name,
+            ),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 403
+    assert (
+        exc.value.detail["code"]
+        == "SYSTEM_ROLE_PROTECTED"
+    )
+
+
+def test_role_cannot_be_renamed_to_reserved_name():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    custom_role = make_role(
+        role_id=9,
+        name="operator",
+        company_id=1,
+        is_system=False,
+    )
+
+    db = FakeDB(
+        roles=[custom_role],
+        first_role=custom_role,
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.update_role(
+            role_id=9,
+            data=rbac.RoleUpdate(
+                name="company_admin"
+            ),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 403
+    assert (
+        exc.value.detail["code"]
+        == "SYSTEM_ROLE_PROTECTED"
+    )
+
+
+def test_company_admin_role_cannot_be_updated():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    company_admin_role = make_role(
+        role_id=9,
+        name="company_admin",
+        company_id=1,
+        is_system=False,
+    )
+
+    db = FakeDB(
+        roles=[company_admin_role],
+        first_role=company_admin_role,
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.update_role(
+            role_id=9,
+            data=rbac.RoleUpdate(
+                description="changed"
+            ),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 403
+    assert (
+        exc.value.detail["code"]
+        == "SYSTEM_ROLE_PROTECTED"
+    )
+
+
+def test_company_admin_role_cannot_be_deleted():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    company_admin_role = make_role(
+        role_id=9,
+        name="company_admin",
+        company_id=1,
+        is_system=False,
+    )
+
+    db = FakeDB(
+        roles=[company_admin_role],
+        first_role=company_admin_role,
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.delete_role(
+            role_id=9,
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 403
+    assert (
+        exc.value.detail["code"]
+        == "SYSTEM_ROLE_PROTECTED"
+    )

@@ -57,20 +57,40 @@ def test_revision_contract():
 def test_permission_contract_matches_runtime():
     migration = load_migration()
 
-    assert (
+    assert set(
         migration.TENANT_PERMISSION_PREFIXES
-        == authorization.TENANT_PERMISSION_PREFIXES
+    ).issubset(
+        set(
+            authorization.TENANT_PERMISSION_PREFIXES
+        )
     )
 
     assert (
         migration.TENANT_PERMISSION_NAMES
-        == authorization.TENANT_PERMISSION_NAMES
+        <= authorization.TENANT_PERMISSION_NAMES
     )
 
     assert (
         migration.TENANT_PERMISSION_DENYLIST
         == authorization.TENANT_PERMISSION_DENYLIST
     )
+
+    for permission_name in {
+        "roles:create",
+        "roles:update",
+        "roles:delete",
+        "users:create",
+        "users:update",
+        "users:roles:manage",
+        "users:status:manage",
+        "users:password:reset",
+    }:
+        assert (
+            authorization.is_tenant_permission_name(
+                permission_name
+            )
+            is True
+        )
 
     assert (
         authorization.is_tenant_permission_name(
@@ -92,7 +112,6 @@ def test_permission_contract_matches_runtime():
         )
         is False
     )
-
 
 def test_marker_round_trip():
     migration = load_migration()
