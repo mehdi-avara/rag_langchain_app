@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from passlib.hash import bcrypt
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -35,6 +36,7 @@ from schemas.users import (
 
 from core.exceptions.error_codes import (
     COMPANY_REQUIRED,
+    INVALID_PERMISSION_IDS,
     INVALID_ROLE_IDS,
     LAST_ADMIN_PROTECTED,
     ROLE_ALREADY_EXISTS,
@@ -76,6 +78,46 @@ def list_permissions(
             permission.name
         )
     ]
+
+
+def _load_tenant_permissions_or_400(
+    db: Session,
+    permission_ids: list[int],
+) -> list[Permission]:
+    if not permission_ids:
+        return []
+
+    unique_permission_ids = sorted(
+        set(permission_ids)
+    )
+
+    permissions = (
+        db.query(Permission)
+        .filter(
+            Permission.id.in_(
+                unique_permission_ids
+            )
+        )
+        .all()
+    )
+
+    if (
+        len(permissions)
+        != len(unique_permission_ids)
+        or any(
+            not is_tenant_permission_name(
+                permission.name
+            )
+            for permission in permissions
+        )
+    ):
+        _error(
+            status.HTTP_400_BAD_REQUEST,
+            INVALID_PERMISSION_IDS,
+            "Invalid permission_ids",
+        )
+
+    return permissions
 
 
 def _role_scope_query(db: Session, company_id: int):
@@ -124,11 +166,68 @@ def _ensure_role_has_no_active_users(role: Role) -> None:
 
 @router.get("/roles", response_model=list[RoleOut])
 def list_roles(
+    search: Annotated[
+        str | None,
+        Query(max_length=100),
+    ] = None,
+    is_active: Annotated[
+        bool | None,
+        Query(),
+    ] = None,
+    offset: Annotated[
+        int,
+        Query(ge=0),
+    ] = 0,
+    limit: Annotated[
+        int | None,
+        Query(ge=1, le=200),
+    ] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("roles:read")),
+    current_user: User = Depends(
+        require_permission("roles:read")
+    ),
 ):
-    company_id = _require_company_id(current_user)
-    return _role_scope_query(db, company_id).order_by(Role.is_system.desc(), Role.id.asc()).all()
+    company_id = _require_company_id(
+        current_user
+    )
+
+    query = _role_scope_query(
+        db,
+        company_id,
+    )
+
+    if search is not None:
+        search = search.strip()
+
+        if search:
+            pattern = f"%{search}%"
+
+            query = query.filter(
+                or_(
+                    Role.name.ilike(pattern),
+                    Role.description.ilike(
+                        pattern
+                    ),
+                )
+            )
+
+    if is_active is not None:
+        query = query.filter(
+            Role.is_active.is_(is_active)
+        )
+
+    query = query.order_by(
+        Role.is_system.desc(),
+        Role.id.asc(),
+    )
+
+    if offset:
+        query = query.offset(offset)
+
+    if limit is not None:
+        query = query.limit(limit)
+
+    return query.all()
 
 
 @router.post("/roles", response_model=RoleOut, status_code=status.HTTP_201_CREATED)
@@ -153,9 +252,12 @@ def create_role(
         is_system=False,
     )
 
-    if data.permission_ids:
-        permissions = db.query(Permission).filter(Permission.id.in_(data.permission_ids)).all()
-        role.permissions = permissions
+    role.permissions = (
+        _load_tenant_permissions_or_400(
+            db,
+            data.permission_ids,
+        )
+    )
 
     db.add(role)
     db.commit()
@@ -197,8 +299,12 @@ def update_role(
         role.is_active = data.is_active
 
     if data.permission_ids is not None:
-        permissions = db.query(Permission).filter(Permission.id.in_(data.permission_ids)).all()
-        role.permissions = permissions
+        role.permissions = (
+            _load_tenant_permissions_or_400(
+                db,
+                data.permission_ids,
+            )
+        )
 
     db.commit()
     db.refresh(role)
@@ -395,19 +501,98 @@ def _provision_defaults_for_user(
     )
 
 
-@router.get("/users", response_model=list[AdminUserListOut])
+@router.get(
+    "/users",
+    response_model=list[AdminUserListOut],
+)
 def list_company_users(
+    search: Annotated[
+        str | None,
+        Query(max_length=100),
+    ] = None,
+    is_active: Annotated[
+        bool | None,
+        Query(),
+    ] = None,
+    role_id: Annotated[
+        int | None,
+        Query(ge=1),
+    ] = None,
+    offset: Annotated[
+        int,
+        Query(ge=0),
+    ] = 0,
+    limit: Annotated[
+        int | None,
+        Query(ge=1, le=200),
+    ] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("users:read")),
+    current_user: User = Depends(
+        require_permission("users:read")
+    ),
 ):
-    company_id = _require_company_id(current_user)
-    users = (
-        db.query(User)
-        .filter(User.company_id == company_id)
-        .order_by(User.id.asc())
-        .all()
+    company_id = _require_company_id(
+        current_user
     )
-    return [_admin_user_list_out(user) for user in users]
+
+    query = db.query(User).filter(
+        User.company_id == company_id
+    )
+
+    if search is not None:
+        search = search.strip()
+
+        if search:
+            pattern = f"%{search}%"
+
+            query = query.filter(
+                or_(
+                    User.username.ilike(
+                        pattern
+                    ),
+                    User.First_name.ilike(
+                        pattern
+                    ),
+                    User.Last_name.ilike(
+                        pattern
+                    ),
+                )
+            )
+
+    if is_active is not None:
+        query = query.filter(
+            User.is_active.is_(is_active)
+        )
+
+    if role_id is not None:
+        role = _get_visible_role_or_404(
+            db,
+            role_id,
+            company_id,
+        )
+
+        query = query.filter(
+            User.roles.any(
+                Role.id == role.id
+            )
+        )
+
+    query = query.order_by(
+        User.id.asc()
+    )
+
+    if offset:
+        query = query.offset(offset)
+
+    if limit is not None:
+        query = query.limit(limit)
+
+    users = query.all()
+
+    return [
+        _admin_user_list_out(user)
+        for user in users
+    ]
 
 
 @router.post("/users", response_model=AdminUserOut, status_code=status.HTTP_201_CREATED)

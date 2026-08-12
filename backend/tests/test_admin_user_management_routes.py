@@ -26,11 +26,21 @@ class FakeQuery:
         self.db = db
         self.model = model
         self._order = None
+        self._offset = 0
+        self._limit = None
 
     def filter(self, *_args, **_kwargs):
         return self
 
     def order_by(self, *_args, **_kwargs):
+        return self
+
+    def offset(self, value):
+        self._offset = value
+        return self
+
+    def limit(self, value):
+        self._limit = value
         return self
 
     def first(self):
@@ -42,16 +52,38 @@ class FakeQuery:
 
     def all(self):
         if self.model is User:
-            return list(self.db.users)
-        if self.model is Role:
-            return list(self.db.roles)
-        return []
+            values = list(self.db.users)
+        elif self.model is Role:
+            values = list(self.db.roles)
+        elif self.model is Permission:
+            values = list(
+                self.db.permissions
+            )
+        else:
+            values = []
+
+        start = self._offset
+
+        if self._limit is None:
+            return values[start:]
+
+        return values[
+            start:start + self._limit
+        ]
 
 
 class FakeDB:
-    def __init__(self, users=None, roles=None, first_user=None, first_role=None):
+    def __init__(
+        self,
+        users=None,
+        roles=None,
+        permissions=None,
+        first_user=None,
+        first_role=None,
+    ):
         self.users = users or []
         self.roles = roles or []
+        self.permissions = permissions or []
         self.first_user = first_user
         self.first_role = first_role
         self.added = []
@@ -401,3 +433,251 @@ def test_get_company_user_still_returns_full_role_objects():
     assert result.roles[0].name == "admin"
     assert len(result.roles[0].permissions) == 2
     assert result.permissions == ["users:create", "users:read"]
+
+
+
+def test_create_role_rejects_platform_permission_ids():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    platform_permission = Permission(
+        id=900,
+        name="assistant:debug",
+        resource="assistant",
+        action="debug",
+        description="Platform debug access",
+    )
+
+    db = FakeDB(
+        permissions=[
+            platform_permission
+        ]
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.create_role(
+            data=rbac.RoleCreate(
+                name="unsafe-role",
+                permission_ids=[900],
+            ),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 400
+    assert (
+        exc.value.detail["code"]
+        == "INVALID_PERMISSION_IDS"
+    )
+    assert (
+        exc.value.detail["message"]
+        == "Invalid permission_ids"
+    )
+
+
+def test_create_role_rejects_missing_permission_ids():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    db = FakeDB(
+        permissions=[]
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.create_role(
+            data=rbac.RoleCreate(
+                name="invalid-role",
+                permission_ids=[999],
+            ),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 400
+    assert (
+        exc.value.detail["code"]
+        == "INVALID_PERMISSION_IDS"
+    )
+
+
+def test_create_role_accepts_tenant_permission_ids():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    tenant_permission = Permission(
+        id=10,
+        name="documents:read",
+        resource="documents",
+        action="read",
+        description="Read documents",
+    )
+
+    db = FakeDB(
+        permissions=[
+            tenant_permission
+        ]
+    )
+
+    result = rbac.create_role(
+        data=rbac.RoleCreate(
+            name="document-reader",
+            permission_ids=[10],
+        ),
+        db=db,
+        current_user=current_user,
+    )
+
+    assert result.name == "document-reader"
+    assert result.company_id == 1
+    assert [
+        permission.name
+        for permission
+        in result.permissions
+    ] == [
+        "documents:read"
+    ]
+
+
+def test_update_role_rejects_platform_permission_ids():
+    current_user = make_user(
+        user_id=1,
+        company_id=1,
+        role_name="admin",
+    )
+
+    custom_role = make_role(
+        role_id=8,
+        name="operator",
+        company_id=1,
+        is_system=False,
+    )
+
+    platform_permission = Permission(
+        id=901,
+        name="llm:update",
+        resource="llm",
+        action="update",
+        description="Update LLM configuration",
+    )
+
+    db = FakeDB(
+        roles=[custom_role],
+        permissions=[
+            platform_permission
+        ],
+        first_role=custom_role,
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        rbac.update_role(
+            role_id=8,
+            data=rbac.RoleUpdate(
+                permission_ids=[901]
+            ),
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 400
+    assert (
+        exc.value.detail["code"]
+        == "INVALID_PERMISSION_IDS"
+    )
+
+
+def test_list_company_users_supports_offset_and_limit():
+    users = [
+        make_user(
+            user_id=1,
+            company_id=1,
+            username="one@example.com",
+        ),
+        make_user(
+            user_id=2,
+            company_id=1,
+            username="two@example.com",
+        ),
+        make_user(
+            user_id=3,
+            company_id=1,
+            username="three@example.com",
+        ),
+    ]
+
+    db = FakeDB(
+        users=users
+    )
+
+    current_user = make_user(
+        user_id=50,
+        company_id=1,
+        role_name="admin",
+    )
+
+    result = rbac.list_company_users(
+        offset=1,
+        limit=1,
+        db=db,
+        current_user=current_user,
+    )
+
+    assert len(result) == 1
+    assert result[0].id == 2
+
+
+def test_list_roles_supports_offset_and_limit():
+    roles = [
+        make_role(
+            role_id=1,
+            name="one",
+            company_id=1,
+            is_system=False,
+        ),
+        make_role(
+            role_id=2,
+            name="two",
+            company_id=1,
+            is_system=False,
+        ),
+        make_role(
+            role_id=3,
+            name="three",
+            company_id=1,
+            is_system=False,
+        ),
+    ]
+
+    db = FakeDB(
+        roles=roles
+    )
+
+    current_user = make_user(
+        user_id=50,
+        company_id=1,
+        role_name="admin",
+    )
+
+    result = rbac.list_roles(
+        offset=1,
+        limit=1,
+        db=db,
+        current_user=current_user,
+    )
+
+    assert len(result) == 1
+    assert result[0].id == 2
