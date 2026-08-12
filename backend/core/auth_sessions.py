@@ -308,6 +308,8 @@ def revoke_all_auth_sessions(
         db.query(AuthSession)
         .filter(
             AuthSession.user_id == user.id,
+            AuthSession.company_id
+            == user.company_id,
             AuthSession.revoked_at.is_(None),
         )
         .all()
@@ -316,6 +318,13 @@ def revoke_all_auth_sessions(
     revoked_count = 0
 
     for session in sessions:
+        if (
+            session.user_id != user.id
+            or session.company_id
+            != user.company_id
+        ):
+            continue
+
         if revoke_auth_session(
             session,
             reason=reason,

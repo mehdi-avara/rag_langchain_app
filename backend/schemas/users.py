@@ -219,6 +219,26 @@ class AdminUserRolesUpdate(BaseModel):
 
 
 
+class AdminAuthSessionOut(BaseModel):
+    id: str
+    user_id: int
+    company_id: Optional[int] = None
+    token_version: int
+    created_at: datetime
+    last_rotated_at: datetime
+    last_used_at: Optional[datetime] = None
+    expires_at: datetime
+    revoked_at: Optional[datetime] = None
+    revoked_reason: Optional[str] = None
+    is_revoked: bool
+    is_expired: bool
+
+
+class AdminAuthSessionActionOut(BaseModel):
+    success: bool
+    revoked_sessions: int
+
+
 class CurrentUserAccessOut(BaseModel):
     user_id: int
     company_id: Optional[int] = None

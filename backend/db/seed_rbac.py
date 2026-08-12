@@ -133,6 +133,18 @@ def seed() -> None:
             ("users:roles:manage", "users.roles", "manage", "Manage user roles"),
             ("users:status:manage", "users.status", "manage", "Activate and deactivate users"),
             ("users:password:reset", "users.password", "reset", "Reset user passwords"),
+            (
+                "users:sessions:read",
+                "users.sessions",
+                "read",
+                "Read user authentication sessions",
+            ),
+            (
+                "users:sessions:manage",
+                "users.sessions",
+                "manage",
+                "Revoke user authentication sessions",
+            ),
             ("roles:read", "roles", "read", "Read roles"),
             ("roles:create", "roles", "create", "Create roles"),
             ("roles:update", "roles", "update", "Update roles"),

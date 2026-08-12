@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from Models.company import Company
 from Models.user import User
 from Models.rbac import Role, Permission
+from Models.auth_session import AuthSession
 from core.authorization import (
     GLOBAL_ADMIN_ROLE_NAME,
     GLOBAL_USER_ROLE_NAME,
@@ -16,11 +17,16 @@ from core.authorization import (
     is_company_admin,
     is_tenant_permission_name,
 )
-from core.auth_sessions import revoke_user_authentication
+from core.auth_sessions import (
+    revoke_auth_session,
+    revoke_user_authentication,
+)
 from db.init_db import get_db
 from db.provision_company_defaults import provision_company_defaults
 from deps import get_current_user, require_permission
 from schemas.users import (
+    AdminAuthSessionActionOut,
+    AdminAuthSessionOut,
     AdminUserCreate,
     AdminUserListOut,
     AdminUserOut,
@@ -36,6 +42,7 @@ from schemas.users import (
 
 
 from core.exceptions.error_codes import (
+    AUTH_SESSION_NOT_FOUND,
     COMPANY_REQUIRED,
     INVALID_PERMISSION_IDS,
     INVALID_ROLE_IDS,
@@ -480,6 +487,62 @@ def _get_company_user_or_404(db: Session, user_id: int, company_id: int) -> User
     return user
 
 
+def _get_user_auth_session_or_404(
+    db: Session,
+    *,
+    session_id: str,
+    user: User,
+    company_id: int,
+) -> AuthSession:
+    session = (
+        db.query(AuthSession)
+        .filter(
+            AuthSession.id == session_id,
+            AuthSession.user_id == user.id,
+            AuthSession.company_id == company_id,
+        )
+        .first()
+    )
+
+    if (
+        session is None
+        or session.user_id != user.id
+        or session.company_id != company_id
+    ):
+        _error(
+            status.HTTP_404_NOT_FOUND,
+            AUTH_SESSION_NOT_FOUND,
+            "Authentication session not found",
+        )
+
+    return session
+
+
+def _admin_auth_session_out(
+    session: AuthSession,
+) -> AdminAuthSessionOut:
+    now = datetime.utcnow()
+
+    return AdminAuthSessionOut(
+        id=session.id,
+        user_id=session.user_id,
+        company_id=session.company_id,
+        token_version=session.token_version,
+        created_at=session.created_at,
+        last_rotated_at=session.last_rotated_at,
+        last_used_at=session.last_used_at,
+        expires_at=session.expires_at,
+        revoked_at=session.revoked_at,
+        revoked_reason=session.revoked_reason,
+        is_revoked=(
+            session.revoked_at is not None
+        ),
+        is_expired=(
+            session.expires_at <= now
+        ),
+    )
+
+
 def _load_roles_or_400(db: Session, role_ids: list[int], company_id: int) -> list[Role]:
     if not role_ids:
         role = db.query(Role).filter(
@@ -865,6 +928,189 @@ def reset_company_user_password(
 
     return _admin_user_out(user)
 
+
+
+@router.get(
+    "/users/{user_id}/sessions",
+    response_model=list[AdminAuthSessionOut],
+)
+def list_company_user_sessions(
+    user_id: int,
+    revoked: Annotated[
+        bool | None,
+        Query(),
+    ] = None,
+    offset: Annotated[
+        int,
+        Query(ge=0),
+    ] = 0,
+    limit: Annotated[
+        int | None,
+        Query(ge=1, le=200),
+    ] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:sessions:read"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    user = _get_company_user_or_404(
+        db,
+        user_id,
+        company_id,
+    )
+
+    query = db.query(
+        AuthSession
+    ).filter(
+        AuthSession.user_id == user.id,
+        AuthSession.company_id == company_id,
+    )
+
+    if revoked is True:
+        query = query.filter(
+            AuthSession.revoked_at.is_not(
+                None
+            )
+        )
+
+    elif revoked is False:
+        query = query.filter(
+            AuthSession.revoked_at.is_(
+                None
+            )
+        )
+
+    query = query.order_by(
+        AuthSession.created_at.desc()
+    )
+
+    if offset:
+        query = query.offset(
+            offset
+        )
+
+    if limit is not None:
+        query = query.limit(
+            limit
+        )
+
+    return [
+        _admin_auth_session_out(
+            session
+        )
+        for session in query.all()
+        if (
+            session.user_id == user.id
+            and session.company_id
+            == company_id
+            and (
+                revoked is None
+                or (
+                    revoked
+                    and session.revoked_at
+                    is not None
+                )
+                or (
+                    not revoked
+                    and session.revoked_at
+                    is None
+                )
+            )
+        )
+    ]
+
+
+@router.delete(
+    "/users/{user_id}/sessions/{session_id}",
+    response_model=AdminAuthSessionActionOut,
+)
+def revoke_company_user_session(
+    user_id: int,
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:sessions:manage"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    user = _get_company_user_or_404(
+        db,
+        user_id,
+        company_id,
+    )
+
+    session = _get_user_auth_session_or_404(
+        db,
+        session_id=session_id,
+        user=user,
+        company_id=company_id,
+    )
+
+    revoked = revoke_auth_session(
+        session,
+        reason="admin_session_revoked",
+    )
+
+    db.commit()
+
+    return AdminAuthSessionActionOut(
+        success=True,
+        revoked_sessions=(
+            1 if revoked else 0
+        ),
+    )
+
+
+@router.post(
+    "/users/{user_id}/sessions/revoke-all",
+    response_model=AdminAuthSessionActionOut,
+)
+def revoke_all_company_user_sessions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:sessions:manage"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    user = _get_company_user_or_404(
+        db,
+        user_id,
+        company_id,
+    )
+
+    revoked_count = (
+        revoke_user_authentication(
+            db,
+            user,
+            reason=(
+                "admin_sessions_revoked_all"
+            ),
+        )
+    )
+
+    db.commit()
+
+    return AdminAuthSessionActionOut(
+        success=True,
+        revoked_sessions=revoked_count,
+    )
 
 
 def _current_user_role_names(user: User) -> list[str]:
