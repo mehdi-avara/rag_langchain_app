@@ -153,6 +153,12 @@ def seed() -> None:
             ("company:read", "company", "read", "Read company settings"),
             ("company:update", "company", "update", "Update company settings"),
             (
+                "admin:audit:read",
+                "admin.audit",
+                "read",
+                "Read administrative audit logs",
+            ),
+            (
                 "developer_docs:read",
                 "developer_docs",
                 "read",

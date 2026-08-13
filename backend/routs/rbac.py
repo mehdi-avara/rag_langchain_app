@@ -10,6 +10,7 @@ from Models.company import Company
 from Models.user import User
 from Models.rbac import Role, Permission
 from Models.auth_session import AuthSession
+from Models.admin_audit import AdminAuditLog
 from core.authorization import (
     GLOBAL_ADMIN_ROLE_NAME,
     GLOBAL_USER_ROLE_NAME,
@@ -17,6 +18,7 @@ from core.authorization import (
     is_company_admin,
     is_tenant_permission_name,
 )
+from core.admin_audit import append_admin_audit
 from core.auth_sessions import (
     revoke_auth_session,
     revoke_user_authentication,
@@ -24,6 +26,7 @@ from core.auth_sessions import (
 from db.init_db import get_db
 from db.provision_company_defaults import provision_company_defaults
 from deps import get_current_user, require_permission
+from schemas.admin_audit import AdminAuditLogOut
 from schemas.users import (
     AdminAuthSessionActionOut,
     AdminAuthSessionOut,
@@ -100,6 +103,135 @@ def _is_reserved_company_admin_role(
         and getattr(role, "is_system", False)
         is False
     )
+
+
+@router.get(
+    "/audit-logs",
+    response_model=list[AdminAuditLogOut],
+)
+def list_admin_audit_logs(
+    action: Annotated[
+        str | None,
+        Query(max_length=80),
+    ] = None,
+    actor_user_id: Annotated[
+        int | None,
+        Query(ge=1),
+    ] = None,
+    target_type: Annotated[
+        str | None,
+        Query(max_length=40),
+    ] = None,
+    target_id: Annotated[
+        str | None,
+        Query(max_length=64),
+    ] = None,
+    created_from: Annotated[
+        datetime | None,
+        Query(),
+    ] = None,
+    created_to: Annotated[
+        datetime | None,
+        Query(),
+    ] = None,
+    offset: Annotated[
+        int,
+        Query(ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=200),
+    ] = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "admin:audit:read"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    if (
+        created_from is not None
+        and created_to is not None
+        and created_from > created_to
+    ):
+        raise HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_ENTITY
+            ),
+            detail={
+                "code": (
+                    "ADMIN_AUDIT_INVALID_DATE_RANGE"
+                ),
+                "message": (
+                    "created_from must be before "
+                    "or equal to created_to"
+                ),
+            },
+        )
+
+    query = db.query(
+        AdminAuditLog
+    ).filter(
+        AdminAuditLog.company_id
+        == company_id
+    )
+
+    if action:
+        query = query.filter(
+            AdminAuditLog.action
+            == action.strip()
+        )
+
+    if actor_user_id is not None:
+        query = query.filter(
+            AdminAuditLog.actor_user_id
+            == actor_user_id
+        )
+
+    if target_type:
+        query = query.filter(
+            AdminAuditLog.target_type
+            == target_type.strip()
+        )
+
+    if target_id:
+        query = query.filter(
+            AdminAuditLog.target_id
+            == target_id.strip()
+        )
+
+    if created_from is not None:
+        query = query.filter(
+            AdminAuditLog.created_at
+            >= created_from
+        )
+
+    if created_to is not None:
+        query = query.filter(
+            AdminAuditLog.created_at
+            <= created_to
+        )
+
+    logs = (
+        query.order_by(
+            AdminAuditLog.created_at.desc(),
+            AdminAuditLog.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        audit
+        for audit in logs
+        if audit.company_id
+        == company_id
+    ]
 
 
 @router.get("/permissions", response_model=list[PermissionOut])
@@ -302,6 +434,27 @@ def create_role(
     )
 
     db.add(role)
+    db.flush()
+
+    append_admin_audit(
+        db,
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="role.created",
+        target_type="role",
+        target_id=role.id,
+        details={
+            "name": role.name,
+            "description": role.description,
+            "is_active": role.is_active,
+            "permission_ids": sorted(
+                permission.id
+                for permission
+                in role.permissions
+            ),
+        },
+    )
+
     db.commit()
     db.refresh(role)
 
@@ -317,6 +470,17 @@ def update_role(
 ):
     company_id = _require_company_id(current_user)
     role = _get_visible_role_or_404(db, role_id, company_id)
+
+    before_state = {
+        "name": role.name,
+        "description": role.description,
+        "is_active": role.is_active,
+        "permission_ids": sorted(
+            permission.id
+            for permission
+            in role.permissions
+        ),
+    }
 
     if role.is_system:
         raise HTTPException(
@@ -369,6 +533,31 @@ def update_role(
             )
         )
 
+    after_state = {
+        "name": role.name,
+        "description": role.description,
+        "is_active": role.is_active,
+        "permission_ids": sorted(
+            permission.id
+            for permission
+            in role.permissions
+        ),
+    }
+
+    if before_state != after_state:
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=current_user.id,
+            action="role.updated",
+            target_type="role",
+            target_id=role.id,
+            details={
+                "before": before_state,
+                "after": after_state,
+            },
+        )
+
     db.commit()
     db.refresh(role)
 
@@ -399,7 +588,29 @@ def delete_role(
 
     _ensure_role_has_no_active_users(role)
 
+    audit_details = {
+        "name": role.name,
+        "description": role.description,
+        "is_active": role.is_active,
+        "permission_ids": sorted(
+            permission.id
+            for permission
+            in role.permissions
+        ),
+    }
+
     db.delete(role)
+
+    append_admin_audit(
+        db,
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="role.deleted",
+        target_type="role",
+        target_id=role.id,
+        details=audit_details,
+    )
+
     db.commit()
 
     return {"message": "Role deleted"}
@@ -756,6 +967,24 @@ def create_company_user(
         created_by_user_id=current_user.id,
     )
 
+    append_admin_audit(
+        db,
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="user.created",
+        target_type="user",
+        target_id=user.id,
+        details={
+            "username": user.username,
+            "first_name": user.First_name,
+            "last_name": user.Last_name,
+            "role_ids": sorted(
+                role.id
+                for role in user.roles
+            ),
+        },
+    )
+
     db.commit()
     db.refresh(user)
 
@@ -782,6 +1011,24 @@ def update_company_user(
 ):
     company_id = _require_company_id(current_user)
     user = _get_company_user_or_404(db, user_id, company_id)
+
+    before_profile = {
+        "username": user.username,
+        "first_name": user.First_name,
+        "last_name": user.Last_name,
+    }
+
+    before_role_ids = sorted(
+        role.id
+        for role in user.roles
+    )
+
+    notification_channel_changed = (
+        payload.notification_token
+        is not None
+        and payload.notification_token
+        != user.notification_token
+    )
 
     if payload.username and payload.username.strip().lower() != user.username:
         username = payload.username.strip().lower()
@@ -812,6 +1059,52 @@ def update_company_user(
         user.roles = roles
         user.role = _legacy_role_from_roles(roles)
 
+    after_profile = {
+        "username": user.username,
+        "first_name": user.First_name,
+        "last_name": user.Last_name,
+    }
+
+    after_role_ids = sorted(
+        role.id
+        for role in user.roles
+    )
+
+    if before_profile != after_profile or notification_channel_changed:
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=current_user.id,
+            action="user.updated",
+            target_type="user",
+            target_id=user.id,
+            details={
+                "before": before_profile,
+                "after": after_profile,
+                "notification_channel_changed": (
+                    notification_channel_changed
+                ),
+            },
+        )
+
+    if before_role_ids != after_role_ids:
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=current_user.id,
+            action="user.roles_updated",
+            target_type="user",
+            target_id=user.id,
+            details={
+                "before_role_ids": (
+                    before_role_ids
+                ),
+                "after_role_ids": (
+                    after_role_ids
+                ),
+            },
+        )
+
     db.commit()
     db.refresh(user)
 
@@ -837,9 +1130,37 @@ def update_company_user_roles(
 
     _ensure_not_last_active_admin(db, user)
 
+    before_role_ids = sorted(
+        role.id
+        for role in user.roles
+    )
+
     roles = _load_roles_or_400(db, payload.role_ids, company_id)
     user.roles = roles
     user.role = _legacy_role_from_roles(roles)
+
+    after_role_ids = sorted(
+        role.id
+        for role in user.roles
+    )
+
+    if before_role_ids != after_role_ids:
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=current_user.id,
+            action="user.roles_updated",
+            target_type="user",
+            target_id=user.id,
+            details={
+                "before_role_ids": (
+                    before_role_ids
+                ),
+                "after_role_ids": (
+                    after_role_ids
+                ),
+            },
+        )
 
     db.commit()
     db.refresh(user)
@@ -856,6 +1177,8 @@ def activate_company_user(
     company_id = _require_company_id(current_user)
     user = _get_company_user_or_404(db, user_id, company_id)
 
+    was_active = user.is_active
+
     user.is_active = True
     user.deactivated_at = None
 
@@ -864,6 +1187,17 @@ def activate_company_user(
         user,
         created_by_user_id=current_user.id,
     )
+
+    if not was_active:
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=current_user.id,
+            action="user.activated",
+            target_type="user",
+            target_id=user.id,
+            details={},
+        )
 
     db.commit()
     db.refresh(user)
@@ -889,13 +1223,32 @@ def deactivate_company_user(
 
     _ensure_not_last_active_admin(db, user)
 
+    was_active = user.is_active
+
     user.is_active = False
     user.deactivated_at = datetime.utcnow()
 
-    revoke_user_authentication(
+    revoked_sessions = (
+        revoke_user_authentication(
+            db,
+            user,
+            reason="user_deactivated",
+        )
+    )
+
+    append_admin_audit(
         db,
-        user,
-        reason="user_deactivated",
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="user.deactivated",
+        target_type="user",
+        target_id=user.id,
+        details={
+            "was_active": was_active,
+            "revoked_sessions": (
+                revoked_sessions
+            ),
+        },
     )
 
     db.commit()
@@ -917,10 +1270,26 @@ def reset_company_user_password(
     user.pw_hash = bcrypt.hash(payload.new_password)
     user.password_changed_at = datetime.utcnow()
 
-    revoke_user_authentication(
+    revoked_sessions = (
+        revoke_user_authentication(
+            db,
+            user,
+            reason="admin_password_reset",
+        )
+    )
+
+    append_admin_audit(
         db,
-        user,
-        reason="admin_password_reset",
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="user.password_reset",
+        target_type="user",
+        target_id=user.id,
+        details={
+            "revoked_sessions": (
+                revoked_sessions
+            ),
+        },
     )
 
     db.commit()
@@ -1062,6 +1431,19 @@ def revoke_company_user_session(
         reason="admin_session_revoked",
     )
 
+    append_admin_audit(
+        db,
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="user.session_revoked",
+        target_type="auth_session",
+        target_id=session.id,
+        details={
+            "user_id": user.id,
+            "revoked": revoked,
+        },
+    )
+
     db.commit()
 
     return AdminAuthSessionActionOut(
@@ -1103,6 +1485,20 @@ def revoke_all_company_user_sessions(
                 "admin_sessions_revoked_all"
             ),
         )
+    )
+
+    append_admin_audit(
+        db,
+        company_id=company_id,
+        actor_user_id=current_user.id,
+        action="user.sessions_revoked_all",
+        target_type="user",
+        target_id=user.id,
+        details={
+            "revoked_sessions": (
+                revoked_count
+            ),
+        },
     )
 
     db.commit()

@@ -159,6 +159,15 @@ class FakeDB:
             first_session
         )
         self.commit_count = 0
+        self.added = []
+
+    def add(
+        self,
+        value,
+    ):
+        self.added.append(
+            value
+        )
 
     def query(
         self,

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from db.init_db import get_db
 from deps import require_permission
+from core.admin_audit import append_admin_audit
 from Models import Company, User
 from financial_management.models import FinancialReceipt
 from schemas.company import CompanySettingsOut, CompanySettingsUpdate
@@ -40,6 +41,14 @@ def update_company_settings(
     company = _get_current_company(db, current_user)
     data = payload.model_dump(exclude_unset=True)
 
+    before_state = {
+        "name": company.name,
+        "base_currency": company.base_currency,
+        "allow_self_approval": (
+            company.allow_self_approval
+        ),
+    }
+
     if "name" in data and data["name"] is not None:
         company.name = data["name"].strip()
 
@@ -64,6 +73,28 @@ def update_company_settings(
 
     if "allow_self_approval" in data and data["allow_self_approval"] is not None:
         company.allow_self_approval = bool(data["allow_self_approval"])
+
+    after_state = {
+        "name": company.name,
+        "base_currency": company.base_currency,
+        "allow_self_approval": (
+            company.allow_self_approval
+        ),
+    }
+
+    if before_state != after_state:
+        append_admin_audit(
+            db,
+            company_id=company.id,
+            actor_user_id=current_user.id,
+            action="company.settings_updated",
+            target_type="company",
+            target_id=company.id,
+            details={
+                "before": before_state,
+                "after": after_state,
+            },
+        )
 
     db.commit()
     db.refresh(company)

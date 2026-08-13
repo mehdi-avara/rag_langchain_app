@@ -33,6 +33,7 @@ TENANT_PERMISSION_PREFIXES = (
 
 TENANT_PERMISSION_NAMES = frozenset(
     {
+        "admin:audit:read",
         "currencies:read",
         "exchange_rates:read",
         "permissions:read",
