@@ -19,6 +19,7 @@ from core.authorization import (
     is_tenant_permission_name,
 )
 from core.admin_audit import append_admin_audit
+from core.admin_summary import build_admin_summary
 from core.auth_sessions import (
     revoke_auth_session,
     revoke_user_authentication,
@@ -27,6 +28,7 @@ from db.init_db import get_db
 from db.provision_company_defaults import provision_company_defaults
 from deps import get_current_user, require_permission
 from schemas.admin_audit import AdminAuditLogOut
+from schemas.admin_summary import AdminSummaryOut
 from schemas.users import (
     AdminAuthSessionActionOut,
     AdminAuthSessionOut,
@@ -102,6 +104,49 @@ def _is_reserved_company_admin_role(
         is not None
         and getattr(role, "is_system", False)
         is False
+    )
+
+
+@router.get(
+    "/admin-summary",
+    response_model=AdminSummaryOut,
+)
+def get_admin_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "admin:summary:read"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    company = (
+        db.query(Company)
+        .filter(
+            Company.id
+            == company_id
+        )
+        .first()
+    )
+
+    if company is None:
+        _error(
+            status.HTTP_404_NOT_FOUND,
+            COMPANY_REQUIRED,
+            "Company not found",
+        )
+
+    summary = build_admin_summary(
+        db,
+        company_id=company_id,
+        company_name=company.name,
+    )
+
+    return AdminSummaryOut(
+        **summary
     )
 
 

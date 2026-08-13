@@ -159,6 +159,12 @@ def seed() -> None:
                 "Read administrative audit logs",
             ),
             (
+                "admin:summary:read",
+                "admin.summary",
+                "read",
+                "Read administrative dashboard summary",
+            ),
+            (
                 "developer_docs:read",
                 "developer_docs",
                 "read",
