@@ -145,6 +145,18 @@ def seed() -> None:
                 "manage",
                 "Revoke user authentication sessions",
             ),
+            (
+                "users:invitations:read",
+                "users.invitations",
+                "read",
+                "Read tenant user invitations",
+            ),
+            (
+                "users:invitations:manage",
+                "users.invitations",
+                "manage",
+                "Create, reissue, and revoke tenant user invitations",
+            ),
             ("roles:read", "roles", "read", "Read roles"),
             ("roles:create", "roles", "create", "Create roles"),
             ("roles:update", "roles", "update", "Update roles"),

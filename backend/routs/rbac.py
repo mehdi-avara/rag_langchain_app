@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from passlib.hash import bcrypt
 from sqlalchemy import and_, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from Models.company import Company
@@ -20,6 +21,14 @@ from core.authorization import (
 )
 from core.admin_audit import append_admin_audit
 from core.admin_summary import build_admin_summary
+from core.user_invitations import (
+    admin_invitation_payload,
+    create_user_invitation,
+    invitation_role_ids,
+    list_user_invitations,
+    reissue_user_invitation,
+    revoke_user_invitation,
+)
 from core.auth_sessions import (
     revoke_auth_session,
     revoke_user_authentication,
@@ -29,6 +38,13 @@ from db.provision_company_defaults import provision_company_defaults
 from deps import get_current_user, require_permission
 from schemas.admin_audit import AdminAuditLogOut
 from schemas.admin_summary import AdminSummaryOut
+from schemas.user_invitations import (
+    AdminUserInvitationActionOut,
+    AdminUserInvitationCreate,
+    AdminUserInvitationOut,
+    AdminUserInvitationTokenOut,
+    InvitationStatus,
+)
 from schemas.users import (
     AdminAuthSessionActionOut,
     AdminAuthSessionOut,
@@ -59,6 +75,7 @@ from core.exceptions.error_codes import (
     SYSTEM_ROLE_PROTECTED,
     USER_NOT_FOUND,
     USERNAME_ALREADY_EXISTS,
+    USER_INVITATION_ALREADY_EXISTS,
 )
 
 router = APIRouter()
@@ -880,6 +897,318 @@ def _provision_defaults_for_user(
         db,
         company,
         created_by_user_id=created_by_user_id,
+    )
+
+
+@router.get(
+    "/invitations",
+    response_model=list[
+        AdminUserInvitationOut
+    ],
+)
+def list_company_user_invitations(
+    search: Annotated[
+        str | None,
+        Query(max_length=255),
+    ] = None,
+    invitation_status: Annotated[
+        InvitationStatus | None,
+        Query(alias="status"),
+    ] = None,
+    offset: Annotated[
+        int,
+        Query(ge=0),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=200),
+    ] = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:invitations:read"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    invitations = (
+        list_user_invitations(
+            db,
+            company_id=company_id,
+            search=search,
+            status_filter=(
+                invitation_status
+            ),
+            offset=offset,
+            limit=limit,
+        )
+    )
+
+    return [
+        AdminUserInvitationOut(
+            **admin_invitation_payload(
+                invitation
+            )
+        )
+        for invitation in invitations
+        if invitation.company_id
+        == company_id
+    ]
+
+
+@router.post(
+    "/invitations",
+    response_model=(
+        AdminUserInvitationTokenOut
+    ),
+    status_code=status.HTTP_201_CREATED,
+)
+def create_company_user_invitation(
+    payload: AdminUserInvitationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:invitations:manage"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    try:
+        invitation, raw_token = (
+            create_user_invitation(
+                db,
+                company_id=company_id,
+                invited_by_user_id=(
+                    current_user.id
+                ),
+                email=payload.email,
+                first_name=(
+                    payload.first_name
+                ),
+                last_name=(
+                    payload.last_name
+                ),
+                role_ids=(
+                    payload.role_ids
+                ),
+            )
+        )
+
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=(
+                current_user.id
+            ),
+            action="user.invited",
+            target_type=(
+                "user_invitation"
+            ),
+            target_id=invitation.id,
+            details={
+                "email": (
+                    invitation.email
+                ),
+                "role_ids": (
+                    invitation_role_ids(
+                        invitation
+                    )
+                ),
+                "expires_at": (
+                    invitation.expires_at.isoformat()
+                ),
+            },
+        )
+
+        db.commit()
+        db.refresh(invitation)
+
+    except IntegrityError as exc:
+        db.rollback()
+
+        _error(
+            status.HTTP_409_CONFLICT,
+            USER_INVITATION_ALREADY_EXISTS,
+            "Invitation conflicts with an existing record",
+        )
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return AdminUserInvitationTokenOut(
+        **admin_invitation_payload(
+            invitation
+        ),
+        invitation_token=raw_token,
+    )
+
+
+@router.post(
+    "/invitations/{invitation_id}/reissue",
+    response_model=(
+        AdminUserInvitationTokenOut
+    ),
+)
+def reissue_company_user_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:invitations:manage"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    try:
+        invitation, raw_token = (
+            reissue_user_invitation(
+                db,
+                invitation_id=(
+                    invitation_id
+                ),
+                company_id=company_id,
+            )
+        )
+
+        append_admin_audit(
+            db,
+            company_id=company_id,
+            actor_user_id=(
+                current_user.id
+            ),
+            action=(
+                "user.invitation_reissued"
+            ),
+            target_type=(
+                "user_invitation"
+            ),
+            target_id=invitation.id,
+            details={
+                "email": (
+                    invitation.email
+                ),
+                "role_ids": (
+                    invitation_role_ids(
+                        invitation
+                    )
+                ),
+                "expires_at": (
+                    invitation.expires_at.isoformat()
+                ),
+            },
+        )
+
+        db.commit()
+        db.refresh(invitation)
+
+    except IntegrityError as exc:
+        db.rollback()
+
+        _error(
+            status.HTTP_409_CONFLICT,
+            USER_INVITATION_ALREADY_EXISTS,
+            "Invitation reissue conflicts with an existing record",
+        )
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return AdminUserInvitationTokenOut(
+        **admin_invitation_payload(
+            invitation
+        ),
+        invitation_token=raw_token,
+    )
+
+
+@router.delete(
+    "/invitations/{invitation_id}",
+    response_model=(
+        AdminUserInvitationActionOut
+    ),
+)
+def revoke_company_user_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission(
+            "users:invitations:manage"
+        )
+    ),
+):
+    company_id = _require_company_id(
+        current_user
+    )
+
+    try:
+        invitation, changed = (
+            revoke_user_invitation(
+                db,
+                invitation_id=(
+                    invitation_id
+                ),
+                company_id=company_id,
+            )
+        )
+
+        if changed:
+            append_admin_audit(
+                db,
+                company_id=company_id,
+                actor_user_id=(
+                    current_user.id
+                ),
+                action=(
+                    "user.invitation_revoked"
+                ),
+                target_type=(
+                    "user_invitation"
+                ),
+                target_id=invitation.id,
+                details={
+                    "email": (
+                        invitation.email
+                    ),
+                    "role_ids": (
+                        invitation_role_ids(
+                            invitation
+                        )
+                    ),
+                },
+            )
+
+        db.commit()
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return AdminUserInvitationActionOut(
+        success=True,
+        changed=changed,
     )
 
 

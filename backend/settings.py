@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     self_registration_rate_window_seconds: int = 3600
     self_registration_rate_max_per_email: int = 5
     self_registration_rate_max_global: int = 25
+    user_invitation_exp_hours: int = 72
 
     
     

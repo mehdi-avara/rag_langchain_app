@@ -2,6 +2,10 @@ from .company import Company
 from .user import User
 from .auth_session import AuthSession
 from .admin_audit import AdminAuditLog
+from .user_invitation import (
+    UserInvitation,
+    user_invitation_role,
+)
 from .rbac import Role, Permission, user_role, role_permission
 from .document import Document, DocumentVersion, DocumentStatusType
 from .document_access import UserDocumentAccess
@@ -148,6 +152,8 @@ __all__ = [
     "User",
     "AuthSession",
     "AdminAuditLog",
+    "UserInvitation",
+    "user_invitation_role",
     "Role",
     "Permission",
     "user_role",

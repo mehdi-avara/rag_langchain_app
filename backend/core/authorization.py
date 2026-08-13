@@ -50,6 +50,8 @@ TENANT_PERMISSION_NAMES = frozenset(
         "users:password:reset",
         "users:sessions:read",
         "users:sessions:manage",
+        "users:invitations:read",
+        "users:invitations:manage",
     }
 )
 

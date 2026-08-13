@@ -37,6 +37,11 @@ from core.auth_tokens import (
     is_token_stale_for_user,
 )
 from core.registration_security import enforce_registration_rate_limit
+from core.user_invitations import (
+    accept_user_invitation as accept_user_invitation_service,
+    get_invitation_by_token,
+    public_invitation_payload,
+)
 from deps import (
     AuthContext,
     get_current_auth_context,
@@ -52,6 +57,12 @@ from schemas.auth import (
     RefreshRequest,
     RefreshResponse,
     CurrentUserOut,
+)
+from schemas.user_invitations import (
+    PublicUserInvitationStatusOut,
+    UserInvitationAcceptIn,
+    UserInvitationAcceptOut,
+    UserInvitationTokenIn,
 )
 from settings import get_settings
 
@@ -329,6 +340,92 @@ async def register(
     return RegisterResponse(
         access_token=access_token,
         refresh_token=refresh_token,
+    )
+
+
+@router.post(
+    "/invitations/status",
+    response_model=(
+        PublicUserInvitationStatusOut
+    ),
+)
+def get_public_user_invitation_status(
+    payload: UserInvitationTokenIn,
+    db: Session = Depends(get_db),
+):
+    invitation = (
+        get_invitation_by_token(
+            db,
+            token=(
+                payload.invitation_token
+                .get_secret_value()
+            ),
+            lock=False,
+        )
+    )
+
+    return PublicUserInvitationStatusOut(
+        **public_invitation_payload(
+            db,
+            invitation,
+        )
+    )
+
+
+@router.post(
+    "/invitations/accept",
+    response_model=(
+        UserInvitationAcceptOut
+    ),
+)
+def accept_public_user_invitation(
+    payload: UserInvitationAcceptIn,
+    db: Session = Depends(get_db),
+):
+    try:
+        user = (
+            accept_user_invitation_service(
+                db,
+                token=(
+                    payload.invitation_token
+                    .get_secret_value()
+                ),
+                password=(
+                    payload.password
+                    .get_secret_value()
+                ),
+            )
+        )
+
+        db.commit()
+        db.refresh(user)
+
+    except IntegrityError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
+            detail=_error_detail(
+                REGISTRATION_CONFLICT,
+                "Invitation acceptance conflicts with an existing record",
+            ),
+        ) from exc
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return UserInvitationAcceptOut(
+        success=True,
+        user_id=user.id,
+        company_id=user.company_id,
+        username=user.username,
     )
 
 
