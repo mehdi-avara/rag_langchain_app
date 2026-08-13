@@ -14,7 +14,7 @@ services:
     build:
       context: ./backend
       target: backend
-    env_file: .env
+    env_file: .env.runtime
     environment:
       files_dir: /app/uploaded_files
       redis_url: redis://redis:6379/0
@@ -44,7 +44,7 @@ services:
     #     reservations:
     #       devices:
     #         - capabilities: [gpu]
-    env_file: .env
+    env_file: .env.runtime
     environment:
       files_dir: /app/uploaded_files
       redis_url: redis://redis:6379/0
