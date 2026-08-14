@@ -1,3 +1,5 @@
+from difflib import SequenceMatcher
+import re
 from typing import List
 
 from fastapi import HTTPException
@@ -9,6 +11,31 @@ from components import generate_embeddings_for_chunks
 from Models import User
 
 from .models import ManagedModel, ModelDocumentLink, ModelCommentLink, ModelReceiptLink
+
+
+_REFERENCE_TOKEN_RE = re.compile(r"[\w.-]+", flags=re.UNICODE)
+_REFERENCE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "buy",
+    "for",
+    "full",
+    "model",
+    "of",
+    "one",
+    "the",
+    "to",
+    "want",
+    "از",
+    "برای",
+    "خرید",
+    "را",
+    "مدل",
+    "میخواهم",
+    "می‌خواهم",
+    "و",
+}
 
 
 def require_company(current_user: User) -> int:
@@ -104,6 +131,124 @@ def find_model_ids(
             query = query.filter(column.ilike(f"%{normalized}%"))
 
     return [row[0] for row in query.order_by(ManagedModel.id.asc()).all()]
+
+
+def _reference_tokens(value: str | None) -> list[str]:
+    return [
+        token.lower()
+        for token in _REFERENCE_TOKEN_RE.findall(value or "")
+        if len(token) >= 2 and token.lower() not in _REFERENCE_STOPWORDS
+    ]
+
+
+def _field_match_score(needle: str | None, value: str | None, weight: float) -> float:
+    wanted = " ".join(_reference_tokens(needle))
+    available = " ".join(_reference_tokens(value))
+    if not wanted or not available:
+        return 0.0
+    if wanted == available:
+        return weight
+    if wanted in available or available in wanted:
+        return weight * 0.85
+    similarity = SequenceMatcher(None, wanted, available).ratio()
+    return weight * similarity if similarity >= 0.72 else 0.0
+
+
+def find_model_candidates_for_material_reference(
+    db: Session,
+    current_user: User,
+    *,
+    query_text: str,
+    model_name: str | None = None,
+    manufacturer: str | None = None,
+    model_type: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    """Return ranked, tenant-scoped model summaries for a material reference.
+
+    Material requests often contain a product phrase plus a slightly misspelled
+    manufacturer (for example ``simense h42l electromotor``). The database
+    pre-filter uses any useful token; deterministic Python ranking then gives
+    exact model identifiers the most weight and permits conservative fuzzy
+    manufacturer matching. Cross-module callers receive plain summaries, not
+    the model-management table or schema.
+    """
+
+    company_id = require_company(current_user)
+    tokens = list(
+        dict.fromkeys(
+            [
+                *_reference_tokens(query_text),
+                *_reference_tokens(model_name),
+                *_reference_tokens(manufacturer),
+                *_reference_tokens(model_type),
+            ]
+        )
+    )
+    if not tokens:
+        return []
+
+    token_conditions = []
+    for token in tokens:
+        pattern = f"%{token}%"
+        token_conditions.extend(
+            (
+                ManagedModel.manufacturer.ilike(pattern),
+                ManagedModel.model.ilike(pattern),
+                ManagedModel.type.ilike(pattern),
+            )
+        )
+
+    candidates = (
+        db.query(ManagedModel)
+        .filter(
+            ManagedModel.company_id == company_id,
+            or_(*token_conditions),
+        )
+        .order_by(ManagedModel.id.asc())
+        .limit(max(limit * 10, 50))
+        .all()
+    )
+
+    query_tokens = _reference_tokens(query_text)
+    ranked: list[tuple[float, ManagedModel]] = []
+    for candidate in candidates:
+        score = 0.0
+        score += _field_match_score(model_name, candidate.model, 14.0)
+        score += _field_match_score(manufacturer, candidate.manufacturer, 8.0)
+        score += _field_match_score(model_type, candidate.type, 5.0)
+
+        candidate_fields = (
+            (candidate.model, 6.0),
+            (candidate.manufacturer, 3.5),
+            (candidate.type, 2.5),
+        )
+        for token in query_tokens:
+            best = 0.0
+            for value, weight in candidate_fields:
+                for candidate_token in _reference_tokens(value):
+                    if token == candidate_token:
+                        best = max(best, weight)
+                        continue
+                    similarity = SequenceMatcher(None, token, candidate_token).ratio()
+                    if similarity >= 0.78:
+                        best = max(best, weight * similarity)
+            score += best
+
+        if score > 0:
+            ranked.append((score, candidate))
+
+    ranked.sort(key=lambda pair: (-pair[0], pair[1].id))
+    return [
+        {
+            "id": candidate.id,
+            "manufacturer": candidate.manufacturer,
+            "model": candidate.model,
+            "type": candidate.type,
+            "match_score": round(score, 3),
+        }
+        for score, candidate in ranked[:limit]
+    ]
 
 
 def get_doc_ids(db: Session, model_id: int) -> List[int]:

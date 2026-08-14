@@ -102,6 +102,12 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
                     explicit_aliases=("item_id", "material_item_id"),
                     missing_label="item",
                     collection="items",
+                    cleanup_fields=(
+                        "manufacturer", "make", "brand",
+                        "model", "model_name", "equipment_model",
+                        "model_type", "equipment_type",
+                        "item_type", "material_type",
+                    ),
                 ),
                 ReferenceFieldSpec(
                     field="currency_id",
@@ -126,6 +132,16 @@ class RequisitionAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("reason", aliases=("description",)),
                 PayloadField("priority", kind="enum", enum_values=tuple(item.value for item in MaterialRequisitionPriority), default=MaterialRequisitionPriority.NORMAL.value),
                 PayloadField("notes"),
+            ),
+            slot_rules=(
+                "For each requested item, put the material or equipment name in items[].item_query.",
+                "When the user provides an equipment manufacturer and model, also extract items[].manufacturer, items[].model_name, and items[].model_type.",
+                "Use items[].item_type='equipment' for the complete machine or full equipment; use 'spare_part' only for a component or spare.",
+                "A follow-up saying a material item ID was created continues the pending requisition and sets material_item_id to that literal ID.",
+            ),
+            examples=(
+                "Buy one complete Siemens H42L electromotor -> items=[{item_query: electromotor, manufacturer: Siemens, model_name: H42L, model_type: electromotor, item_type: equipment, quantity: 1}]",
+                "Material item ID 42 was created; continue my pending material requisition -> material_item_id=42",
             ),
         ),
         WriteSpec(

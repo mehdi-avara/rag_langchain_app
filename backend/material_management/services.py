@@ -328,6 +328,33 @@ def resolve_material_model_ids(
     )
 
 
+def find_model_candidates_for_item_reference(
+    db: Session,
+    current_user: User,
+    *,
+    query_text: str,
+    model_name: str | None = None,
+    manufacturer: str | None = None,
+    model_type: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    """Resolve a requested equipment model through its owning module service."""
+
+    from model_management.services import (
+        find_model_candidates_for_material_reference,
+    )
+
+    return find_model_candidates_for_material_reference(
+        db,
+        current_user,
+        query_text=query_text,
+        model_name=model_name,
+        manufacturer=manufacturer,
+        model_type=model_type,
+        limit=limit,
+    )
+
+
 def item_to_out(
     item: Item,
     include_relations: bool = True,

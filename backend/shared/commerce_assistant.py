@@ -82,6 +82,7 @@ class ReferenceFieldSpec:
     missing_label: str
     collection: Optional[str] = None
     as_list: bool = False
+    cleanup_fields: tuple[str, ...] = ()
 
 
 def _slot(slots: dict, *keys: str) -> Any:
@@ -237,6 +238,10 @@ def requisition_items_from_slots(slots: dict) -> Optional[list[dict]]:
     return _build_items(slots, (
         ("item_id", "int", ("material_item_id",)),
         ("item_query", "str", ("item_name", "item", "material_item", "part", "part_name")),
+        ("manufacturer", "str", ("make", "brand")),
+        ("model_name", "str", ("model", "equipment_model")),
+        ("model_type", "str", ("equipment_type",)),
+        ("item_type", "str", ()),
         ("quantity", "decimal", ("qty",)),
         ("estimated_unit_cost", "decimal", ()),
         ("currency_id", "int", ()),
@@ -525,19 +530,23 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
                     if explicit is None and raw is None:
                         continue
                     field_name = f"{ref_spec.collection}.{index}.{ref_spec.field}"
+                    resolution_context = dict(slots)
+                    resolution_context.update(row)
                     resolution = resolve_field(
                         db,
                         user,
                         field=field_name,
                         resource_key=ref_spec.resource_key,
                         raw_text=raw or "",
-                        slots=slots,
+                        slots=resolution_context,
                         explicit_id=explicit,
                     )
                     references.append(resolution.as_dict())
                     if resolution.status == "resolved":
                         row[ref_spec.field] = resolution.chosen["id"]
                         for key in ref_spec.raw_aliases:
+                            row.pop(key, None)
+                        for key in ref_spec.cleanup_fields:
                             row.pop(key, None)
                 continue
 
@@ -652,6 +661,8 @@ class ConfiguredCommerceToolSet(ModuleToolSet):
     def _clarify_question(missing: list[str], pending_references: list[dict]) -> str:
         if pending_references:
             first = pending_references[0]
+            if first.get("clarify_question"):
+                return str(first["clarify_question"])
             label = _reference_label(str(first.get("field", "")))
             if first.get("status") == "ambiguous":
                 return f"I found multiple possible matches. Please choose the correct {label} from the references."

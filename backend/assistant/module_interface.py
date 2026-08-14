@@ -60,6 +60,11 @@ class ResourceSpec:
     create_endpoint: Optional[str] = None     # e.g. "/financial_management/customers"
     create_method: str = "POST"
     suggestion_from: Optional[Callable[[str, dict], dict]] = None  # (raw_text, slots) -> payload
+    # Context-aware missing-resource fallback. It can enrich the create payload
+    # from another module's service or suppress an unsafe suggestion.
+    missing_suggestion_from: Optional[
+        Callable[[Any, Any, str, dict], Optional[dict]]
+    ] = None
 
 
 _RESOURCES: Dict[str, ResourceSpec] = {}

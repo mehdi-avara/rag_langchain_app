@@ -46,12 +46,14 @@ class ReferenceResolution:
     alternatives: List[Dict[str, Any]] = field(default_factory=list)  # [{"id","label"}]
     create_suggestion: Optional[Dict[str, Any]] = None
     note: Optional[str] = None                  # e.g. "no_access", "explicit_id"
+    clarify_question: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
             "field": self.field, "raw": self.raw, "status": self.status,
             "chosen": self.chosen, "alternatives": self.alternatives,
             "create_suggestion": self.create_suggestion, "note": self.note,
+            "clarify_question": self.clarify_question,
         }
 
 
@@ -157,7 +159,15 @@ def resolve_field(db, user: User, *, field: str, resource_key: str, raw_text: st
             payload={"target_module": provider_module, "resource_identifier": resource_key},
         )
     try:
-        candidates = spec.provider.search(db=db, user=user, query=raw_text or "", limit=5)
+        search_kwargs = {
+            "db": db,
+            "user": user,
+            "query": raw_text or "",
+            "limit": 5,
+        }
+        if getattr(spec.provider, "accepts_context", False):
+            search_kwargs["context"] = slots
+        candidates = spec.provider.search(**search_kwargs)
     except Exception as exc:
         if is_cross_module:
             observability.record_event(
@@ -180,13 +190,37 @@ def resolve_field(db, user: User, *, field: str, resource_key: str, raw_text: st
         )
     res = resolve_reference(field, raw_text or "", candidates)
 
-    if res.status == MISSING and spec.create_endpoint and \
-            (spec.create_permission is None or has_permission(user, spec.create_permission)):
-        res.create_suggestion = {
-            "resource": spec.key,
-            "method": spec.create_method,
-            "endpoint": spec.create_endpoint,
-            "permission": spec.create_permission,
-            "payload": (spec.suggestion_from(raw_text or "", slots) if spec.suggestion_from else {}),
-        }
+    if res.status == MISSING:
+        contextual = None
+        if spec.missing_suggestion_from is not None:
+            contextual = spec.missing_suggestion_from(
+                db, user, raw_text or "", slots,
+            )
+            if contextual and isinstance(contextual.get("message"), str):
+                res.clarify_question = contextual["message"]
+
+        can_create = spec.create_endpoint and (
+            spec.create_permission is None
+            or has_permission(user, spec.create_permission)
+        )
+        suppress_create = bool(contextual and contextual.get("suppress_create"))
+        if can_create and not suppress_create:
+            payload = (
+                contextual.get("payload")
+                if contextual and isinstance(contextual.get("payload"), dict)
+                else (spec.suggestion_from(raw_text or "", slots) if spec.suggestion_from else {})
+            )
+            res.create_suggestion = {
+                "resource": spec.key,
+                "method": spec.create_method,
+                "endpoint": spec.create_endpoint,
+                "permission": spec.create_permission,
+                "payload": payload,
+            }
+            if contextual:
+                res.create_suggestion.update({
+                    key: value
+                    for key, value in contextual.items()
+                    if key not in {"payload", "suppress_create"}
+                })
     return res
