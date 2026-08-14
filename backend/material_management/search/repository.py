@@ -18,6 +18,8 @@ def search_items_text(
     category_id: Optional[int] = None,
     item_type: Optional[str] = None,
     is_active: Optional[bool] = None,
+    model_ids: Optional[list[int]] = None,
+    matching_model_ids: Optional[list[int]] = None,
     limit: int = 50,
 ) -> list[Item]:
     pattern = f"%{query_text}%"
@@ -42,24 +44,27 @@ def search_items_text(
     if is_active is not None:
         query = query.filter(Item.is_active == is_active)
 
-    query = query.filter(
-        or_(
-            Item.item_code.ilike(pattern),
-            Item.name.ilike(pattern),
-            Item.description.ilike(pattern),
-            Item.barcode.ilike(pattern),
-            Item.qr_code.ilike(pattern),
-            cast(Item.specs, String).ilike(pattern),
-            ItemCategory.code.ilike(pattern),
-            ItemCategory.name.ilike(pattern),
-        )
-    )
+    if model_ids is not None:
+        if not model_ids:
+            return []
+        query = query.filter(Item.model_id.in_(model_ids))
 
-    return (
-        query.order_by(Item.name.asc(), Item.id.asc())
-        .limit(limit)
-        .all()
-    )
+    text_conditions = [
+        Item.item_code.ilike(pattern),
+        Item.name.ilike(pattern),
+        Item.description.ilike(pattern),
+        Item.barcode.ilike(pattern),
+        Item.qr_code.ilike(pattern),
+        cast(Item.specs, String).ilike(pattern),
+        ItemCategory.code.ilike(pattern),
+        ItemCategory.name.ilike(pattern),
+    ]
+    if matching_model_ids:
+        text_conditions.append(Item.model_id.in_(matching_model_ids))
+
+    query = query.filter(or_(*text_conditions))
+
+    return query.order_by(Item.name.asc(), Item.id.asc()).limit(limit).all()
 
 
 def search_item_hits_semantic(
@@ -70,6 +75,7 @@ def search_item_hits_semantic(
     category_id: Optional[int] = None,
     item_type: Optional[str] = None,
     is_active: Optional[bool] = None,
+    model_ids: Optional[list[int]] = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     query_embedding = JinaAPIEmbeddings().embed_query(query_text)
@@ -108,6 +114,16 @@ def search_item_hits_semantic(
     if is_active is not None:
         filters.append("is_active = :is_active")
         params["is_active"] = is_active
+
+    if model_ids is not None:
+        if not model_ids:
+            return []
+        placeholders = ", ".join(
+            f":model_id_{index}" for index in range(len(model_ids))
+        )
+        filters.append(f"model_id IN ({placeholders})")
+        for index, model_id in enumerate(model_ids):
+            params[f"model_id_{index}"] = model_id
 
     rows = db.execute(
         text(

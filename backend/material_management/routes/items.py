@@ -48,7 +48,7 @@ from ..services import (
     delete_unit,
     document_to_out,
     get_item_or_404,
-    item_to_out,
+    items_to_out,
     list_categories,
     list_items,
     list_units,
@@ -71,7 +71,9 @@ def get_category_tree(
     return build_category_tree(list_categories(db, current_user))
 
 
-@router.post("/categories", response_model=ItemCategoryOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/categories", response_model=ItemCategoryOut, status_code=status.HTTP_201_CREATED
+)
 def create_item_category(
     payload: ItemCategoryCreate,
     db: Session = Depends(get_db),
@@ -151,7 +153,9 @@ def remove_item_unit(
     return None
 
 
-@router.post("/import", response_model=ItemImportTaskOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/import", response_model=ItemImportTaskOut, status_code=status.HTTP_202_ACCEPTED
+)
 def import_items(
     payload: ItemImportRequest,
     db: Session = Depends(get_db),
@@ -194,7 +198,13 @@ def create_material_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("material_management:create")),
 ):
-    return item_to_out(create_item(db, current_user, payload.model_dump()), include_relations=True)
+    item = create_item(db, current_user, payload.model_dump())
+    return items_to_out(
+        db,
+        current_user,
+        [item],
+        include_relations=True,
+    )[0]
 
 
 @router.get("", response_model=list[ItemOut])
@@ -203,6 +213,10 @@ def get_material_items(
     category_id: Optional[int] = Query(None, alias="category", gt=0),
     item_type: Optional[ItemType] = Query(None),
     is_active: Optional[bool] = Query(None),
+    model_id: Optional[int] = Query(None, gt=0),
+    model: Optional[str] = Query(None, min_length=1),
+    manufacturer: Optional[str] = Query(None, min_length=1),
+    model_type: Optional[str] = Query(None, min_length=1),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -215,13 +229,26 @@ def get_material_items(
         category_id=category_id,
         item_type=item_type.value if item_type else None,
         is_active=is_active,
+        model_id=model_id,
+        model_name=model,
+        manufacturer=manufacturer,
+        model_type=model_type,
         limit=limit,
         offset=offset,
     )
-    return [item_to_out(item, include_relations=False) for item in items]
+    return items_to_out(
+        db,
+        current_user,
+        items,
+        include_relations=False,
+    )
 
 
-@router.post("/{item_id}/alternatives", response_model=ItemAlternativeOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{item_id}/alternatives",
+    response_model=ItemAlternativeOut,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_alternative(
     item_id: int,
     payload: ItemAlternativeCreate,
@@ -238,7 +265,9 @@ def create_alternative(
     )
 
 
-@router.patch("/{item_id}/alternatives/{alternative_id}", response_model=ItemAlternativeOut)
+@router.patch(
+    "/{item_id}/alternatives/{alternative_id}", response_model=ItemAlternativeOut
+)
 def patch_alternative(
     item_id: int,
     alternative_id: int,
@@ -257,7 +286,9 @@ def patch_alternative(
     )
 
 
-@router.delete("/{item_id}/alternatives/{alternative_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{item_id}/alternatives/{alternative_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 def remove_alternative(
     item_id: int,
     alternative_id: int,
@@ -268,7 +299,11 @@ def remove_alternative(
     return None
 
 
-@router.post("/{item_id}/documents", response_model=ItemDocumentOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{item_id}/documents",
+    response_model=ItemDocumentOut,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_document(
     item_id: int,
     payload: ItemDocumentCreate,
@@ -285,7 +320,9 @@ def create_document(
     )
 
 
-@router.delete("/{item_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{item_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 def remove_document(
     item_id: int,
     document_id: int,
@@ -302,10 +339,13 @@ def get_material_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("material_management:read")),
 ):
-    return item_to_out(
-        get_item_or_404(db, current_user, item_id, include_relations=True),
+    item = get_item_or_404(db, current_user, item_id, include_relations=True)
+    return items_to_out(
+        db,
+        current_user,
+        [item],
         include_relations=True,
-    )
+    )[0]
 
 
 @router.patch("/{item_id}", response_model=ItemOut)
@@ -315,15 +355,18 @@ def patch_material_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("material_management:update")),
 ):
-    return item_to_out(
-        update_item(
-            db,
-            current_user,
-            item_id,
-            payload.model_dump(exclude_unset=True),
-        ),
-        include_relations=True,
+    item = update_item(
+        db,
+        current_user,
+        item_id,
+        payload.model_dump(exclude_unset=True),
     )
+    return items_to_out(
+        db,
+        current_user,
+        [item],
+        include_relations=True,
+    )[0]
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

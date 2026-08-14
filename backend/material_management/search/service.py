@@ -8,7 +8,13 @@ from Models import User
 
 from ..models import Item
 from ..schemas import ItemSearchHit
-from ..services import ensure_item_embeddings, get_item_or_404, tenant_id
+from ..services import (
+    ensure_item_embeddings,
+    get_item_or_404,
+    item_model_summaries,
+    resolve_material_model_ids,
+    tenant_id,
+)
 from .repository import search_item_hits_semantic, search_items_text
 
 
@@ -67,6 +73,21 @@ def _merge_hits(
     return output
 
 
+def _attach_model_summaries(
+    db: Session,
+    current_user: User,
+    hits: Sequence[ItemSearchHit],
+) -> list[ItemSearchHit]:
+    model_map = item_model_summaries(
+        db,
+        current_user,
+        [hit.model_id for hit in hits],
+    )
+    return [
+        hit.model_copy(update={"model": model_map.get(hit.model_id)}) for hit in hits
+    ]
+
+
 def validate_item_scope(
     db: Session,
     current_user: User,
@@ -90,6 +111,10 @@ def search_item_hits(
     category_id: Optional[int] = None,
     item_type: Optional[str] = None,
     is_active: Optional[bool] = None,
+    model_id: Optional[int] = None,
+    model_name: Optional[str] = None,
+    manufacturer: Optional[str] = None,
+    model_type: Optional[str] = None,
     limit: int = 20,
 ) -> list[ItemSearchHit]:
     if mode == "semantic":
@@ -97,6 +122,24 @@ def search_item_hits(
 
     scoped_ids = list(dict.fromkeys(item_ids or []))
     company_id = tenant_id(current_user)
+    filtered_model_ids = resolve_material_model_ids(
+        db,
+        current_user,
+        model_id=model_id,
+        model_name=model_name,
+        manufacturer=manufacturer,
+        model_type=model_type,
+    )
+    if filtered_model_ids is not None and not filtered_model_ids:
+        return []
+    matching_model_ids = (
+        resolve_material_model_ids(
+            db,
+            current_user,
+            query_text=query_text,
+        )
+        or []
+    )
 
     semantic_hits: list[ItemSearchHit] = []
     semantic_available = False
@@ -117,6 +160,7 @@ def search_item_hits(
                 category_id=category_id,
                 item_type=item_type,
                 is_active=is_active,
+                model_ids=filtered_model_ids,
                 limit=limit,
             )
             semantic_hits = [_item_to_semantic_hit(row) for row in semantic_rows]
@@ -124,10 +168,14 @@ def search_item_hits(
         except Exception:
             semantic_hits = []
 
-    needs_text = mode in {"keyword", "hybrid"} or (
-        mode == "vector" and not semantic_available
+    needs_text = (
+        mode in {"keyword", "hybrid"}
+        or bool(matching_model_ids)
+        or (mode == "vector" and not semantic_available)
     )
-    text_source = "text_fallback" if mode == "vector" and not semantic_available else "text"
+    text_source = (
+        "text_fallback" if mode == "vector" and not semantic_available else "text"
+    )
 
     text_hits: list[ItemSearchHit] = []
 
@@ -140,17 +188,27 @@ def search_item_hits(
             category_id=category_id,
             item_type=item_type,
             is_active=is_active,
+            model_ids=filtered_model_ids,
+            matching_model_ids=matching_model_ids,
             limit=limit,
         )
         text_hits = [
-            _item_to_text_hit(item, match_source=text_source)
-            for item in text_rows
+            _item_to_text_hit(item, match_source=text_source) for item in text_rows
         ]
 
     if mode == "keyword":
-        return text_hits[:limit]
+        return _attach_model_summaries(db, current_user, text_hits[:limit])
 
     if mode == "vector":
-        return semantic_hits[:limit] if semantic_available else text_hits[:limit]
+        hits = (
+            _merge_hits(semantic_hits, text_hits, limit)
+            if semantic_available and matching_model_ids
+            else semantic_hits[:limit] if semantic_available else text_hits[:limit]
+        )
+        return _attach_model_summaries(db, current_user, hits)
 
-    return _merge_hits(semantic_hits, text_hits, limit)
+    return _attach_model_summaries(
+        db,
+        current_user,
+        _merge_hits(semantic_hits, text_hits, limit),
+    )

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from assistant.module_interface import Candidate, FunctionSearchProvider, ResourceSpec, register_resource
+from assistant.module_interface import (
+    Candidate,
+    FunctionSearchProvider,
+    ResourceSpec,
+    register_resource,
+)
 from assistant.registry import register_toolset
 from shared.commerce_assistant import (
     ConfiguredCommerceToolSet,
@@ -39,17 +44,38 @@ def _item_to_candidate(item) -> Candidate:
     code = getattr(item, "item_code", None)
     name = getattr(item, "name", None)
     item_type = getattr(item, "item_type", None)
-    label = " - ".join(part for part in (code, name, item_type) if part)
+    model = getattr(item, "model", None)
+    manufacturer = getattr(model, "manufacturer", None)
+    model_name = getattr(model, "model", None)
+    model_type = getattr(model, "type", None)
+    label = " - ".join(
+        part
+        for part in (
+            code,
+            name,
+            manufacturer,
+            model_name,
+            model_type,
+            item_type,
+        )
+        if part
+    )
     return Candidate(
         id=item.item_id,
-        match_text=name or code or "",
+        match_text=" ".join(
+            part for part in (name, code, manufacturer, model_name, model_type) if part
+        ),
         label=label or f"Item #{item.item_id}",
-        data=item.model_dump(mode="json") if hasattr(item, "model_dump") else {
-            "item_id": item.item_id,
-            "item_code": code,
-            "name": name,
-            "item_type": item_type,
-        },
+        data=(
+            item.model_dump(mode="json")
+            if hasattr(item, "model_dump")
+            else {
+                "item_id": item.item_id,
+                "item_code": code,
+                "name": name,
+                "item_type": item_type,
+            }
+        ),
     )
 
 
@@ -90,39 +116,51 @@ def _unit_to_candidate(unit) -> Candidate:
 
 
 def register_material_resources() -> None:
-    register_resource(ResourceSpec(
-        key="material_item",
-        read_permission=P_SEARCH,
-        provider=FunctionSearchProvider(_search_items_for_resolution, _item_to_candidate),
-        create_permission=P_CREATE,
-        create_endpoint=API_PREFIX,
-        suggestion_from=lambda raw, slots: {
-            "name": raw,
-            "item_code": slots.get("item_code") or raw,
-        },
-    ))
-    register_resource(ResourceSpec(
-        key="item_category",
-        read_permission=P_READ,
-        provider=FunctionSearchProvider(search_categories_for_assistant, _category_to_candidate),
-        create_permission=P_CREATE,
-        create_endpoint=f"{API_PREFIX}/categories",
-        suggestion_from=lambda raw, slots: {
-            "code": slots.get("category_code") or raw,
-            "name": raw,
-        },
-    ))
-    register_resource(ResourceSpec(
-        key="material_unit",
-        read_permission=P_READ,
-        provider=FunctionSearchProvider(search_units_for_assistant, _unit_to_candidate),
-        create_permission=P_CREATE,
-        create_endpoint=f"{API_PREFIX}/units",
-        suggestion_from=lambda raw, slots: {
-            "code": slots.get("unit_code") or raw,
-            "name": raw,
-        },
-    ))
+    register_resource(
+        ResourceSpec(
+            key="material_item",
+            read_permission=P_SEARCH,
+            provider=FunctionSearchProvider(
+                _search_items_for_resolution, _item_to_candidate
+            ),
+            create_permission=P_CREATE,
+            create_endpoint=API_PREFIX,
+            suggestion_from=lambda raw, slots: {
+                "name": raw,
+                "item_code": slots.get("item_code") or raw,
+            },
+        )
+    )
+    register_resource(
+        ResourceSpec(
+            key="item_category",
+            read_permission=P_READ,
+            provider=FunctionSearchProvider(
+                search_categories_for_assistant, _category_to_candidate
+            ),
+            create_permission=P_CREATE,
+            create_endpoint=f"{API_PREFIX}/categories",
+            suggestion_from=lambda raw, slots: {
+                "code": slots.get("category_code") or raw,
+                "name": raw,
+            },
+        )
+    )
+    register_resource(
+        ResourceSpec(
+            key="material_unit",
+            read_permission=P_READ,
+            provider=FunctionSearchProvider(
+                search_units_for_assistant, _unit_to_candidate
+            ),
+            create_permission=P_CREATE,
+            create_endpoint=f"{API_PREFIX}/units",
+            suggestion_from=lambda raw, slots: {
+                "code": slots.get("unit_code") or raw,
+                "name": raw,
+            },
+        )
+    )
 
 
 def _normalize_material_write_slots(
@@ -139,18 +177,13 @@ def _normalize_material_write_slots(
     )
 
     for source, target in alias_pairs:
-        if (
-            target not in normalized
-            and normalized.get(source) is not None
-        ):
+        if target not in normalized and normalized.get(source) is not None:
             normalized[target] = normalized[source]
 
     item_code = normalized.get("item_code")
 
     if item_code is not None:
-        normalized["item_code"] = str(
-            item_code
-        ).translate(
+        normalized["item_code"] = str(item_code).translate(
             str.maketrans(
                 "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
                 "01234567890123456789",
@@ -169,9 +202,7 @@ def _normalize_material_write_slots(
             .replace("ك", "ک")
         )
 
-        compact_unit = "".join(
-            unit_text.split()
-        )
+        compact_unit = "".join(unit_text.split())
 
         if compact_unit in {
             "kg",
@@ -193,13 +224,10 @@ def _normalize_material_write_slots(
     )
 
     if not explicit_criticality:
-        description = str(
-            normalized.get("description") or ""
-        )
+        description = str(normalized.get("description") or "")
 
         normalized_description = (
-            description
-            .strip()
+            description.strip()
             .lower()
             .replace("‌", " ")
             .replace("ي", "ی")
@@ -227,15 +255,9 @@ def _normalize_material_write_slots(
             "is critical",
         )
 
-        if any(
-            phrase in normalized_description
-            for phrase in negative_phrases
-        ):
+        if any(phrase in normalized_description for phrase in negative_phrases):
             normalized["is_critical"] = False
-        elif any(
-            phrase in normalized_description
-            for phrase in positive_phrases
-        ):
+        elif any(phrase in normalized_description for phrase in positive_phrases):
             normalized["is_critical"] = True
 
     return normalized
@@ -243,6 +265,22 @@ def _normalize_material_write_slots(
 
 class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
     module = MODULE
+
+    def _item(self, spec, hit):
+        result = super()._item(spec, hit)
+        if spec.resource_type != "item":
+            return result
+
+        model = getattr(hit, "model", None)
+        model_parts = [
+            getattr(model, "manufacturer", None),
+            getattr(model, "model", None),
+            getattr(model, "type", None),
+        ]
+        visible_model_parts = [part for part in model_parts if part]
+        if visible_model_parts:
+            result["title"] = " - ".join([result["title"], *visible_model_parts])
+        return result
 
     def build_draft(
         self,
@@ -257,9 +295,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
             "add_item",
             "update_item",
         }:
-            slots = _normalize_material_write_slots(
-                slots
-            )
+            slots = _normalize_material_write_slots(slots)
 
         return super().build_draft(
             intent=intent,
@@ -268,6 +304,7 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
             slots=slots,
             attachments=attachments,
         )
+
     search_specs = (
         SearchSpec(
             intent="search_items",
@@ -287,6 +324,10 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 "category_id": ("int", "category"),
                 "item_type": ("str", "type"),
                 "is_active": ("bool", "active"),
+                "model_id": ("int", "model id"),
+                "model_name": ("str", "model"),
+                "manufacturer": ("str", "make", "brand"),
+                "model_type": ("str", "equipment_type"),
             },
         ),
     )
@@ -348,9 +389,21 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("specs", kind="raw"),
                 PayloadField("barcode"),
                 PayloadField("qr_code"),
-                PayloadField("item_type", kind="enum", enum_values=tuple(item.value for item in ItemType), default=ItemType.MATERIAL.value),
-                PayloadField("is_active", aliases=("active",), kind="bool", default=True),
-                PayloadField("is_critical", aliases=("critical", "item_critical", "criticality"), kind="bool", default=False),
+                PayloadField(
+                    "item_type",
+                    kind="enum",
+                    enum_values=tuple(item.value for item in ItemType),
+                    default=ItemType.MATERIAL.value,
+                ),
+                PayloadField(
+                    "is_active", aliases=("active",), kind="bool", default=True
+                ),
+                PayloadField(
+                    "is_critical",
+                    aliases=("critical", "item_critical", "criticality"),
+                    kind="bool",
+                    default=False,
+                ),
                 PayloadField("lead_time_days", aliases=("lead_time",), kind="int"),
             ),
         ),
@@ -411,9 +464,17 @@ class MaterialAssistantToolSet(ConfiguredCommerceToolSet):
                 PayloadField("specs", kind="raw"),
                 PayloadField("barcode"),
                 PayloadField("qr_code"),
-                PayloadField("item_type", kind="enum", enum_values=tuple(item.value for item in ItemType)),
+                PayloadField(
+                    "item_type",
+                    kind="enum",
+                    enum_values=tuple(item.value for item in ItemType),
+                ),
                 PayloadField("is_active", aliases=("active",), kind="bool"),
-                PayloadField("is_critical", aliases=("critical", "item_critical", "criticality"), kind="bool"),
+                PayloadField(
+                    "is_critical",
+                    aliases=("critical", "item_critical", "criticality"),
+                    kind="bool",
+                ),
                 PayloadField("lead_time_days", aliases=("lead_time",), kind="int"),
             ),
         ),

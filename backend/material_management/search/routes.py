@@ -30,5 +30,9 @@ def search_items(
         category_id=payload.category_id,
         item_type=payload.item_type.value if payload.item_type else None,
         is_active=payload.is_active,
+        model_id=payload.model_id,
+        model_name=payload.model,
+        manufacturer=payload.manufacturer,
+        model_type=payload.model_type,
         limit=payload.limit,
     )

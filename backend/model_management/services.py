@@ -46,13 +46,64 @@ def search_models_for_assistant(
     text_value = (query_text or "").strip()
     if text_value:
         pattern = f"%{text_value}%"
-        query = query.filter(or_(
-            ManagedModel.manufacturer.ilike(pattern),
-            ManagedModel.model.ilike(pattern),
-            ManagedModel.description.ilike(pattern),
-            ManagedModel.type.ilike(pattern),
-        ))
+        query = query.filter(
+            or_(
+                ManagedModel.manufacturer.ilike(pattern),
+                ManagedModel.model.ilike(pattern),
+                ManagedModel.description.ilike(pattern),
+                ManagedModel.type.ilike(pattern),
+            )
+        )
     return query.order_by(ManagedModel.created_at.desc()).limit(limit).all()
+
+
+def find_model_ids(
+    db: Session,
+    current_user: User,
+    *,
+    query_text: str | None = None,
+    ids: list[int] | None = None,
+    model_name: str | None = None,
+    manufacturer: str | None = None,
+    model_type: str | None = None,
+) -> list[int]:
+    """Resolve model filters for other modules without exposing model internals.
+
+    Cross-module consumers use this service seam and keep their own queries
+    scoped to the returned IDs. Text filters intentionally use partial,
+    case-insensitive matching, consistent with the model list/search routes.
+    """
+    company_id = require_company(current_user)
+    query = db.query(ManagedModel.id).filter(ManagedModel.company_id == company_id)
+
+    if ids is not None:
+        if not ids:
+            return []
+        query = query.filter(ManagedModel.id.in_(list(dict.fromkeys(ids))))
+
+    text_value = (query_text or "").strip()
+    if text_value:
+        pattern = f"%{text_value}%"
+        query = query.filter(
+            or_(
+                ManagedModel.manufacturer.ilike(pattern),
+                ManagedModel.model.ilike(pattern),
+                ManagedModel.description.ilike(pattern),
+                ManagedModel.type.ilike(pattern),
+            )
+        )
+
+    filters = (
+        (ManagedModel.model, model_name),
+        (ManagedModel.manufacturer, manufacturer),
+        (ManagedModel.type, model_type),
+    )
+    for column, value in filters:
+        normalized = (value or "").strip()
+        if normalized:
+            query = query.filter(column.ilike(f"%{normalized}%"))
+
+    return [row[0] for row in query.order_by(ManagedModel.id.asc()).all()]
 
 
 def get_doc_ids(db: Session, model_id: int) -> List[int]:
@@ -170,7 +221,9 @@ def search_model_receipt_link_ids(
     return output[:limit]
 
 
-def get_model_info_map(db: Session, model_ids: List[int], company_id: int) -> dict[int, ManagedModel]:
+def get_model_info_map(
+    db: Session, model_ids: List[int], company_id: int
+) -> dict[int, ManagedModel]:
     if not model_ids:
         return {}
     models = (

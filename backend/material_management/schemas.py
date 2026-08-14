@@ -250,6 +250,13 @@ class ItemDocumentOut(BaseModel):
     created_at: datetime
 
 
+class ItemModelSummaryOut(BaseModel):
+    id: int
+    manufacturer: str
+    model: str
+    type: Optional[str] = None
+
+
 class ItemOut(BaseModel):
     id: int
     company_id: int
@@ -259,6 +266,7 @@ class ItemOut(BaseModel):
     category_id: int
     unit_id: int
     model_id: Optional[int] = None
+    model: Optional[ItemModelSummaryOut] = None
     specs: dict
     barcode: Optional[str] = None
     qr_code: Optional[str] = None
@@ -282,6 +290,10 @@ class ItemSearchRequest(BaseModel):
     category_id: Optional[int] = Field(None, gt=0)
     item_type: Optional[ItemType] = None
     is_active: Optional[bool] = None
+    model_id: Optional[int] = Field(None, gt=0)
+    model: Optional[str] = Field(None, min_length=1)
+    manufacturer: Optional[str] = Field(None, min_length=1)
+    model_type: Optional[str] = Field(None, min_length=1)
     mode: Literal["keyword", "semantic", "vector", "hybrid"] = "hybrid"
     limit: int = Field(default=20, ge=1, le=200)
 
@@ -295,6 +307,7 @@ class ItemSearchHit(BaseModel):
     category_id: int
     unit_id: int
     model_id: Optional[int] = None
+    model: Optional[ItemModelSummaryOut] = None
     item_type: ItemType
     is_active: bool
     is_critical: bool

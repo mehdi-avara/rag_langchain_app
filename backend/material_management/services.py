@@ -34,13 +34,16 @@ from .schemas import (
     ItemCategoryOut,
     ItemCategoryTreeOut,
     ItemDocumentOut,
+    ItemModelSummaryOut,
     ItemOut,
     UnitOut,
 )
 
 
 def _raise(status_code: int, code: str, message: str):
-    raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
+    raise HTTPException(
+        status_code=status_code, detail={"code": code, "message": message}
+    )
 
 
 def tenant_id(current_user: User) -> int:
@@ -77,7 +80,9 @@ def _item_query(db: Session):
     )
 
 
-def get_category_or_404(db: Session, current_user: User, category_id: int) -> ItemCategory:
+def get_category_or_404(
+    db: Session, current_user: User, category_id: int
+) -> ItemCategory:
     category = (
         db.query(ItemCategory)
         .filter(
@@ -87,7 +92,11 @@ def get_category_or_404(db: Session, current_user: User, category_id: int) -> It
         .first()
     )
     if category is None:
-        _raise(status.HTTP_404_NOT_FOUND, ITEM_CATEGORY_NOT_FOUND, "Item category not found")
+        _raise(
+            status.HTTP_404_NOT_FOUND,
+            ITEM_CATEGORY_NOT_FOUND,
+            "Item category not found",
+        )
     return category
 
 
@@ -112,13 +121,10 @@ def get_item_or_404(
     include_relations: bool = False,
 ) -> Item:
     query = _item_query(db) if include_relations else db.query(Item)
-    item = (
-        query.filter(
-            Item.id == item_id,
-            Item.company_id == tenant_id(current_user),
-        )
-        .first()
-    )
+    item = query.filter(
+        Item.id == item_id,
+        Item.company_id == tenant_id(current_user),
+    ).first()
     if item is None:
         _raise(status.HTTP_404_NOT_FOUND, ITEM_NOT_FOUND, "Item not found")
     return item
@@ -135,7 +141,9 @@ def get_item_reference(db: Session, current_user: User, item_id: int) -> dict[st
     }
 
 
-def _validate_model_id(db: Session, current_user: User, model_id: Optional[int]) -> None:
+def _validate_model_id(
+    db: Session, current_user: User, model_id: Optional[int]
+) -> None:
     if model_id is None:
         return
     from model_management.services import get_model_or_404
@@ -143,7 +151,9 @@ def _validate_model_id(db: Session, current_user: User, model_id: Optional[int])
     get_model_or_404(db, model_id, current_user)
 
 
-def _validate_supplier_id(db: Session, current_user: User, supplier_id: Optional[int]) -> None:
+def _validate_supplier_id(
+    db: Session, current_user: User, supplier_id: Optional[int]
+) -> None:
     if supplier_id is None:
         return
     from supplier_management.services import get_supplier_or_404
@@ -183,7 +193,9 @@ def item_searchable_text(item: Item) -> str:
     ]
 
     if getattr(item, "category", None) is not None:
-        values.extend([item.category.code, item.category.name, item.category.description])
+        values.extend(
+            [item.category.code, item.category.name, item.category.description]
+        )
 
     if getattr(item, "unit", None) is not None:
         values.extend([item.unit.code, item.unit.name, item.unit.unit_type])
@@ -261,7 +273,66 @@ def document_to_out(document: ItemDocument) -> ItemDocumentOut:
     )
 
 
-def item_to_out(item: Item, include_relations: bool = True) -> ItemOut:
+def item_model_summaries(
+    db: Session,
+    current_user: User,
+    model_ids: Sequence[Optional[int]],
+) -> dict[int, ItemModelSummaryOut]:
+    ids = list(
+        dict.fromkeys(model_id for model_id in model_ids if model_id is not None)
+    )
+    if not ids:
+        return {}
+
+    from model_management.services import get_model_info_map
+
+    model_map = get_model_info_map(db, ids, tenant_id(current_user))
+    return {
+        model_id: ItemModelSummaryOut(
+            id=model.id,
+            manufacturer=model.manufacturer,
+            model=model.model,
+            type=model.type,
+        )
+        for model_id, model in model_map.items()
+    }
+
+
+def resolve_material_model_ids(
+    db: Session,
+    current_user: User,
+    *,
+    query_text: Optional[str] = None,
+    model_id: Optional[int] = None,
+    model_name: Optional[str] = None,
+    manufacturer: Optional[str] = None,
+    model_type: Optional[str] = None,
+) -> Optional[list[int]]:
+    has_filter = any(
+        value is not None and str(value).strip()
+        for value in (model_id, model_name, manufacturer, model_type)
+    )
+    if not has_filter and not (query_text or "").strip():
+        return None
+
+    from model_management.services import find_model_ids
+
+    return find_model_ids(
+        db,
+        current_user,
+        query_text=query_text,
+        ids=[model_id] if model_id is not None else None,
+        model_name=model_name,
+        manufacturer=manufacturer,
+        model_type=model_type,
+    )
+
+
+def item_to_out(
+    item: Item,
+    include_relations: bool = True,
+    model: Optional[ItemModelSummaryOut] = None,
+) -> ItemOut:
     return ItemOut(
         id=item.id,
         company_id=item.company_id,
@@ -271,6 +342,7 @@ def item_to_out(item: Item, include_relations: bool = True) -> ItemOut:
         category_id=item.category_id,
         unit_id=item.unit_id,
         model_id=item.model_id,
+        model=model,
         specs=item.specs or {},
         barcode=item.barcode,
         qr_code=item.qr_code,
@@ -279,20 +351,47 @@ def item_to_out(item: Item, include_relations: bool = True) -> ItemOut:
         is_critical=item.is_critical,
         lead_time_days=item.lead_time_days,
         created_by_user_id=item.created_by_user_id,
-        embedding_status="available" if item.description_embedding is not None else "pending",
+        embedding_status=(
+            "available" if item.description_embedding is not None else "pending"
+        ),
         created_at=item.created_at,
         updated_at=item.updated_at,
         category=category_to_out(item.category),
         unit=unit_to_out(item.unit),
-        alternatives=[
-            alternative_to_out(value)
-            for value in list(item.alternatives or [])
-        ] if include_relations else [],
-        documents=[
-            document_to_out(value)
-            for value in list(item.documents or [])
-        ] if include_relations else [],
+        alternatives=(
+            [alternative_to_out(value) for value in list(item.alternatives or [])]
+            if include_relations
+            else []
+        ),
+        documents=(
+            [document_to_out(value) for value in list(item.documents or [])]
+            if include_relations
+            else []
+        ),
     )
+
+
+def items_to_out(
+    db: Session,
+    current_user: User,
+    items: Sequence[Item],
+    *,
+    include_relations: bool,
+) -> list[ItemOut]:
+    material_items = list(items)
+    model_map = item_model_summaries(
+        db,
+        current_user,
+        [item.model_id for item in material_items],
+    )
+    return [
+        item_to_out(
+            item,
+            include_relations=include_relations,
+            model=model_map.get(item.model_id),
+        )
+        for item in material_items
+    ]
 
 
 def list_categories(db: Session, current_user: User) -> list[ItemCategory]:
@@ -312,7 +411,9 @@ def _lookup_tokens(text: str) -> set[str]:
     }
 
 
-def _lookup_rank(query_text: str, values: Sequence[Optional[str]]) -> Optional[tuple[int, str]]:
+def _lookup_rank(
+    query_text: str, values: Sequence[Optional[str]]
+) -> Optional[tuple[int, str]]:
     query = (query_text or "").strip().lower()
     haystack = " ".join(value for value in values if value).lower()
     if not query:
@@ -338,14 +439,18 @@ def search_categories_for_assistant(
 ) -> list[ItemCategory]:
     ranked: list[tuple[tuple[int, str], ItemCategory]] = []
     for category in list_categories(db, current_user):
-        rank = _lookup_rank(query_text, (category.code, category.name, category.description))
+        rank = _lookup_rank(
+            query_text, (category.code, category.name, category.description)
+        )
         if rank is not None:
             ranked.append((rank, category))
     ranked.sort(key=lambda item: (item[0][0], item[1].code, item[1].id))
     return [category for _, category in ranked[: max(1, limit)]]
 
 
-def build_category_tree(categories: Sequence[ItemCategory]) -> list[ItemCategoryTreeOut]:
+def build_category_tree(
+    categories: Sequence[ItemCategory],
+) -> list[ItemCategoryTreeOut]:
     nodes = {
         category.id: ItemCategoryTreeOut(
             id=category.id,
@@ -411,9 +516,7 @@ def _validate_category_parent(
             )
 
         current = (
-            db.query(ItemCategory)
-            .filter(ItemCategory.id == current.parent_id)
-            .first()
+            db.query(ItemCategory).filter(ItemCategory.id == current.parent_id).first()
         )
         if current is None:
             break
@@ -432,7 +535,11 @@ def create_category(db: Session, current_user: User, data: dict) -> ItemCategory
         .first()
     )
     if existing:
-        _raise(status.HTTP_409_CONFLICT, ITEM_CATEGORY_ALREADY_EXISTS, "Item category code already exists")
+        _raise(
+            status.HTTP_409_CONFLICT,
+            ITEM_CATEGORY_ALREADY_EXISTS,
+            "Item category code already exists",
+        )
 
     _validate_category_parent(db, current_user, None, data.get("parent_id"))
 
@@ -450,7 +557,9 @@ def create_category(db: Session, current_user: User, data: dict) -> ItemCategory
     return category
 
 
-def update_category(db: Session, current_user: User, category_id: int, data: dict) -> ItemCategory:
+def update_category(
+    db: Session, current_user: User, category_id: int, data: dict
+) -> ItemCategory:
     category = get_category_or_404(db, current_user, category_id)
 
     if "parent_id" in data:
@@ -468,7 +577,11 @@ def update_category(db: Session, current_user: User, category_id: int, data: dic
             .first()
         )
         if existing:
-            _raise(status.HTTP_409_CONFLICT, ITEM_CATEGORY_ALREADY_EXISTS, "Item category code already exists")
+            _raise(
+                status.HTTP_409_CONFLICT,
+                ITEM_CATEGORY_ALREADY_EXISTS,
+                "Item category code already exists",
+            )
         category.code = code
 
     for key in ("name", "parent_id", "description"):
@@ -531,12 +644,12 @@ def create_unit(db: Session, current_user: User, data: dict) -> Unit:
     code = _clean_code(data["code"], "code")
 
     existing = (
-        db.query(Unit)
-        .filter(Unit.company_id == company_id, Unit.code == code)
-        .first()
+        db.query(Unit).filter(Unit.company_id == company_id, Unit.code == code).first()
     )
     if existing:
-        _raise(status.HTTP_409_CONFLICT, UNIT_ALREADY_EXISTS, "Unit code already exists")
+        _raise(
+            status.HTTP_409_CONFLICT, UNIT_ALREADY_EXISTS, "Unit code already exists"
+        )
 
     unit = Unit(
         company_id=company_id,
@@ -566,7 +679,11 @@ def update_unit(db: Session, current_user: User, unit_id: int, data: dict) -> Un
             .first()
         )
         if existing:
-            _raise(status.HTTP_409_CONFLICT, UNIT_ALREADY_EXISTS, "Unit code already exists")
+            _raise(
+                status.HTTP_409_CONFLICT,
+                UNIT_ALREADY_EXISTS,
+                "Unit code already exists",
+            )
         unit.code = code
 
     if "name" in data:
@@ -584,7 +701,11 @@ def delete_unit(db: Session, current_user: User, unit_id: int) -> None:
     unit = get_unit_or_404(db, current_user, unit_id)
 
     if db.query(Item.id).filter(Item.unit_id == unit.id).first():
-        _raise(status.HTTP_409_CONFLICT, "UNIT_IN_USE", "Cannot delete a unit used by items")
+        _raise(
+            status.HTTP_409_CONFLICT,
+            "UNIT_IN_USE",
+            "Cannot delete a unit used by items",
+        )
 
     db.delete(unit)
     db.commit()
@@ -597,6 +718,10 @@ def list_items(
     category_id: Optional[int] = None,
     item_type: Optional[str] = None,
     is_active: Optional[bool] = None,
+    model_id: Optional[int] = None,
+    model_name: Optional[str] = None,
+    manufacturer: Optional[str] = None,
+    model_type: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Item]:
@@ -611,19 +736,43 @@ def list_items(
     if is_active is not None:
         query = query.filter(Item.is_active == is_active)
 
+    filtered_model_ids = resolve_material_model_ids(
+        db,
+        current_user,
+        model_id=model_id,
+        model_name=model_name,
+        manufacturer=manufacturer,
+        model_type=model_type,
+    )
+    if filtered_model_ids is not None:
+        if not filtered_model_ids:
+            return []
+        query = query.filter(Item.model_id.in_(filtered_model_ids))
+
     if query_text:
         pattern = f"%{query_text.strip()}%"
-        query = query.join(ItemCategory, Item.category_id == ItemCategory.id).filter(
-            or_(
-                Item.item_code.ilike(pattern),
-                Item.name.ilike(pattern),
-                Item.description.ilike(pattern),
-                Item.barcode.ilike(pattern),
-                Item.qr_code.ilike(pattern),
-                cast(Item.specs, String).ilike(pattern),
-                ItemCategory.code.ilike(pattern),
-                ItemCategory.name.ilike(pattern),
+        matching_model_ids = (
+            resolve_material_model_ids(
+                db,
+                current_user,
+                query_text=query_text,
             )
+            or []
+        )
+        text_conditions = [
+            Item.item_code.ilike(pattern),
+            Item.name.ilike(pattern),
+            Item.description.ilike(pattern),
+            Item.barcode.ilike(pattern),
+            Item.qr_code.ilike(pattern),
+            cast(Item.specs, String).ilike(pattern),
+            ItemCategory.code.ilike(pattern),
+            ItemCategory.name.ilike(pattern),
+        ]
+        if matching_model_ids:
+            text_conditions.append(Item.model_id.in_(matching_model_ids))
+        query = query.join(ItemCategory, Item.category_id == ItemCategory.id).filter(
+            or_(*text_conditions)
         )
 
     return (
@@ -656,7 +805,9 @@ def create_item(db: Session, current_user: User, data: dict) -> Item:
         .first()
     )
     if existing:
-        _raise(status.HTTP_409_CONFLICT, ITEM_ALREADY_EXISTS, "Item code already exists")
+        _raise(
+            status.HTTP_409_CONFLICT, ITEM_ALREADY_EXISTS, "Item code already exists"
+        )
 
     _validate_item_references(
         db,
@@ -711,7 +862,11 @@ def update_item(db: Session, current_user: User, item_id: int, data: dict) -> It
             .first()
         )
         if existing:
-            _raise(status.HTTP_409_CONFLICT, ITEM_ALREADY_EXISTS, "Item code already exists")
+            _raise(
+                status.HTTP_409_CONFLICT,
+                ITEM_ALREADY_EXISTS,
+                "Item code already exists",
+            )
         item.item_code = item_code
 
     if "name" in data:
@@ -780,7 +935,11 @@ def _get_alternative_or_404(
         .first()
     )
     if alternative is None:
-        _raise(status.HTTP_404_NOT_FOUND, ITEM_ALTERNATIVE_NOT_FOUND, "Item alternative not found")
+        _raise(
+            status.HTTP_404_NOT_FOUND,
+            ITEM_ALTERNATIVE_NOT_FOUND,
+            "Item alternative not found",
+        )
     return alternative
 
 
@@ -894,7 +1053,11 @@ def _get_document_or_404(
         .first()
     )
     if document is None:
-        _raise(status.HTTP_404_NOT_FOUND, ITEM_DOCUMENT_NOT_FOUND, "Item document not found")
+        _raise(
+            status.HTTP_404_NOT_FOUND,
+            ITEM_DOCUMENT_NOT_FOUND,
+            "Item document not found",
+        )
     return document
 
 
@@ -1129,8 +1292,7 @@ def get_unit_references(
         {
             int(unit_id)
             for unit_id in unit_ids
-            if unit_id is not None
-            and int(unit_id) > 0
+            if unit_id is not None and int(unit_id) > 0
         }
     )
 
@@ -1140,8 +1302,7 @@ def get_unit_references(
     units = (
         db.query(Unit)
         .filter(
-            Unit.company_id
-            == tenant_id(current_user),
+            Unit.company_id == tenant_id(current_user),
             Unit.id.in_(normalized_ids),
         )
         .all()
