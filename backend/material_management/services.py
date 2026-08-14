@@ -355,6 +355,24 @@ def find_model_candidates_for_item_reference(
     )
 
 
+def find_model_summary_for_item_reference(
+    db: Session,
+    current_user: User,
+    model_id: int,
+) -> dict | None:
+    """Resolve one selected managed model through its owning service."""
+
+    from model_management.services import (
+        find_model_summary_for_material_reference,
+    )
+
+    return find_model_summary_for_material_reference(
+        db,
+        current_user,
+        model_id,
+    )
+
+
 def item_to_out(
     item: Item,
     include_relations: bool = True,

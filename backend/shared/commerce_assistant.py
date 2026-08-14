@@ -239,6 +239,7 @@ def requisition_items_from_slots(slots: dict) -> Optional[list[dict]]:
         ("item_id", "int", ("material_item_id",)),
         ("item_query", "str", ("item_name", "item", "material_item", "part", "part_name")),
         ("manufacturer", "str", ("make", "brand")),
+        ("model_id", "int", ("managed_model_id", "selected_model_id")),
         ("model_name", "str", ("model", "equipment_model")),
         ("model_type", "str", ("equipment_type",)),
         ("item_type", "str", ()),

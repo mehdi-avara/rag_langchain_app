@@ -8,6 +8,7 @@ from assistant.module_interface import (
     ResourceSpec,
     register_resource,
 )
+from assistant.rbac import has_permission
 from assistant.registry import register_toolset
 from shared.commerce_assistant import (
     ConfiguredCommerceToolSet,
@@ -21,6 +22,8 @@ from .models import ItemType
 from .search.service import search_item_hits
 from .services import (
     find_model_candidates_for_item_reference,
+    find_model_summary_for_item_reference,
+    list_items,
     search_categories_for_assistant,
     search_units_for_assistant,
 )
@@ -33,6 +36,8 @@ P_SEARCH = "material_management:search"
 P_ASK = "material_management:ask"
 P_CREATE = "material_management:create"
 P_UPDATE = "material_management:update"
+P_MODEL_READ = "models:read"
+P_MODEL_CREATE = "models:create"
 
 
 def _context_text(context: dict, *keys: str) -> str | None:
@@ -40,6 +45,20 @@ def _context_text(context: dict, *keys: str) -> str | None:
         value = context.get(key)
         if value is not None and str(value).strip():
             return str(value).strip()
+    return None
+
+
+def _context_int(context: dict, *keys: str) -> int | None:
+    for key in keys:
+        value = context.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
     return None
 
 
@@ -53,6 +72,9 @@ def _model_reference_requested(raw: str, context: dict) -> bool:
             "manufacturer",
             "make",
             "brand",
+            "selected_model_id",
+            "managed_model_id",
+            "model_id",
         )
     ):
         return True
@@ -91,13 +113,31 @@ def _requested_item_type(
         .lower()
     )
     if any(marker in normalized for marker in equipment_markers) or (
-        model_type and model_type in normalized
+        model_type
+        and (model_type in normalized or _model_reference_requested(raw, context))
     ):
         return ItemType.EQUIPMENT.value
     return None
 
 
 def _model_candidates(db, current_user, raw: str, context: dict) -> list[dict]:
+    if not has_permission(current_user, P_MODEL_READ):
+        return []
+
+    selected_model_id = _context_int(
+        context,
+        "selected_model_id",
+        "managed_model_id",
+        "model_id",
+    )
+    if selected_model_id is not None:
+        selected = find_model_summary_for_item_reference(
+            db,
+            current_user,
+            selected_model_id,
+        )
+        return [selected] if selected is not None else []
+
     return find_model_candidates_for_item_reference(
         db,
         current_user,
@@ -123,17 +163,6 @@ def _model_candidates(db, current_user, raw: str, context: dict) -> list[dict]:
     )
 
 
-def _unique_model_candidate(candidates: list[dict]) -> dict | None:
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        first_score = float(candidates[0].get("match_score") or 0)
-        second_score = float(candidates[1].get("match_score") or 0)
-        if first_score >= second_score + 3:
-            return candidates[0]
-    return None
-
-
 def _search_items_for_resolution(
     db,
     current_user,
@@ -143,47 +172,40 @@ def _search_items_for_resolution(
     context=None,
 ):
     context = dict(context or {})
+    selected_model_id = _context_int(
+        context,
+        "selected_model_id",
+        "managed_model_id",
+        "model_id",
+    )
     model_name = _context_text(context, "model_name", "model", "equipment_model")
     manufacturer = _context_text(context, "manufacturer", "make", "brand")
     model_type = _context_text(context, "model_type", "equipment_type")
     item_type = _requested_item_type(query_text, context, None)
 
-    hits = search_item_hits(
-        db=db,
-        current_user=current_user,
-        query_text=query_text,
-        mode="hybrid",
-        item_ids=ids,
-        item_type=item_type,
-        model_name=model_name,
-        manufacturer=manufacturer,
-        model_type=model_type,
-        limit=limit,
-    )
-    if hits or not _model_reference_requested(query_text, context):
-        return hits
-
-    matched_model = _unique_model_candidate(
-        _model_candidates(db, current_user, query_text, context)
-    )
-    if matched_model is None:
-        return hits
-
-    fallback_query = (
-        _context_text(context, "item_name", "item", "material_item", "part")
-        or matched_model.get("model")
-        or query_text
-    )
-    return search_item_hits(
-        db=db,
-        current_user=current_user,
-        query_text=str(fallback_query),
-        mode="hybrid",
-        item_ids=ids,
-        item_type=_requested_item_type(query_text, context, matched_model),
-        model_id=int(matched_model["id"]),
-        limit=limit,
-    )
+    if selected_model_id is not None:
+        hits = list_items(
+            db,
+            current_user,
+            item_type=item_type,
+            is_active=True,
+            model_id=selected_model_id,
+            limit=limit,
+        )
+    else:
+        hits = search_item_hits(
+            db=db,
+            current_user=current_user,
+            query_text=query_text,
+            mode="hybrid",
+            item_ids=ids,
+            item_type=item_type,
+            model_name=model_name,
+            manufacturer=manufacturer,
+            model_type=model_type,
+            limit=limit,
+        )
+    return hits
 
 
 class _MaterialItemSearchProvider(FunctionSearchProvider):
@@ -198,7 +220,23 @@ class _MaterialItemSearchProvider(FunctionSearchProvider):
             limit=limit,
             context=context,
         )
-        return [self._to_candidate(row) for row in rows]
+        candidates = [self._to_candidate(row) for row in rows]
+        if (
+            _context_int(
+                context or {},
+                "selected_model_id",
+                "managed_model_id",
+                "model_id",
+            )
+            is not None
+        ):
+            # The user explicitly selected the managed model. Every returned
+            # item is already tenant-, model-, activity-, and item-type-scoped;
+            # make the resolver choose a sole item or expose multiple choices
+            # without requiring a cross-language name token overlap.
+            for candidate in candidates:
+                candidate.match_text = query
+        return candidates
 
 
 def _missing_material_suggestion(db, current_user, raw: str, context: dict):
@@ -206,40 +244,31 @@ def _missing_material_suggestion(db, current_user, raw: str, context: dict):
         return None
 
     candidates = _model_candidates(db, current_user, raw, context)
-    matched_model = _unique_model_candidate(candidates)
-    if matched_model is None:
-        if candidates:
-            labels = ", ".join(
-                " ".join(
-                    part
-                    for part in (
-                        str(candidate.get("manufacturer") or "").strip(),
-                        str(candidate.get("model") or "").strip(),
-                    )
-                    if part
-                )
-                for candidate in candidates[:3]
-            )
-            return {
-                "suppress_create": True,
-                "message": (
-                    "I found multiple possible equipment models "
-                    f"({labels}). Please specify which model you mean."
-                ),
-                "model_matches": candidates,
-            }
-        return {
-            "suppress_create": True,
-            "message": (
-                "I could not find a material item or a matching equipment model. "
-                "Please provide a clearer manufacturer/model, or create the model first."
-            ),
-            "model_matches": [],
-        }
+    selected_model_id = _context_int(
+        context,
+        "selected_model_id",
+        "managed_model_id",
+        "model_id",
+    )
+    matched_model = candidates[0] if selected_model_id and candidates else None
 
-    manufacturer = str(matched_model.get("manufacturer") or "").strip()
-    model_name = str(matched_model.get("model") or "").strip()
-    model_type = str(matched_model.get("type") or "").strip()
+    requested_manufacturer = _context_text(
+        context,
+        "manufacturer",
+        "make",
+        "brand",
+    )
+    requested_model_name = _context_text(
+        context,
+        "model_name",
+        "model",
+        "equipment_model",
+    )
+    requested_model_type = _context_text(
+        context,
+        "model_type",
+        "equipment_type",
+    )
     requested_name = _context_text(
         context,
         "item_name",
@@ -247,6 +276,65 @@ def _missing_material_suggestion(db, current_user, raw: str, context: dict):
         "material_item",
         "part",
     )
+
+    if matched_model is None:
+        payload = {
+            "name": requested_name or raw,
+        }
+        item_type = _requested_item_type(raw, context, None)
+        if item_type:
+            payload["item_type"] = item_type
+
+        model_payload = {
+            "manufacturer": requested_manufacturer or "",
+            "model": requested_model_name or "",
+            "type": requested_model_type or "",
+        }
+        create_model_suggestion = None
+        if has_permission(current_user, P_MODEL_CREATE):
+            create_model_suggestion = {
+                "resource": "managed_model",
+                "method": "POST",
+                "endpoint": "/models/",
+                "permission": P_MODEL_CREATE,
+                "payload": model_payload,
+            }
+
+        if candidates:
+            labels = ", ".join(
+                " ".join(
+                    part
+                    for part in (
+                        str(candidate.get("manufacturer") or "").strip(),
+                        str(candidate.get("model") or "").strip(),
+                        str(candidate.get("type") or "").strip(),
+                    )
+                    if part
+                )
+                for candidate in candidates[:3]
+            )
+            message = (
+                f"I found these exact or similar equipment models: {labels}. "
+                "Choose the correct model, or create a new one if none match."
+            )
+        else:
+            message = (
+                "I could not find an exact or similar equipment model. "
+                "Create a new model to continue."
+            )
+
+        return {
+            "payload": payload,
+            "requires_model_selection": True,
+            "model_candidates": candidates,
+            "requested_model": model_payload,
+            "create_model_suggestion": create_model_suggestion,
+            "message": message,
+        }
+
+    manufacturer = str(matched_model.get("manufacturer") or "").strip()
+    model_name = str(matched_model.get("model") or "").strip()
+    model_type = str(matched_model.get("type") or "").strip()
     name = requested_name or " ".join(
         part for part in (manufacturer, model_name, model_type) if part
     )
@@ -273,6 +361,7 @@ def _missing_material_suggestion(db, current_user, raw: str, context: dict):
 
 
 def _item_to_candidate(item) -> Candidate:
+    item_id = getattr(item, "item_id", None) or getattr(item, "id", None)
     code = getattr(item, "item_code", None)
     name = getattr(item, "name", None)
     item_type = getattr(item, "item_type", None)
@@ -293,7 +382,7 @@ def _item_to_candidate(item) -> Candidate:
         if part
     )
     return Candidate(
-        id=item.item_id,
+        id=item_id,
         match_text=" ".join(
             part for part in (name, code, manufacturer, model_name, model_type) if part
         ),
@@ -302,7 +391,7 @@ def _item_to_candidate(item) -> Candidate:
             item.model_dump(mode="json")
             if hasattr(item, "model_dump")
             else {
-                "item_id": item.item_id,
+                "item_id": item_id,
                 "item_code": code,
                 "name": name,
                 "item_type": item_type,

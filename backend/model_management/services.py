@@ -14,6 +14,14 @@ from .models import ManagedModel, ModelDocumentLink, ModelCommentLink, ModelRece
 
 
 _REFERENCE_TOKEN_RE = re.compile(r"[\w.-]+", flags=re.UNICODE)
+_MODEL_IDENTIFIER_RE = re.compile(
+    r"(?=[\w.-]*[A-Za-z])(?=[\w.-]*\d)[\w.-]{3,}",
+    flags=re.UNICODE,
+)
+_DIGIT_TRANSLATION = str.maketrans(
+    "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+    "01234567890123456789",
+)
 _REFERENCE_STOPWORDS = {
     "a",
     "an",
@@ -154,6 +162,67 @@ def _field_match_score(needle: str | None, value: str | None, weight: float) -> 
     return weight * similarity if similarity >= 0.72 else 0.0
 
 
+def _normalize_model_identifier(value: str | None) -> str:
+    return re.sub(
+        r"[^\w]+",
+        "",
+        (value or "").translate(_DIGIT_TRANSLATION).casefold(),
+        flags=re.UNICODE,
+    ).replace("_", "")
+
+
+def _model_identifier_match(
+    requested: str | None,
+    available: str | None,
+) -> tuple[str | None, float]:
+    """Classify an exact or safely similar equipment-model identifier."""
+
+    wanted = _normalize_model_identifier(requested)
+    candidate = _normalize_model_identifier(available)
+    if not wanted or not candidate:
+        return None, 0.0
+    if wanted == candidate:
+        return "exact", 1.0
+
+    similarity = SequenceMatcher(None, wanted, candidate).ratio()
+    if similarity >= 0.72:
+        return "similar", similarity
+    return None, similarity
+
+
+def _model_identifier_from_query(query_text: str | None) -> str | None:
+    match = _MODEL_IDENTIFIER_RE.search(query_text or "")
+    return match.group(0) if match else None
+
+
+def find_model_summary_for_material_reference(
+    db: Session,
+    current_user: User,
+    model_id: int,
+) -> dict | None:
+    """Return a plain tenant-scoped model summary across the module seam."""
+
+    model = (
+        db.query(ManagedModel)
+        .filter(
+            ManagedModel.id == model_id,
+            ManagedModel.company_id == require_company(current_user),
+        )
+        .first()
+    )
+    if model is None:
+        return None
+    return {
+        "id": model.id,
+        "manufacturer": model.manufacturer,
+        "model": model.model,
+        "type": model.type,
+        "match_kind": "selected",
+        "model_similarity": 1.0,
+        "match_score": 100.0,
+    }
+
+
 def find_model_candidates_for_material_reference(
     db: Session,
     current_user: User,
@@ -175,13 +244,17 @@ def find_model_candidates_for_material_reference(
     """
 
     company_id = require_company(current_user)
+    requested_model = model_name or _model_identifier_from_query(query_text)
+    normalized_model = _normalize_model_identifier(requested_model)
+    model_prefix = normalized_model[: max(3, len(normalized_model) - 1)]
     tokens = list(
         dict.fromkeys(
             [
                 *_reference_tokens(query_text),
-                *_reference_tokens(model_name),
+                *_reference_tokens(requested_model),
                 *_reference_tokens(manufacturer),
                 *_reference_tokens(model_type),
+                *([model_prefix] if len(model_prefix) >= 3 else []),
             ]
         )
     )
@@ -211,10 +284,24 @@ def find_model_candidates_for_material_reference(
     )
 
     query_tokens = _reference_tokens(query_text)
-    ranked: list[tuple[float, ManagedModel]] = []
+    ranked: list[tuple[float, ManagedModel, str | None, float]] = []
     for candidate in candidates:
+        match_kind, model_similarity = _model_identifier_match(
+            requested_model,
+            candidate.model,
+        )
+        # Once the user supplied a model identifier, manufacturer/type matches
+        # may rank candidates but can never make an unrelated model plausible.
+        if requested_model and match_kind is None:
+            continue
+
         score = 0.0
-        score += _field_match_score(model_name, candidate.model, 14.0)
+        if match_kind == "exact":
+            score += 20.0
+        elif match_kind == "similar":
+            score += 14.0 * model_similarity
+        else:
+            score += _field_match_score(model_name, candidate.model, 14.0)
         score += _field_match_score(manufacturer, candidate.manufacturer, 8.0)
         score += _field_match_score(model_type, candidate.type, 5.0)
 
@@ -236,7 +323,7 @@ def find_model_candidates_for_material_reference(
             score += best
 
         if score > 0:
-            ranked.append((score, candidate))
+            ranked.append((score, candidate, match_kind, model_similarity))
 
     ranked.sort(key=lambda pair: (-pair[0], pair[1].id))
     return [
@@ -245,9 +332,11 @@ def find_model_candidates_for_material_reference(
             "manufacturer": candidate.manufacturer,
             "model": candidate.model,
             "type": candidate.type,
+            "match_kind": match_kind or "related",
+            "model_similarity": round(model_similarity, 3),
             "match_score": round(score, 3),
         }
-        for score, candidate in ranked[:limit]
+        for score, candidate, match_kind, model_similarity in ranked[:limit]
     ]
 
 

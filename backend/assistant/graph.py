@@ -570,7 +570,20 @@ def _localized_clarify_question(*, language: str, draft_data) -> str:
                     "لطفاً گزینه درست را انتخاب کنید."
                 )
 
-            if reference.get("create_suggestion"):
+            create_suggestion = reference.get("create_suggestion")
+            if isinstance(create_suggestion, dict):
+                model_candidates = create_suggestion.get("model_candidates")
+                if isinstance(model_candidates, list) and model_candidates:
+                    return (
+                        "چند مدل دقیق یا مشابه پیدا کردم. "
+                        "لطفاً مدل درست را انتخاب کنید؛ اگر هیچ‌کدام درست نیست، "
+                        "یک مدل جدید ایجاد کنید."
+                    )
+                if create_suggestion.get("requires_model_selection"):
+                    return (
+                        "مدل دقیق یا مشابهی پیدا نشد. "
+                        "برای ادامه یک مدل جدید ایجاد کنید."
+                    )
                 return (
                     f"{label} موردنظر پیدا نشد. "
                     "آیا می‌خواهید آن را ایجاد کنید یا با عبارت دیگری جست‌وجو کنم؟"
