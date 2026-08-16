@@ -103,10 +103,22 @@ class DummyUpload:
     def __init__(self, filename: str, data: bytes, content_type: str = "image/png"):
         self.filename = filename
         self._data = data
+        self._offset = 0
         self.content_type = content_type
 
-    async def read(self) -> bytes:
-        return self._data
+    async def read(self, size: int = -1) -> bytes:
+        if self._offset >= len(self._data):
+            return b""
+
+        if size is None or size < 0:
+            chunk = self._data[self._offset:]
+            self._offset = len(self._data)
+            return chunk
+
+        end = min(self._offset + size, len(self._data))
+        chunk = self._data[self._offset:end]
+        self._offset = end
+        return chunk
 
 
 def build_card() -> FinancialCard:

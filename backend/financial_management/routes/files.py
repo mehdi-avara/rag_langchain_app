@@ -24,6 +24,101 @@ from ..services import get_receipt_or_404, receipt_file_to_out
 settings = get_settings()
 router = APIRouter(prefix="/receipts")
 
+_LEGACY_UPLOAD_CHUNK_SIZE = 1024 * 1024
+_MAX_LEGACY_FILENAME_LENGTH = 255
+
+
+def _allowed_upload_content_types() -> set[str]:
+    return {
+        item.strip()
+        for item in settings.ALLOWED_UPLOAD_CONTENT_TYPES.split(",")
+        if item.strip()
+    }
+
+
+def _validate_legacy_upload_metadata(file: UploadFile) -> tuple[str, str]:
+    original_name = Path(file.filename or "upload.bin").name.strip() or "upload.bin"
+
+    if len(original_name) > _MAX_LEGACY_FILENAME_LENGTH:
+        raise HTTPException(status_code=422, detail="Filename is too long")
+
+    content_type = (file.content_type or "").strip()
+    allowed_types = _allowed_upload_content_types()
+
+    if not content_type or (allowed_types and content_type not in allowed_types):
+        raise HTTPException(
+            status_code=415,
+            detail="File content type is not allowed",
+        )
+
+    return original_name, content_type
+
+
+async def _store_legacy_upload(file: UploadFile, file_path: Path) -> int:
+    max_size = int(settings.MAX_UPLOAD_SIZE_BYTES)
+
+    if max_size <= 0:
+        raise HTTPException(
+            status_code=500,
+            detail="Upload size limit is misconfigured",
+        )
+
+    total_size = 0
+
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with file_path.open("xb") as buffer:
+            while True:
+                chunk = await file.read(_LEGACY_UPLOAD_CHUNK_SIZE)
+
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+
+                if total_size > max_size:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="File is too large",
+                    )
+
+                buffer.write(chunk)
+
+        if total_size <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid file size",
+            )
+
+    except HTTPException:
+        file_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to store receipt file",
+        ) from exc
+
+    return total_size
+
+
+def _ensure_local_file_path_allowed(file_path: Path, company_id: int) -> None:
+    allowed_base = (
+        Path(settings.files_dir)
+        / "companies"
+        / str(company_id)
+    ).resolve()
+
+    resolved_path = file_path.resolve()
+
+    if not resolved_path.is_relative_to(allowed_base):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid file path",
+        )
+
 
 def _get_receipt_file_or_404(
     db: Session,
@@ -134,7 +229,12 @@ def complete_receipt_file_upload(
     return receipt_file_to_out(record)
 
 
-@router.post("/{receipt_id}/files", response_model=FinancialReceiptFileOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{receipt_id}/files",
+    response_model=FinancialReceiptFileOut,
+    status_code=status.HTTP_201_CREATED,
+    deprecated=True,
+)
 async def add_receipt_file(
     receipt_id: int,
     file: UploadFile = File(...),
@@ -143,29 +243,44 @@ async def add_receipt_file(
 ):
     receipt = get_receipt_or_404(db, receipt_id, current_user)
 
-    original_name = Path(file.filename or "upload.bin").name
-    extension = Path(original_name).suffix
-    stored_name = f"{uuid4().hex}{extension}"
+    original_name, content_type = _validate_legacy_upload_metadata(file)
+    stored_name = uuid4().hex
 
-    base_dir = Path(settings.files_dir) / "companies" / str(current_user.company_id) / "financial_management" / "receipts" / str(receipt.id)
-    base_dir.mkdir(parents=True, exist_ok=True)
+    base_dir = (
+        Path(settings.files_dir)
+        / "companies"
+        / str(current_user.company_id)
+        / "financial_management"
+        / "receipts"
+        / str(receipt.id)
+    )
 
     file_path = base_dir / stored_name
-    file_bytes = await file.read()
 
-    with file_path.open("wb") as buffer:
-        buffer.write(file_bytes)
+    await _store_legacy_upload(
+        file=file,
+        file_path=file_path,
+    )
 
     record = FinancialReceiptFile(
         user_id=current_user.id,
         receipt_id=receipt.id,
         file_name=original_name,
         media_address=str(file_path),
-        content_type=file.content_type,
+        content_type=content_type,
     )
 
-    db.add(record)
-    db.commit()
+    try:
+        db.add(record)
+        db.commit()
+    except Exception:
+        rollback = getattr(db, "rollback", None)
+        if callable(rollback):
+            rollback()
+
+        file_path.unlink(missing_ok=True)
+        raise
+
     db.refresh(record)
 
     return receipt_file_to_out(record)
@@ -248,10 +363,10 @@ def download_receipt_file(
         return RedirectResponse(url=download_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     file_path = Path(file_rec.media_address).resolve()
-    allowed_base = (Path(settings.files_dir) / "companies" / str(current_user.company_id)).resolve()
-
-    if not str(file_path).startswith(str(allowed_base)):
-        raise HTTPException(status_code=403, detail="Invalid file path")
+    _ensure_local_file_path_allowed(
+        file_path,
+        current_user.company_id,
+    )
 
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Stored file is missing")
@@ -286,10 +401,10 @@ def delete_receipt_file(
         return None
 
     file_path = Path(file_rec.media_address).resolve()
-    allowed_base = (Path(settings.files_dir) / "companies" / str(current_user.company_id)).resolve()
-
-    if not str(file_path).startswith(str(allowed_base)):
-        raise HTTPException(status_code=403, detail="Invalid file path")
+    _ensure_local_file_path_allowed(
+        file_path,
+        current_user.company_id,
+    )
 
     if file_path.is_file():
         os.remove(file_path)

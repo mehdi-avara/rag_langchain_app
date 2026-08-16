@@ -283,3 +283,378 @@ def test_receipt_file_delete_asset_file_uses_asset_manager(monkeypatch):
     assert manager.deleted_payloads[0]["hard_delete"] is False
     assert db.deleted == [file_rec]
     assert db.committed is True
+
+
+class FakeLegacyReceiptUpload:
+    def __init__(
+        self,
+        filename: str,
+        data: bytes,
+        content_type: str,
+    ):
+        self.filename = filename
+        self.content_type = content_type
+        self._data = data
+        self._offset = 0
+        self.read_sizes = []
+
+    async def read(self, size: int = -1):
+        self.read_sizes.append(size)
+
+        if self._offset >= len(self._data):
+            return b""
+
+        if size is None or size < 0:
+            result = self._data[self._offset:]
+            self._offset = len(self._data)
+            return result
+
+        end = min(
+            self._offset + size,
+            len(self._data),
+        )
+        result = self._data[self._offset:end]
+        self._offset = end
+        return result
+
+
+@pytest.mark.asyncio
+async def test_legacy_receipt_upload_streams_allowed_file(
+    monkeypatch,
+    tmp_path,
+):
+    db = FakeDB(receipt_result=make_receipt())
+    current_user = make_user()
+
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "application/pdf,image/png",
+    )
+
+    upload = FakeLegacyReceiptUpload(
+        "receipt.pdf",
+        b"receipt-data",
+        "application/pdf",
+    )
+
+    result = await financial_file_routes.add_receipt_file(
+        receipt_id=10,
+        file=upload,
+        db=db,
+        current_user=current_user,
+    )
+
+    assert result.file_name == "receipt.pdf"
+    assert result.content_type == "application/pdf"
+    assert db.committed is True
+    assert len(db.added) == 1
+
+    stored_path = db.added[0].media_address
+
+    assert os.path.isfile(stored_path)
+
+    with open(stored_path, "rb") as stored:
+        assert stored.read() == b"receipt-data"
+
+    assert upload.read_sizes
+    assert -1 not in upload.read_sizes
+    assert all(
+        size == financial_file_routes._LEGACY_UPLOAD_CHUNK_SIZE
+        for size in upload.read_sizes
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_receipt_upload_rejects_disallowed_content_type(
+    monkeypatch,
+    tmp_path,
+):
+    db = FakeDB(receipt_result=make_receipt())
+    current_user = make_user()
+
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "application/pdf,image/png",
+    )
+
+    upload = FakeLegacyReceiptUpload(
+        "payload.exe",
+        b"payload",
+        "application/octet-stream",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await financial_file_routes.add_receipt_file(
+            receipt_id=10,
+            file=upload,
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 415
+    assert exc.value.detail == "File content type is not allowed"
+    assert db.added == []
+    assert [
+        item
+        for item in tmp_path.rglob("*")
+        if item.is_file()
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_receipt_upload_rejects_oversize_and_removes_partial_file(
+    monkeypatch,
+    tmp_path,
+):
+    db = FakeDB(receipt_result=make_receipt())
+    current_user = make_user()
+
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        5,
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "application/pdf",
+    )
+
+    upload = FakeLegacyReceiptUpload(
+        "large.pdf",
+        b"123456",
+        "application/pdf",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await financial_file_routes.add_receipt_file(
+            receipt_id=10,
+            file=upload,
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "File is too large"
+    assert db.added == []
+    assert [
+        item
+        for item in tmp_path.rglob("*")
+        if item.is_file()
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_receipt_upload_rejects_empty_file(
+    monkeypatch,
+    tmp_path,
+):
+    db = FakeDB(receipt_result=make_receipt())
+    current_user = make_user()
+
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "application/pdf",
+    )
+
+    upload = FakeLegacyReceiptUpload(
+        "empty.pdf",
+        b"",
+        "application/pdf",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await financial_file_routes.add_receipt_file(
+            receipt_id=10,
+            file=upload,
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "Invalid file size"
+    assert db.added == []
+    assert [
+        item
+        for item in tmp_path.rglob("*")
+        if item.is_file()
+    ] == []
+
+
+def test_local_receipt_download_rejects_prefix_collision_path(
+    monkeypatch,
+    tmp_path,
+):
+    current_user = make_user(
+        company_id=1,
+    )
+
+    allowed_company = (
+        tmp_path
+        / "companies"
+        / "1"
+    )
+
+    foreign_prefix_company = (
+        tmp_path
+        / "companies"
+        / "10"
+    )
+
+    allowed_company.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    foreign_prefix_company.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    foreign_file = (
+        foreign_prefix_company
+        / "secret.pdf"
+    )
+
+    foreign_file.write_bytes(
+        b"secret",
+    )
+
+    file_rec = SimpleNamespace(
+        id=20,
+        user_id=3,
+        receipt_id=10,
+        asset_id=None,
+        file_name="secret.pdf",
+        media_address=str(foreign_file),
+        content_type="application/pdf",
+        created_at=datetime(2026, 5, 19, 10, 0, 0),
+    )
+
+    db = FakeDB(
+        receipt_result=make_receipt(
+            company_id=1,
+        ),
+        file_result=file_rec,
+    )
+
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        financial_file_routes.download_receipt_file(
+            receipt_id=10,
+            file_id=20,
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Invalid file path"
+
+
+def test_local_receipt_delete_rejects_prefix_collision_path(
+    monkeypatch,
+    tmp_path,
+):
+    current_user = make_user(
+        company_id=1,
+    )
+
+    foreign_prefix_company = (
+        tmp_path
+        / "companies"
+        / "10"
+    )
+
+    foreign_prefix_company.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    foreign_file = (
+        foreign_prefix_company
+        / "secret.pdf"
+    )
+
+    foreign_file.write_bytes(
+        b"secret",
+    )
+
+    file_rec = SimpleNamespace(
+        id=20,
+        user_id=3,
+        receipt_id=10,
+        asset_id=None,
+        file_name="secret.pdf",
+        media_address=str(foreign_file),
+        content_type="application/pdf",
+        created_at=datetime(2026, 5, 19, 10, 0, 0),
+    )
+
+    db = FakeDB(
+        receipt_result=make_receipt(
+            company_id=1,
+        ),
+        file_result=file_rec,
+    )
+
+    monkeypatch.setattr(
+        financial_file_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        financial_file_routes.delete_receipt_file(
+            receipt_id=10,
+            file_id=20,
+            db=db,
+            current_user=current_user,
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Invalid file path"
+    assert foreign_file.is_file()
+    assert db.deleted == []
