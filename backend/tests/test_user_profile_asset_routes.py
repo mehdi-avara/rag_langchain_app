@@ -264,3 +264,379 @@ def test_profile_image_download_url_rejects_missing_asset():
 
     assert exc.value.status_code == 404
     assert exc.value.detail == "No profile image asset set"
+
+
+class FakeLegacyProfileUpload:
+    def __init__(
+        self,
+        filename: str,
+        data: bytes,
+        content_type: str,
+    ):
+        self.filename = filename
+        self.content_type = content_type
+        self._data = data
+        self._offset = 0
+        self.read_sizes = []
+
+    async def read(self, size: int = -1):
+        self.read_sizes.append(size)
+
+        if self._offset >= len(self._data):
+            return b""
+
+        if size is None or size < 0:
+            chunk = self._data[self._offset:]
+            self._offset = len(self._data)
+            return chunk
+
+        end = min(
+            self._offset + size,
+            len(self._data),
+        )
+        chunk = self._data[self._offset:end]
+        self._offset = end
+        return chunk
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_image_upload_streams_bounded_file(
+    monkeypatch,
+    tmp_path,
+):
+    user = make_user(
+        profile_asset_id=77,
+    )
+    user.image_path = "companies/1/assets/77/original"
+
+    db = FakeDB(
+        user_result=user,
+    )
+
+    monkeypatch.setattr(
+        user_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "image/jpeg,image/png,image/webp",
+    )
+
+    upload = FakeLegacyProfileUpload(
+        filename="../../payload.php",
+        data=b"image-data",
+        content_type="image/png",
+    )
+
+    result = await user_routes.upload_profile_image(
+        file=upload,
+        current_user=user,
+        db=db,
+    )
+
+    assert result.profile_asset_id is None
+    assert result.image_path.startswith(
+        "profile_images/user_3_"
+    )
+    assert result.image_path.endswith(".png")
+    assert ".php" not in result.image_path
+    assert user.profile_asset_id is None
+
+    stored_path = (
+        tmp_path
+        / result.image_path
+    )
+
+    assert stored_path.is_file()
+    assert stored_path.read_bytes() == b"image-data"
+
+    assert upload.read_sizes
+    assert -1 not in upload.read_sizes
+    assert all(
+        size
+        == user_routes._LEGACY_PROFILE_IMAGE_CHUNK_SIZE
+        for size in upload.read_sizes
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_image_upload_rejects_disallowed_content_type(
+    monkeypatch,
+    tmp_path,
+):
+    user = make_user()
+    db = FakeDB(
+        user_result=user,
+    )
+
+    monkeypatch.setattr(
+        user_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "image/jpeg,image/png,image/webp",
+    )
+
+    upload = FakeLegacyProfileUpload(
+        filename="payload.gif",
+        data=b"GIF89a",
+        content_type="image/gif",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await user_routes.upload_profile_image(
+            file=upload,
+            current_user=user,
+            db=db,
+        )
+
+    assert exc.value.status_code == 415
+    assert (
+        exc.value.detail
+        == "Profile image content type is not allowed"
+    )
+
+    assert [
+        item
+        for item in tmp_path.rglob("*")
+        if item.is_file()
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_image_upload_rejects_oversize_and_cleans_partial(
+    monkeypatch,
+    tmp_path,
+):
+    user = make_user()
+    db = FakeDB(
+        user_result=user,
+    )
+
+    monkeypatch.setattr(
+        user_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        5,
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "image/png",
+    )
+
+    upload = FakeLegacyProfileUpload(
+        filename="large.png",
+        data=b"123456",
+        content_type="image/png",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await user_routes.upload_profile_image(
+            file=upload,
+            current_user=user,
+            db=db,
+        )
+
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "Profile image is too large"
+
+    assert [
+        item
+        for item in tmp_path.rglob("*")
+        if item.is_file()
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_image_upload_rejects_empty_file(
+    monkeypatch,
+    tmp_path,
+):
+    user = make_user()
+    db = FakeDB(
+        user_result=user,
+    )
+
+    monkeypatch.setattr(
+        user_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "image/png",
+    )
+
+    upload = FakeLegacyProfileUpload(
+        filename="empty.png",
+        data=b"",
+        content_type="image/png",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await user_routes.upload_profile_image(
+            file=upload,
+            current_user=user,
+            db=db,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "Invalid file size"
+
+    assert [
+        item
+        for item in tmp_path.rglob("*")
+        if item.is_file()
+    ] == []
+
+
+def test_legacy_profile_image_download_rejects_prefix_collision(
+    monkeypatch,
+    tmp_path,
+):
+    allowed_base = (
+        tmp_path
+        / "profile_images"
+    )
+    collision_base = (
+        tmp_path
+        / "profile_images_evil"
+    )
+
+    allowed_base.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    collision_base.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    foreign_file = (
+        collision_base
+        / "secret.png"
+    )
+    foreign_file.write_bytes(
+        b"secret"
+    )
+
+    user = make_user(
+        profile_asset_id=None,
+    )
+    user.image_path = (
+        "profile_images_evil/secret.png"
+    )
+
+    db = FakeDB(
+        user_result=user,
+    )
+
+    monkeypatch.setattr(
+        user_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        user_routes.download_profile_image(
+            current_user=user,
+            db=db,
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Invalid image path"
+    assert foreign_file.is_file()
+
+
+@pytest.mark.asyncio
+async def test_legacy_profile_image_upload_does_not_delete_outside_profile_directory(
+    monkeypatch,
+    tmp_path,
+):
+    foreign_dir = (
+        tmp_path
+        / "profile_images_evil"
+    )
+    foreign_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    foreign_file = (
+        foreign_dir
+        / "keep.png"
+    )
+    foreign_file.write_bytes(
+        b"keep"
+    )
+
+    user = make_user(
+        profile_asset_id=None,
+    )
+    user.image_path = (
+        "profile_images_evil/keep.png"
+    )
+
+    db = FakeDB(
+        user_result=user,
+    )
+
+    monkeypatch.setattr(
+        user_routes.settings,
+        "files_dir",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        user_routes.settings,
+        "ALLOWED_UPLOAD_CONTENT_TYPES",
+        "image/png",
+    )
+
+    upload = FakeLegacyProfileUpload(
+        filename="new.png",
+        data=b"new-image",
+        content_type="image/png",
+    )
+
+    result = await user_routes.upload_profile_image(
+        file=upload,
+        current_user=user,
+        db=db,
+    )
+
+    assert result.image_path.startswith(
+        "profile_images/user_3_"
+    )
+    assert foreign_file.is_file()
+    assert foreign_file.read_bytes() == b"keep"

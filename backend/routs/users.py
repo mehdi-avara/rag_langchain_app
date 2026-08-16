@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-import shutil
+from uuid import uuid4
 
 from fastapi import Depends, APIRouter, status, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, RedirectResponse
@@ -27,6 +27,143 @@ from storage.manager import StorageManager
 
 router = APIRouter()
 settings = get_settings()
+
+_LEGACY_PROFILE_IMAGE_CHUNK_SIZE = 1024 * 1024
+_MAX_LEGACY_PROFILE_FILENAME_LENGTH = 255
+_PROFILE_IMAGE_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+}
+_PROFILE_IMAGE_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def _allowed_profile_image_content_types() -> set[str]:
+    central_types = {
+        item.strip()
+        for item in settings.ALLOWED_UPLOAD_CONTENT_TYPES.split(",")
+        if item.strip()
+    }
+
+    if not central_types:
+        return set(_PROFILE_IMAGE_CONTENT_TYPES)
+
+    return _PROFILE_IMAGE_CONTENT_TYPES & central_types
+
+
+def _validate_legacy_profile_image_metadata(
+    file: UploadFile,
+) -> tuple[str, str]:
+    original_name = Path(
+        file.filename or "profile-image"
+    ).name.strip() or "profile-image"
+
+    if len(original_name) > _MAX_LEGACY_PROFILE_FILENAME_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Filename is too long",
+        )
+
+    content_type = (file.content_type or "").strip()
+    allowed_types = _allowed_profile_image_content_types()
+
+    if not content_type or content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Profile image content type is not allowed",
+        )
+
+    return content_type, _PROFILE_IMAGE_EXTENSIONS[content_type]
+
+
+async def _store_legacy_profile_image(
+    file: UploadFile,
+    destination: Path,
+) -> int:
+    max_size = int(settings.MAX_UPLOAD_SIZE_BYTES)
+
+    if max_size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload size limit is misconfigured",
+        )
+
+    total_size = 0
+
+    try:
+        destination.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        with destination.open("xb") as buffer:
+            while True:
+                chunk = await file.read(
+                    _LEGACY_PROFILE_IMAGE_CHUNK_SIZE
+                )
+
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+
+                if total_size > max_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Profile image is too large",
+                    )
+
+                buffer.write(chunk)
+
+        if total_size <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid file size",
+            )
+
+    except HTTPException:
+        destination.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to store profile image",
+        ) from exc
+
+    return total_size
+
+
+def _legacy_profile_images_base() -> Path:
+    return (
+        Path(settings.files_dir)
+        / "profile_images"
+    ).resolve()
+
+
+def _resolve_legacy_profile_image_path(
+    image_path: str,
+) -> Path:
+    file_path = (
+        Path(settings.files_dir)
+        / image_path
+    ).resolve()
+
+    allowed_base = _legacy_profile_images_base()
+
+    if not file_path.is_relative_to(allowed_base):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid image path",
+        )
+
+    return file_path
 
 
 def get_user_permission_names(user: User) -> list[str]:
@@ -144,53 +281,89 @@ def change_password(
     "/profile-image",
     response_model=ProfileImageOut,
     status_code=status.HTTP_200_OK,
+    deprecated=True,
 )
 async def upload_profile_image(
     file: UploadFile = File(...),
     current_user: User = Depends(require_permission("profile:image")),
     db: Session = Depends(get_db),
 ) -> ProfileImageOut:
-    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-
-    if file.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file type. Allowed: jpeg, png, gif, webp",
-        )
-
     user = db.query(User).filter(
         User.id == current_user.id,
         User.company_id == current_user.company_id,
     ).first()
 
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
 
-    images_dir = Path(settings.files_dir) / "profile_images"
-    images_dir.mkdir(parents=True, exist_ok=True)
+    content_type, extension = (
+        _validate_legacy_profile_image_metadata(file)
+    )
 
-    extension = Path(file.filename).suffix or ".jpg"
-    new_filename = f"user_{user.id}{extension}"
+    images_dir = _legacy_profile_images_base()
+    new_filename = (
+        f"user_{user.id}_{uuid4().hex}{extension}"
+    )
     destination = images_dir / new_filename
 
-    if user.image_path:
-        previous = (Path(settings.files_dir) / user.image_path).resolve()
+    previous_local_path = None
 
+    if user.image_path and not user.profile_asset_id:
         try:
-            if previous.exists():
-                previous.unlink()
+            previous_local_path = (
+                _resolve_legacy_profile_image_path(
+                    user.image_path
+                )
+            )
+        except HTTPException:
+            previous_local_path = None
+
+    await _store_legacy_profile_image(
+        file=file,
+        destination=destination,
+    )
+
+    old_image_path = user.image_path
+    old_profile_asset_id = user.profile_asset_id
+
+    user.image_path = str(
+        Path("profile_images") / new_filename
+    )
+    user.profile_asset_id = None
+
+    try:
+        db.commit()
+    except Exception:
+        rollback = getattr(db, "rollback", None)
+
+        if callable(rollback):
+            rollback()
+
+        user.image_path = old_image_path
+        user.profile_asset_id = old_profile_asset_id
+        destination.unlink(missing_ok=True)
+        raise
+
+    db.refresh(user)
+
+    if (
+        previous_local_path is not None
+        and previous_local_path != destination
+    ):
+        try:
+            previous_local_path.unlink(
+                missing_ok=True
+            )
         except OSError:
             pass
 
-    with destination.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    user.image_path = str(Path("profile_images") / new_filename)
-
-    db.commit()
-    db.refresh(user)
-
-    return ProfileImageOut(image_path=user.image_path, profile_asset_id=getattr(user, "profile_asset_id", None))
+    return ProfileImageOut(
+        image_path=user.image_path,
+        profile_asset_id=user.profile_asset_id,
+    )
 
 
 @router.post(
@@ -383,14 +556,15 @@ def download_profile_image(
     if not user.image_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No profile image set")
 
-    file_path = (Path(settings.files_dir) / user.image_path).resolve()
-    base_dir = Path(settings.files_dir).resolve()
+    file_path = _resolve_legacy_profile_image_path(
+        user.image_path
+    )
 
-    if not str(file_path).startswith(str(base_dir)):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid image path")
-
-    if not file_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile image not found")
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile image not found",
+        )
 
     media_types = {
         ".jpg": "image/jpeg",
@@ -429,4 +603,3 @@ def set_notification_token(
     db.refresh(user)
 
     return UserNotificationTokenOut(success=True)
-
