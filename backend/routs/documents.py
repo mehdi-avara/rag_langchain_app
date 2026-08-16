@@ -14,6 +14,12 @@ import posixpath
 from core.semantic_ask import generate_answer_from_references, parse_semantic_citations
 from deps import require_permission
 from core.authorization import is_company_admin as _is_company_admin
+from core.document_access import (
+    get_accessible_document as _get_accessible_document,
+    get_accessible_document_ids as _get_accessible_document_ids,
+    get_company_document as _get_company_document,
+    has_document_access as _has_document_access,
+)
 from Models import User, Document, DocumentVersion, Chunk, DocumentStatusType, UserDocumentAccess
 from db.init_db import get_db
 from db.search_connector import search_documents_text, search_document_part_hits_semantic
@@ -91,110 +97,6 @@ def _extract_zip_safely(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfi
         target_path.parent.mkdir(parents=True, exist_ok=True)
         with zip_file.open(info) as src, open(target_path, "wb") as dst:
             shutil.copyfileobj(src, dst)
-
-
-def _has_document_access(db: Session, doc: Document, current_user: User, action: str) -> bool:
-    if doc.owner_id == current_user.id:
-        return True
-
-    if _is_company_admin(current_user):
-        return True
-
-    access = (
-        db.query(UserDocumentAccess)
-        .filter(
-            UserDocumentAccess.document_id == doc.id,
-            UserDocumentAccess.user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not access:
-        return False
-
-    if action == "read":
-        return access.can_read
-    if action == "download":
-        return access.can_download
-    if action == "ask":
-        return access.can_ask
-    if action == "update":
-        return access.can_update
-    if action == "delete":
-        return access.can_delete
-
-    return False
-
-
-def _get_accessible_document(db: Session, doc_id: int, current_user: User, action: str = "read") -> Document:
-    doc = _get_company_document(db, doc_id, current_user)
-
-    if not _has_document_access(db, doc, current_user, action):
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    return doc
-
-def _get_accessible_document_ids(db: Session, current_user: User, action: str = "read") -> list[int] | None:
-    if current_user.company_id is None:
-        raise HTTPException(status_code=403, detail="User has no company")
-
-    if _is_company_admin(current_user):
-        return None
-
-    access_column = {
-        "read": UserDocumentAccess.can_read,
-        "download": UserDocumentAccess.can_download,
-        "ask": UserDocumentAccess.can_ask,
-        "update": UserDocumentAccess.can_update,
-        "delete": UserDocumentAccess.can_delete,
-    }.get(action)
-
-    if access_column is None:
-        return []
-
-    owned_ids = [
-        row[0]
-        for row in db.query(Document.id)
-        .join(User, User.id == Document.owner_id)
-        .filter(
-            User.company_id == current_user.company_id,
-            Document.owner_id == current_user.id,
-        )
-        .all()
-    ]
-
-    granted_ids = [
-        row[0]
-        for row in db.query(UserDocumentAccess.document_id)
-        .join(Document, Document.id == UserDocumentAccess.document_id)
-        .join(User, User.id == Document.owner_id)
-        .filter(
-            User.company_id == current_user.company_id,
-            UserDocumentAccess.user_id == current_user.id,
-            access_column.is_(True),
-        )
-        .all()
-    ]
-
-    return list(dict.fromkeys(owned_ids + granted_ids))
-
-
-def _get_company_document(db: Session, doc_id: int, current_user: User) -> Document:
-    if current_user.company_id is None:
-        raise HTTPException(status_code=403, detail="User has no company")
-
-    doc = (
-        db.query(Document)
-        .join(User, User.id == Document.owner_id)
-        .filter(
-            Document.id == doc_id,
-            User.company_id == current_user.company_id,
-        )
-        .first()
-    )
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return doc
 
 
 @router.post("/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
