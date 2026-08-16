@@ -64,39 +64,352 @@ def _validate_member_target(base_dir: Path, relative_name: str) -> Path:
     return target
 
 
-def _find_middle_json_candidate(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfile.ZipInfo]) -> str:
-    middle_by_name = [name for name in file_entries if name.lower().endswith("_middle.json")]
+_ZIP_IMPORT_CHUNK_SIZE = 1024 * 1024
+_ZIP_IMPORT_MAX_ENTRIES = 5000
+_ZIP_IMPORT_MAX_TOTAL_UNCOMPRESSED_MULTIPLIER = 4
+
+
+def _zip_import_size_limits() -> tuple[int, int, int]:
+    max_archive_size = int(
+        settings.MAX_UPLOAD_SIZE_BYTES
+    )
+
+    if max_archive_size <= 0:
+        raise HTTPException(
+            status_code=500,
+            detail="Upload size limit is misconfigured",
+        )
+
+    max_member_size = max_archive_size
+    max_total_uncompressed = (
+        max_archive_size
+        * _ZIP_IMPORT_MAX_TOTAL_UNCOMPRESSED_MULTIPLIER
+    )
+
+    return (
+        max_archive_size,
+        max_member_size,
+        max_total_uncompressed,
+    )
+
+
+def _prepare_zip_upload_stream(
+    package: UploadFile,
+):
+    stream = package.file
+    max_archive_size, _, _ = (
+        _zip_import_size_limits()
+    )
+
+    try:
+        stream.seek(
+            0,
+            os.SEEK_END,
+        )
+        archive_size = stream.tell()
+        stream.seek(0)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to read uploaded ZIP package",
+        ) from exc
+
+    if archive_size <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded ZIP package is empty",
+        )
+
+    if archive_size > max_archive_size:
+        raise HTTPException(
+            status_code=413,
+            detail="Processed ZIP package is too large",
+        )
+
+    return stream
+
+
+def _collect_zip_file_entries(
+    zip_file: zipfile.ZipFile,
+) -> dict[str, zipfile.ZipInfo]:
+    _, max_member_size, max_total_uncompressed = (
+        _zip_import_size_limits()
+    )
+
+    infos = [
+        info
+        for info in zip_file.infolist()
+        if not info.is_dir()
+    ]
+
+    if len(infos) > _ZIP_IMPORT_MAX_ENTRIES:
+        raise HTTPException(
+            status_code=413,
+            detail="Processed ZIP contains too many files",
+        )
+
+    file_entries: dict[
+        str,
+        zipfile.ZipInfo,
+    ] = {}
+
+    total_uncompressed = 0
+
+    for info in infos:
+        relative_name = _normalize_zip_member_name(
+            info.filename
+        )
+
+        if not relative_name:
+            continue
+
+        if relative_name in file_entries:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Duplicate zip entry: "
+                    f"{relative_name}"
+                ),
+            )
+
+        if (
+            info.file_size < 0
+            or info.compress_size < 0
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Invalid zip entry size: "
+                    f"{relative_name}"
+                ),
+            )
+
+        if info.file_size > max_member_size:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "ZIP entry is too large: "
+                    f"{relative_name}"
+                ),
+            )
+
+        total_uncompressed += info.file_size
+
+        if (
+            total_uncompressed
+            > max_total_uncompressed
+        ):
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Processed ZIP expands beyond "
+                    "the allowed size"
+                ),
+            )
+
+        file_entries[
+            relative_name
+        ] = info
+
+    return file_entries
+
+
+def _read_zip_member_bounded(
+    zip_file: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    max_bytes: int,
+) -> bytes:
+    data = bytearray()
+
+    with zip_file.open(info) as src:
+        while True:
+            chunk = src.read(
+                _ZIP_IMPORT_CHUNK_SIZE
+            )
+
+            if not chunk:
+                break
+
+            data.extend(chunk)
+
+            if len(data) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "ZIP entry expands beyond "
+                        "the allowed size"
+                    ),
+                )
+
+    return bytes(data)
+
+
+def _find_middle_json_candidate(
+    zip_file: zipfile.ZipFile,
+    file_entries: dict[str, zipfile.ZipInfo],
+) -> str:
+    middle_by_name = [
+        name
+        for name in file_entries
+        if name.lower().endswith(
+            "_middle.json"
+        )
+    ]
+
     if len(middle_by_name) == 1:
         return middle_by_name[0]
+
     if len(middle_by_name) > 1:
-        raise HTTPException(status_code=400, detail="Zip package must contain exactly one MinerU _middle.json file")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Zip package must contain exactly "
+                "one MinerU _middle.json file"
+            ),
+        )
+
+    _, max_member_size, _ = (
+        _zip_import_size_limits()
+    )
 
     middle_by_content = []
+
     for name, info in file_entries.items():
         if not name.lower().endswith(".json"):
             continue
+
         try:
-            with zip_file.open(info) as f:
-                data = json.load(f)
+            raw_json = _read_zip_member_bounded(
+                zip_file,
+                info,
+                max_bytes=max_member_size,
+            )
+
+            data = json.loads(
+                raw_json.decode("utf-8")
+            )
+        except HTTPException:
+            raise
         except Exception:
             continue
-        pdf_info = data.get("pdf_info", data) if isinstance(data, dict) else data
+
+        pdf_info = (
+            data.get(
+                "pdf_info",
+                data,
+            )
+            if isinstance(data, dict)
+            else data
+        )
+
         if isinstance(pdf_info, list):
             middle_by_content.append(name)
 
     if len(middle_by_content) == 1:
         return middle_by_content[0]
+
     if len(middle_by_content) > 1:
-        raise HTTPException(status_code=400, detail="Zip package contains multiple middle-json candidates")
-    raise HTTPException(status_code=400, detail="Zip package must contain one MinerU middle JSON file")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Zip package contains multiple "
+                "middle-json candidates"
+            ),
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Zip package must contain one "
+            "MinerU middle JSON file"
+        ),
+    )
 
 
-def _extract_zip_safely(zip_file: zipfile.ZipFile, file_entries: dict[str, zipfile.ZipInfo], dest_dir: Path) -> None:
+def _extract_zip_safely(
+    zip_file: zipfile.ZipFile,
+    file_entries: dict[str, zipfile.ZipInfo],
+    dest_dir: Path,
+) -> int:
+    _, max_member_size, max_total_uncompressed = (
+        _zip_import_size_limits()
+    )
+
+    total_written = 0
+
     for relative_name, info in file_entries.items():
-        target_path = _validate_member_target(dest_dir, relative_name)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        with zip_file.open(info) as src, open(target_path, "wb") as dst:
-            shutil.copyfileobj(src, dst)
+        target_path = _validate_member_target(
+            dest_dir,
+            relative_name,
+        )
+
+        target_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        member_written = 0
+
+        try:
+            with (
+                zip_file.open(info) as src,
+                open(target_path, "xb") as dst,
+            ):
+                while True:
+                    chunk = src.read(
+                        _ZIP_IMPORT_CHUNK_SIZE
+                    )
+
+                    if not chunk:
+                        break
+
+                    member_written += len(chunk)
+                    total_written += len(chunk)
+
+                    if (
+                        member_written
+                        > max_member_size
+                    ):
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "ZIP entry expands beyond "
+                                "the allowed size: "
+                                f"{relative_name}"
+                            ),
+                        )
+
+                    if (
+                        total_written
+                        > max_total_uncompressed
+                    ):
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "Processed ZIP expands beyond "
+                                "the allowed size"
+                            ),
+                        )
+
+                    dst.write(chunk)
+
+            if member_written != info.file_size:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "ZIP entry size mismatch: "
+                        f"{relative_name}"
+                    ),
+                )
+
+        except Exception:
+            target_path.unlink(
+                missing_ok=True
+            )
+            raise
+
+    return total_written
 
 
 @router.post("/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)
@@ -282,34 +595,70 @@ async def import_processed_zip(
     current_user: User = Depends(require_permission("documents:create")),
     db: Session = Depends(get_db),
 ):
-    package_bytes = await package.read()
-    package_stream = io.BytesIO(package_bytes)
+    package_stream = _prepare_zip_upload_stream(
+        package
+    )
 
-    if not zipfile.is_zipfile(package_stream):
-        raise HTTPException(status_code=400, detail="Uploaded package must be a valid .zip file")
+    if not zipfile.is_zipfile(
+        package_stream
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Uploaded package must be "
+                "a valid .zip file"
+            ),
+        )
+
     package_stream.seek(0)
 
-    with zipfile.ZipFile(package_stream) as zip_file:
-        file_entries: dict[str, zipfile.ZipInfo] = {}
+    with zipfile.ZipFile(
+        package_stream
+    ) as zip_file:
+        file_entries = (
+            _collect_zip_file_entries(
+                zip_file
+            )
+        )
 
-        for info in zip_file.infolist():
-            if info.is_dir():
-                continue
-            relative_name = _normalize_zip_member_name(info.filename)
-            if not relative_name:
-                continue
-            if relative_name in file_entries:
-                raise HTTPException(status_code=400, detail=f"Duplicate zip entry: {relative_name}")
-            file_entries[relative_name] = info
-
-        pdf_candidates = [name for name in file_entries if name.lower().endswith(".pdf")]
+        pdf_candidates = [
+            name
+            for name in file_entries
+            if name.lower().endswith(
+                ".pdf"
+            )
+        ]
 
         if len(pdf_candidates) != 1:
-            raise HTTPException(status_code=400, detail="Zip package must contain exactly one PDF file")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Zip package must contain "
+                    "exactly one PDF file"
+                ),
+            )
 
-        pdf_relative_name = pdf_candidates[0]
-        middle_relative_name = _find_middle_json_candidate(zip_file, file_entries)
-        doc_filename = (display_filename.strip() if display_filename else "") or Path(pdf_relative_name).name
+        pdf_relative_name = (
+            pdf_candidates[0]
+        )
+
+        middle_relative_name = (
+            _find_middle_json_candidate(
+                zip_file,
+                file_entries,
+            )
+        )
+
+        doc_filename = (
+            (
+                display_filename.strip()
+                if display_filename
+                else ""
+            )
+            or Path(
+                pdf_relative_name
+            ).name
+        )
 
         doc = Document(
             owner_id=current_user.id,
@@ -317,57 +666,162 @@ async def import_processed_zip(
             n_pages=0,
             n_chunks=0,
             file_path=None,
-            status=DocumentStatusType.INPROGGRESS.value,
+            status=(
+                DocumentStatusType
+                .INPROGGRESS
+                .value
+            ),
         )
+
         db.add(doc)
         db.commit()
         db.refresh(doc)
 
+        doc_dir: Path | None = None
+
         try:
-            doc_dir = Path(settings.files_dir) / str(doc.id)
-            doc_dir.mkdir(parents=True, exist_ok=True)
-            _extract_zip_safely(zip_file, file_entries, doc_dir)
-
-            extracted_pdf_path = _validate_member_target(doc_dir, pdf_relative_name)
-            middle_json_path = _validate_member_target(doc_dir, middle_relative_name)
-            original_pdf_path = doc_dir / "original.pdf"
-
-            if extracted_pdf_path.resolve() != original_pdf_path.resolve():
-                shutil.copyfile(extracted_pdf_path, original_pdf_path)
-
-            from core.simple_ingestion import ingest_processed_middle_json
-
-            n_pages, n_chunks = ingest_processed_middle_json(
-                middle_json_path=str(middle_json_path),
-                doc_id=doc.id,
-                db=db,
+            doc_dir = (
+                Path(settings.files_dir)
+                / str(doc.id)
             )
 
-            db.query(Document).filter(Document.id == doc.id).update({
-                Document.status: DocumentStatusType.DONE.value,
-            })
+            doc_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            _extract_zip_safely(
+                zip_file,
+                file_entries,
+                doc_dir,
+            )
+
+            extracted_pdf_path = (
+                _validate_member_target(
+                    doc_dir,
+                    pdf_relative_name,
+                )
+            )
+
+            middle_json_path = (
+                _validate_member_target(
+                    doc_dir,
+                    middle_relative_name,
+                )
+            )
+
+            original_pdf_path = (
+                doc_dir
+                / "original.pdf"
+            )
+
+            if (
+                extracted_pdf_path.resolve()
+                != original_pdf_path.resolve()
+            ):
+                shutil.copyfile(
+                    extracted_pdf_path,
+                    original_pdf_path,
+                )
+
+            from core.simple_ingestion import (
+                ingest_processed_middle_json,
+            )
+
+            n_pages, n_chunks = (
+                ingest_processed_middle_json(
+                    middle_json_path=str(
+                        middle_json_path
+                    ),
+                    doc_id=doc.id,
+                    db=db,
+                )
+            )
+
+            (
+                db.query(Document)
+                .filter(
+                    Document.id == doc.id
+                )
+                .update(
+                    {
+                        Document.status:
+                        DocumentStatusType
+                        .DONE
+                        .value,
+                    }
+                )
+            )
+
             db.commit()
 
             return {
                 "doc_id": doc.id,
-                "status": DocumentStatusType.DONE.value,
+                "status": (
+                    DocumentStatusType
+                    .DONE
+                    .value
+                ),
                 "n_pages": n_pages,
                 "n_chunks": n_chunks,
             }
 
         except HTTPException:
-            db.query(Document).filter(Document.id == doc.id).update({
-                Document.status: DocumentStatusType.FAIELED.value,
-            })
+            if doc_dir is not None:
+                shutil.rmtree(
+                    doc_dir,
+                    ignore_errors=True,
+                )
+
+            (
+                db.query(Document)
+                .filter(
+                    Document.id == doc.id
+                )
+                .update(
+                    {
+                        Document.status:
+                        DocumentStatusType
+                        .FAIELED
+                        .value,
+                    }
+                )
+            )
+
             db.commit()
             raise
 
         except Exception as exc:
-            db.query(Document).filter(Document.id == doc.id).update({
-                Document.status: DocumentStatusType.FAIELED.value,
-            })
+            if doc_dir is not None:
+                shutil.rmtree(
+                    doc_dir,
+                    ignore_errors=True,
+                )
+
+            (
+                db.query(Document)
+                .filter(
+                    Document.id == doc.id
+                )
+                .update(
+                    {
+                        Document.status:
+                        DocumentStatusType
+                        .FAIELED
+                        .value,
+                    }
+                )
+            )
+
             db.commit()
-            raise HTTPException(status_code=500, detail=f"Failed to import processed package: {exc}")
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Failed to import processed "
+                    f"package: {exc}"
+                ),
+            )
 
 
 @router.get("", response_model=List[DocumentOut])

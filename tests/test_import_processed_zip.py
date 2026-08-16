@@ -7,7 +7,7 @@ import zipfile
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -69,6 +69,7 @@ import deps
 from Models import Chunk, Document, DocumentStatusType, User
 from db.base import Base
 from db.init_db import get_db
+from routs import documents as document_routes
 from routs.documents import router as document_router
 
 
@@ -78,6 +79,7 @@ def _build_zip(
     include_middle: bool = True,
     include_images: bool = False,
     include_zip_slip: bool = False,
+    extra_entries: dict[str, bytes] | None = None,
 ) -> bytes:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -92,6 +94,8 @@ def _build_zip(
             zf.writestr("images/page_1.png", b"fake-image")
         if include_zip_slip:
             zf.writestr("../escape.txt", b"blocked")
+        for name, content in (extra_entries or {}).items():
+            zf.writestr(name, content)
     return payload.getvalue()
 
 
@@ -265,3 +269,267 @@ def test_import_processed_zip_blocks_zip_slip(import_zip_context):
     assert not (files_root / "escape.txt").exists()
     with SessionLocal() as db:
         assert db.query(Document).count() == 0
+
+
+def test_import_processed_zip_rejects_oversized_archive(
+    import_zip_context,
+    monkeypatch,
+):
+    client, SessionLocal, _ = import_zip_context
+    package = _build_zip(
+        include_pdf=True,
+        include_middle=True,
+    )
+
+    monkeypatch.setattr(
+        document_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        len(package) - 1,
+    )
+
+    response = client.post(
+        "/documents/import-processed-zip",
+        files={
+            "package": (
+                "processed.zip",
+                package,
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+
+    with SessionLocal() as db:
+        assert db.query(Document).count() == 0
+
+
+def test_import_processed_zip_rejects_excessive_entries(
+    import_zip_context,
+    monkeypatch,
+):
+    client, SessionLocal, _ = import_zip_context
+
+    monkeypatch.setattr(
+        document_routes,
+        "_ZIP_IMPORT_MAX_ENTRIES",
+        2,
+    )
+
+    package = _build_zip(
+        include_pdf=True,
+        include_middle=True,
+        include_images=True,
+    )
+
+    response = client.post(
+        "/documents/import-processed-zip",
+        files={
+            "package": (
+                "processed.zip",
+                package,
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+
+    with SessionLocal() as db:
+        assert db.query(Document).count() == 0
+
+
+def test_import_processed_zip_rejects_oversized_member(
+    import_zip_context,
+    monkeypatch,
+):
+    client, SessionLocal, _ = import_zip_context
+
+    max_size = 2048
+
+    monkeypatch.setattr(
+        document_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        max_size,
+    )
+
+    package = _build_zip(
+        extra_entries={
+            "payload/repeated.bin":
+            b"A" * 8192,
+        }
+    )
+
+    assert len(package) < max_size
+
+    response = client.post(
+        "/documents/import-processed-zip",
+        files={
+            "package": (
+                "processed.zip",
+                package,
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+
+    with SessionLocal() as db:
+        assert db.query(Document).count() == 0
+
+
+def test_import_processed_zip_rejects_total_uncompressed_limit(
+    import_zip_context,
+    monkeypatch,
+):
+    client, SessionLocal, _ = import_zip_context
+
+    max_size = 4096
+
+    monkeypatch.setattr(
+        document_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        max_size,
+    )
+
+    extra_entries = {
+        f"payload/file_{index}.bin":
+        bytes([65 + index]) * 3500
+        for index in range(6)
+    }
+
+    package = _build_zip(
+        extra_entries=extra_entries
+    )
+
+    assert len(package) < max_size
+
+    response = client.post(
+        "/documents/import-processed-zip",
+        files={
+            "package": (
+                "processed.zip",
+                package,
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+
+    with SessionLocal() as db:
+        assert db.query(Document).count() == 0
+
+
+def test_extract_zip_safely_enforces_actual_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        document_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        1024,
+    )
+
+    class FakeInfo:
+        file_size = 1
+
+    class FakeZip:
+        def open(self, _info):
+            return io.BytesIO(
+                b"X" * 2049
+            )
+
+    destination = tmp_path / "extract"
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        document_routes._extract_zip_safely(
+            FakeZip(),
+            {
+                "payload.bin":
+                FakeInfo(),
+            },
+            destination,
+        )
+
+    assert exc.value.status_code == 413
+    assert not (
+        destination
+        / "payload.bin"
+    ).exists()
+
+
+def test_import_processed_zip_cleans_partial_directory_on_failure(
+    import_zip_context,
+    monkeypatch,
+):
+    client, SessionLocal, files_root = (
+        import_zip_context
+    )
+
+    package = _build_zip(
+        include_pdf=True,
+        include_middle=True,
+    )
+
+    def fail_extract(
+        _zip_file,
+        _file_entries,
+        dest_dir,
+    ):
+        dest_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        (
+            dest_dir
+            / "partial.bin"
+        ).write_bytes(
+            b"partial"
+        )
+
+        raise HTTPException(
+            status_code=413,
+            detail="forced extraction limit",
+        )
+
+    monkeypatch.setattr(
+        document_routes,
+        "_extract_zip_safely",
+        fail_extract,
+    )
+
+    response = client.post(
+        "/documents/import-processed-zip",
+        files={
+            "package": (
+                "processed.zip",
+                package,
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+
+    with SessionLocal() as db:
+        doc = (
+            db.query(Document)
+            .order_by(Document.id.desc())
+            .first()
+        )
+
+        assert doc is not None
+        assert (
+            doc.status
+            == DocumentStatusType.FAIELED.value
+        )
+
+        assert not (
+            files_root
+            / str(doc.id)
+        ).exists()
