@@ -1,5 +1,6 @@
-import os
+from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse
@@ -18,6 +19,133 @@ from storage.manager import StorageManager
 settings = get_settings()
 
 router = APIRouter(tags=["comments files"])
+
+_LEGACY_COMMENT_FILE_CHUNK_SIZE = 1024 * 1024
+_MAX_LEGACY_COMMENT_FILENAME_LENGTH = 255
+
+
+def _allowed_comment_file_content_types() -> set[str]:
+    return {
+        item.strip()
+        for item in settings.ALLOWED_UPLOAD_CONTENT_TYPES.split(",")
+        if item.strip()
+    }
+
+
+def _legacy_comment_files_base(comment_id: int) -> Path:
+    return (
+        Path(settings.files_dir)
+        / "comments"
+        / str(comment_id)
+    ).resolve()
+
+
+def _resolve_legacy_comment_file_path(
+    comment_id: int,
+    media_address: str,
+) -> Path:
+    file_path = Path(media_address).resolve()
+    allowed_base = _legacy_comment_files_base(comment_id)
+
+    if not file_path.is_relative_to(allowed_base):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid comment file path",
+        )
+
+    return file_path
+
+
+def _validate_legacy_comment_upload_metadata(
+    file: UploadFile,
+) -> tuple[str, str]:
+    original_name = Path(
+        file.filename or "comment-file"
+    ).name.strip() or "comment-file"
+
+    if len(original_name) > _MAX_LEGACY_COMMENT_FILENAME_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Filename is too long",
+        )
+
+    content_type = (file.content_type or "").strip()
+    allowed_types = _allowed_comment_file_content_types()
+
+    if not content_type or content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Comment file content type is not allowed",
+        )
+
+    return original_name, content_type
+
+
+async def _store_legacy_comment_file(
+    file: UploadFile,
+    destination: Path,
+) -> int:
+    max_size = int(settings.MAX_UPLOAD_SIZE_BYTES)
+
+    if max_size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload size limit is misconfigured",
+        )
+
+    total_size = 0
+
+    try:
+        destination.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        allowed_base = destination.parent.resolve()
+        resolved_destination = destination.resolve()
+
+        if not resolved_destination.is_relative_to(allowed_base):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid comment file path",
+            )
+
+        with resolved_destination.open("xb") as buffer:
+            while True:
+                chunk = await file.read(
+                    _LEGACY_COMMENT_FILE_CHUNK_SIZE
+                )
+
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+
+                if total_size > max_size:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Comment file is too large",
+                    )
+
+                buffer.write(chunk)
+
+        if total_size <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid file size",
+            )
+
+    except HTTPException:
+        destination.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to store comment file",
+        ) from exc
+
+    return total_size
 
 
 def _parse_file_upload(file: UploadFile = File(...), index: bool = False) -> CommentFileUpload:
@@ -217,11 +345,19 @@ def download_comment_file(
         )
         return RedirectResponse(download_url)
 
-    if not os.path.isfile(file_rec.media_address):
-        raise HTTPException(status_code=404, detail="Stored file is missing")
+    file_path = _resolve_legacy_comment_file_path(
+        comment_id,
+        file_rec.media_address,
+    )
+
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Stored file is missing",
+        )
 
     return FileResponse(
-        path=file_rec.media_address,
+        path=file_path,
         filename=file_rec.file_name,
         media_type="application/octet-stream",
     )
@@ -231,6 +367,7 @@ def download_comment_file(
     "/add/{comment_id}",
     response_model=CommentFileOut,
     status_code=status.HTTP_201_CREATED,
+    deprecated=True,
 )
 async def add_file_to_comment(
     comment_id: int,
@@ -240,22 +377,42 @@ async def add_file_to_comment(
 ):
     _get_owned_comment(db, comment_id, current_user)
 
-    base_dir = os.path.join(settings.files_dir, "comments", str(comment_id))
-    os.makedirs(base_dir, exist_ok=True)
+    original_name, _content_type = (
+        _validate_legacy_comment_upload_metadata(
+            upload.file
+        )
+    )
 
-    file_path = os.path.join(base_dir, upload.file.filename)
-    file_bytes = await upload.file.read()
-    with open(file_path, "wb") as f:
-        f.write(file_bytes)
+    base_dir = _legacy_comment_files_base(comment_id)
+    destination = (
+        base_dir
+        / f"{uuid4().hex}.upload"
+    )
+
+    await _store_legacy_comment_file(
+        file=upload.file,
+        destination=destination,
+    )
 
     new_file = CommentFile(
         user_id=current_user.id,
         comment_id=comment_id,
-        file_name=upload.file.filename,
-        media_address=file_path,
+        file_name=original_name,
+        media_address=str(destination),
     )
-    db.add(new_file)
-    db.commit()
+
+    try:
+        db.add(new_file)
+        db.commit()
+    except Exception:
+        rollback = getattr(db, "rollback", None)
+
+        if callable(rollback):
+            rollback()
+
+        destination.unlink(missing_ok=True)
+        raise
+
     db.refresh(new_file)
 
     return new_file
@@ -286,8 +443,13 @@ def delete_comment_file(
         db.commit()
         return None
 
-    if os.path.isfile(file_rec.media_address):
-        os.remove(file_rec.media_address)
+    file_path = _resolve_legacy_comment_file_path(
+        comment_id,
+        file_rec.media_address,
+    )
+
+    if file_path.is_file():
+        file_path.unlink()
 
     db.delete(file_rec)
     db.commit()
