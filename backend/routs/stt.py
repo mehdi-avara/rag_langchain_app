@@ -1,6 +1,7 @@
 import uuid
 from pathlib import Path
-from typing import Optional
+from tempfile import SpooledTemporaryFile
+from typing import BinaryIO, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -47,6 +48,9 @@ ALLOWED_AUDIO_EXTENSIONS = {
     ".ogg",
 }
 
+_AUDIO_UPLOAD_CHUNK_SIZE = 1024 * 1024
+_AUDIO_SPOOL_MEMORY_LIMIT = 8 * 1024 * 1024
+
 
 def _validate_audio_content_type(content_type: str | None) -> None:
     if content_type not in ALLOWED_AUDIO_CONTENT_TYPES:
@@ -59,36 +63,99 @@ def _validate_audio_filename(filename: str | None) -> None:
         raise HTTPException(status_code=415, detail="Unsupported audio file extension")
 
 
+def _audio_max_size() -> int:
+    return int(
+        getattr(
+            settings,
+            "MAX_UPLOAD_SIZE_BYTES",
+            104857600,
+        )
+    )
+
+
 def _validate_audio_size(size_bytes: int | None) -> None:
-    max_size = getattr(settings, "MAX_UPLOAD_SIZE_BYTES", 104857600)
+    max_size = _audio_max_size()
     if size_bytes is not None and size_bytes > max_size:
-        raise HTTPException(status_code=413, detail="Audio file is too large")
+        raise HTTPException(
+            status_code=413,
+            detail="Audio file is too large",
+        )
 
 
-async def _send_audio_to_stt(filename: str, content_type: str, content: bytes) -> dict:
+async def _copy_audio_bounded(
+    file: UploadFile,
+    target: BinaryIO,
+) -> int:
+    total_size = 0
+
+    while True:
+        chunk = await file.read(
+            _AUDIO_UPLOAD_CHUNK_SIZE
+        )
+
+        if not chunk:
+            break
+
+        total_size += len(chunk)
+        _validate_audio_size(total_size)
+        target.write(chunk)
+
+    return total_size
+
+
+async def _send_audio_to_stt(
+    filename: str,
+    content_type: str,
+    content: BinaryIO,
+) -> dict:
     async with httpx.AsyncClient(timeout=300) as client:
-        files = {"file": (filename, content, content_type)}
-        response = await client.post(f"{settings.STT_URL}/transcribe", files=files)
+        files = {
+            "file": (
+                filename,
+                content,
+                content_type,
+            )
+        }
+        response = await client.post(
+            f"{settings.STT_URL}/transcribe",
+            files=files,
+        )
         response.raise_for_status()
         return response.json()
 
 
 @router.post("/transcribe")
 async def transcribe(
-    current_user: User = Depends(require_permission("stt:use")),
+    current_user: User = Depends(
+        require_permission("stt:use")
+    ),
     file: UploadFile = File(...),
 ):
-    _validate_audio_content_type(file.content_type)
-    _validate_audio_filename(file.filename)
-
-    content = await file.read()
-    _validate_audio_size(len(content))
-
-    return await _send_audio_to_stt(
-        filename=file.filename or "audio",
-        content_type=file.content_type or "application/octet-stream",
-        content=content,
+    _validate_audio_content_type(
+        file.content_type
     )
+    _validate_audio_filename(
+        file.filename
+    )
+
+    with SpooledTemporaryFile(
+        max_size=_AUDIO_SPOOL_MEMORY_LIMIT,
+        mode="w+b",
+    ) as content:
+        await _copy_audio_bounded(
+            file,
+            content,
+        )
+        content.seek(0)
+
+        return await _send_audio_to_stt(
+            filename=file.filename or "audio",
+            content_type=(
+                file.content_type
+                or "application/octet-stream"
+            ),
+            content=content,
+        )
 
 
 @router.post("/transcribe/upload-url", response_model=AssetUploadUrlOut, status_code=status.HTTP_201_CREATED)

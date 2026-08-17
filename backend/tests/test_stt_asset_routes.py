@@ -215,3 +215,133 @@ async def test_complete_audio_transcribe_upload_rejects_bad_asset_type(monkeypat
         )
 
     assert exc.value.status_code == 415
+
+
+class FakeDirectAudioUpload:
+    def __init__(
+        self,
+        content: bytes,
+        *,
+        filename: str = "voice.mp3",
+        content_type: str = "audio/mpeg",
+    ):
+        self.filename = filename
+        self.content_type = content_type
+        self._content = content
+        self._offset = 0
+        self.read_sizes = []
+
+    async def read(self, size: int = -1):
+        self.read_sizes.append(size)
+
+        if self._offset >= len(self._content):
+            return b""
+
+        if size is None or size < 0:
+            end = len(self._content)
+        else:
+            end = min(
+                len(self._content),
+                self._offset + size,
+            )
+
+        chunk = self._content[
+            self._offset:end
+        ]
+        self._offset = end
+        return chunk
+
+
+@pytest.mark.asyncio
+async def test_direct_transcribe_uses_bounded_reads_and_forwards_audio(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        stt_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        10,
+    )
+
+    upload = FakeDirectAudioUpload(
+        b"0123456789"
+    )
+
+    captured = {}
+
+    async def fake_send_audio_to_stt(
+        filename,
+        content_type,
+        content,
+    ):
+        captured["filename"] = filename
+        captured["content_type"] = content_type
+        captured["content"] = content.read()
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        stt_routes,
+        "_send_audio_to_stt",
+        fake_send_audio_to_stt,
+    )
+
+    result = await stt_routes.transcribe(
+        current_user=make_user(),
+        file=upload,
+    )
+
+    assert result == {"text": "ok"}
+    assert captured["filename"] == "voice.mp3"
+    assert captured["content_type"] == "audio/mpeg"
+    assert captured["content"] == b"0123456789"
+
+    assert upload.read_sizes
+    assert -1 not in upload.read_sizes
+    assert all(
+        size == stt_routes._AUDIO_UPLOAD_CHUNK_SIZE
+        for size in upload.read_sizes
+    )
+
+
+@pytest.mark.asyncio
+async def test_direct_transcribe_rejects_oversize_before_downstream(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        stt_routes.settings,
+        "MAX_UPLOAD_SIZE_BYTES",
+        4,
+    )
+
+    upload = FakeDirectAudioUpload(
+        b"12345"
+    )
+
+    downstream_called = False
+
+    async def fake_send_audio_to_stt(
+        filename,
+        content_type,
+        content,
+    ):
+        nonlocal downstream_called
+        downstream_called = True
+        return {"text": "unexpected"}
+
+    monkeypatch.setattr(
+        stt_routes,
+        "_send_audio_to_stt",
+        fake_send_audio_to_stt,
+    )
+
+    with pytest.raises(
+        HTTPException
+    ) as exc:
+        await stt_routes.transcribe(
+            current_user=make_user(),
+            file=upload,
+        )
+
+    assert exc.value.status_code == 413
+    assert downstream_called is False
+    assert upload.read_sizes
+    assert -1 not in upload.read_sizes
