@@ -50,6 +50,11 @@ services:
     build:
       context: ./backend
       target: celery
+    user: "1006:1007"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     # deploy:
     #   resources:
     #     reservations:

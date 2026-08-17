@@ -54,5 +54,22 @@ CMD ["/app/entrypoint.sh"]
 # App code (celery)
 FROM celery-deps AS celery
 
-COPY . .
+RUN groupadd --gid 1007 porsa \
+ && useradd \
+    --uid 1006 \
+    --gid 1007 \
+    --no-create-home \
+    --home-dir /nonexistent \
+    --shell /usr/sbin/nologin \
+    porsa
+
+COPY --chown=0:1007 . .
+
+RUN chgrp 1007 /app \
+ && find /app -xdev -type d -exec chmod g+rx,g-w,o-rwx {} + \
+ && find /app -xdev -type f -exec chmod g+r,g-w,o-rwx {} +
+
+ENV HOME=/tmp
+
+USER 1006:1007
 CMD ["celery", "-A", "core.celery.celery_app.celery_app", "worker", "-l", "info"]
