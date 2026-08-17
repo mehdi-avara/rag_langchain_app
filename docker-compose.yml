@@ -15,10 +15,13 @@ services:
       context: ./backend
       target: backend
     user: "1006:1007"
+    read_only: true
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1g,uid=1006,gid=1007,mode=1777
     env_file: .env.runtime
     environment:
       files_dir: /app/uploaded_files
@@ -26,7 +29,10 @@ services:
       request_log_file: /app/logs/api.log
       STT_URL: http://stt:8010
       postgres_url: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB}
-      TIKTOKEN_CACHE_DIR: /app/.tiktoken-cache
+      TIKTOKEN_CACHE_DIR: /tmp/tiktoken
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      MPLCONFIGDIR: /tmp/matplotlib
     depends_on:
       - postgres
       # - elastic
