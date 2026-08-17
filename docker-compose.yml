@@ -55,6 +55,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,uid=1006,gid=1007,mode=1777
     # deploy:
     #   resources:
     #     reservations:
@@ -63,6 +66,16 @@ services:
     env_file: .env.runtime
     environment:
       files_dir: /app/uploaded_files
+      HOME: /tmp
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      HF_HOME: /tmp/huggingface
+      HUGGINGFACE_HUB_CACHE: /tmp/huggingface/hub
+      TORCH_HOME: /tmp/torch
+      MPLCONFIGDIR: /tmp/matplotlib
+      NUMBA_CACHE_DIR: /tmp/numba
+      TIKTOKEN_CACHE_DIR: /tmp/tiktoken
+      EMBEDDING_ERROR_LOG_FILE: /app/logs/embedding_errors.log
       redis_url: redis://redis:6379/0
       mineru_running_address: mineru
       NVIDIA_VISIBLE_DEVICES: all
@@ -78,6 +91,7 @@ services:
     volumes:
       - $files_dir:/app/uploaded_files
 
+      - $request_log_path:/app/logs/
   stt:
     image: rag_langchain_app-stt
     # build:
