@@ -4,9 +4,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 
 
-ERROR_LOG_PATH = Path(__file__).resolve().parent / "embedding_errors.log"
+ERROR_LOG_PATH = Path(
+    os.getenv(
+        "EMBEDDING_ERROR_LOG_FILE",
+        "logs/embedding_errors.log",
+    )
+)
 
 
 @dataclass

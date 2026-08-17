@@ -29,9 +29,26 @@ RUN pip install --no-cache-dir -r requirements_celery.txt \
 # App code (backend)
 FROM deps AS backend
 
-COPY . .
+RUN groupadd --gid 1007 porsa \
+ && useradd \
+    --uid 1006 \
+    --gid 1007 \
+    --no-create-home \
+    --home-dir /nonexistent \
+    --shell /usr/sbin/nologin \
+    porsa
+
+COPY --chown=0:1007 . .
+
+RUN chgrp 1007 /app \
+ && find /app -xdev -type d -exec chmod g+rx,g-w,o-rwx {} + \
+ && find /app -xdev -type f -exec chmod g+r,g-w,o-rwx {} + \
+ && chmod 750 /app/entrypoint.sh
+
+ENV HOME=/tmp
+
 EXPOSE 8000
-RUN chmod +x /app/entrypoint.sh
+USER 1006:1007
 CMD ["/app/entrypoint.sh"]
 
 # App code (celery)

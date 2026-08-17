@@ -14,6 +14,11 @@ services:
     build:
       context: ./backend
       target: backend
+    user: "1006:1007"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     env_file: .env.runtime
     environment:
       files_dir: /app/uploaded_files
