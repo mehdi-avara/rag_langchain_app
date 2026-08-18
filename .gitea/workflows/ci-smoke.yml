@@ -1,0 +1,32 @@
+name: Porsa CI Smoke
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  smoke:
+    runs-on: porsa-ci
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify runner context
+        run: |
+          echo "event=${{ gitea.event_name }}"
+          echo "repository=${{ gitea.repository }}"
+          echo "ref=${{ gitea.ref }}"
+          echo "sha=${{ gitea.sha }}"
+          node --version
+          uname -a
+
+      - name: Verify Gitea connectivity
+        run: |
+          node -e "const http=require('http');const r=http.get('http://10.254.254.2:3000/api/healthz',res=>{console.log('Gitea HTTP='+res.statusCode);res.resume();res.on('end',()=>process.exit(res.statusCode===200?0:1));});r.setTimeout(5000,()=>r.destroy(new Error('timeout')));r.on('error',e=>{console.error(e);process.exit(1);});"
+
+      - name: Complete smoke test
+        run: |
+          echo "Porsa Gitea Actions smoke test passed."
