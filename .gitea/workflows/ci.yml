@@ -1,0 +1,188 @@
+name: Porsa CI
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  regression:
+    runs-on: porsa-ci
+    timeout-minutes: 30
+
+    services:
+      postgres_pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: rag_phase_1_2_ci
+          POSTGRES_USER: porsa_ci
+          POSTGRES_PASSWORD: porsa_ci_test_only
+        options: >-
+          --health-cmd "pg_isready -U porsa_ci -d rag_phase_1_2_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      porsa_test_redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PORSA_TEST_DATABASE_URL: postgresql://porsa_ci:porsa_ci_test_only@postgres_pgvector:5432/rag_phase_1_2_ci
+      PORSA_TEST_REDIS_URL: redis://porsa_test_redis:6379/0
+
+      POSTGRES_DB: rag_phase_1_2_ci
+      POSTGRES_USER: porsa_ci
+      POSTGRES_PASSWORD: porsa_ci_test_only
+      POSTGRES_IP: postgres_pgvector
+
+      default_username: ci_admin
+      default_password: ci_test_password
+      default_firstname: CI
+      jwt_secret: ci-only-jwt-secret-not-for-production
+
+      openai_api_key: test
+      jina_api_key: test
+
+      S3_ACCESS_KEY_ID: test
+      S3_SECRET_ACCESS_KEY: test
+
+      AUTH_RATE_LIMIT_ENABLED: "false"
+
+    steps:
+      - name: Checkout
+        uses: https://github.com/actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify checkout
+        run: |
+          set -eu
+          test -f run_all_tests.py
+          test -f backend/alembic.ini
+          echo "sha=${{ gitea.sha }}"
+          git rev-parse HEAD
+
+      - name: Install Python 3.11 environment
+        run: |
+          set -eu
+          export DEBIAN_FRONTEND=noninteractive
+
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 \
+            python3-venv \
+            python3-pip \
+            ca-certificates
+
+          rm -rf /var/lib/apt/lists/*
+
+          python3 --version
+
+          python3 -m venv /tmp/porsa-ci-venv
+          . /tmp/porsa-ci-venv/bin/activate
+
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+
+          python --version
+          python -m pytest --version
+          python -m alembic --version
+
+      - name: Verify isolated services
+        run: |
+          set -eu
+
+          getent hosts postgres_pgvector
+          getent hosts porsa_test_redis
+
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/postgres_pgvector/5432) >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          (echo > /dev/tcp/postgres_pgvector/5432) >/dev/null 2>&1
+
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/porsa_test_redis/6379) >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          (echo > /dev/tcp/porsa_test_redis/6379) >/dev/null 2>&1
+
+          echo "isolated PostgreSQL and Redis reachable"
+
+      - name: Upgrade isolated database
+        run: |
+          set -eu
+          . /tmp/porsa-ci-venv/bin/activate
+
+          cd backend
+
+          python -m alembic \
+            -c alembic.ini \
+            upgrade head
+
+          python -m alembic \
+            -c alembic.ini \
+            current
+
+      - name: Seed isolated RBAC
+        run: |
+          set -eu
+          . /tmp/porsa-ci-venv/bin/activate
+
+          cd backend
+          python -m db.seed_rbac
+
+      - name: Run regression suite
+        run: |
+          set -eu
+          . /tmp/porsa-ci-venv/bin/activate
+
+          python run_all_tests.py \
+            --use-test-database \
+            --enable-populated-migration-tests \
+            --with-alembic-check \
+            -q
+
+      - name: Verify final migration revision
+        run: |
+          set -eu
+          . /tmp/porsa-ci-venv/bin/activate
+
+          cd backend
+
+          python -m alembic \
+            -c alembic.ini \
+            current
+
+          HEADS="$(python -m alembic -c alembic.ini heads | wc -l)"
+
+          if [ "$HEADS" -ne 1 ]; then
+            echo "ERROR: expected exactly one Alembic head"
+            python -m alembic -c alembic.ini heads
+            exit 1
+          fi
+
+          python -m alembic \
+            -c alembic.ini \
+            heads
+
+      - name: CI completed
+        run: |
+          echo "Porsa regression CI passed for ${{ gitea.sha }}"
