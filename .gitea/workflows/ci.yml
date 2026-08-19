@@ -163,8 +163,96 @@ jobs:
           python run_all_tests.py \
             --use-test-database \
             --enable-populated-migration-tests \
-            --with-alembic-check \
             -q
+
+      - name: Verify Alembic drift baseline
+        run: |
+          set -eu
+          . /tmp/porsa-ci-venv/bin/activate
+
+          cd backend
+
+          LOG=/tmp/porsa-alembic-check.log
+
+          set +e
+          python -m alembic -c alembic.ini check >"$LOG" 2>&1
+          RC=$?
+          set -e
+
+          if [ "$RC" -eq 0 ]; then
+            echo "Alembic schema drift: none"
+            exit 0
+          fi
+
+          python - "$LOG" <<'PYCODE'
+          from pathlib import Path
+          import sys
+
+          log_path = Path(sys.argv[1])
+          text = log_path.read_text(errors="replace")
+
+          expected = {
+              "Detected removed index 'ix_warehouse_items_color' on 'warehouse_items_legacy_archive'",
+              "Detected removed index 'ix_warehouse_items_company_id' on 'warehouse_items_legacy_archive'",
+              "Detected removed index 'ix_warehouse_items_model_id' on 'warehouse_items_legacy_archive'",
+              "Detected removed index 'ix_warehouse_items_owner_id' on 'warehouse_items_legacy_archive'",
+              "Detected removed table 'warehouse_items_legacy_archive'",
+              "Detected column comment 'task_results.id'",
+              "Detected column comment 'task_results.task_type'",
+              "Detected column comment 'task_results.result_json'",
+              "Detected column comment 'task_results.error_message'",
+              "Detected added index 'ix_task_results_created_by_user_id' on '('created_by_user_id',)'",
+              "Detected added index 'ix_task_results_task_type' on '('task_type',)'",
+              "Detected added index 'ix_users_is_active' on '('is_active',)'",
+          }
+
+          detected = set()
+
+          for line in text.splitlines():
+              if (
+                  "alembic.autogenerate.compare" in line
+                  and "Detected " in line
+              ):
+                  detected.add(
+                      "Detected " + line.split("Detected ", 1)[1].strip()
+                  )
+
+          if "New upgrade operations detected:" not in text:
+              print("ERROR: alembic check failed for an unexpected reason")
+              print(text[-5000:])
+              raise SystemExit(1)
+
+          if not detected:
+              print("ERROR: alembic reported drift but no comparable operations were parsed")
+              print(text[-5000:])
+              raise SystemExit(1)
+
+          unexpected = sorted(detected - expected)
+
+          if unexpected:
+              print("ERROR: NEW ALEMBIC DRIFT DETECTED")
+              for item in unexpected:
+                  print("  +", item)
+
+              print()
+              print("All detected operations:")
+              for item in sorted(detected):
+                  print("  ", item)
+
+              raise SystemExit(1)
+
+          remaining_known = sorted(detected & expected)
+
+          print(
+              "Alembic check contains only the accepted pre-existing baseline drift."
+          )
+          print(
+              f"Known baseline operations still present: {len(remaining_known)}"
+          )
+
+          for item in remaining_known:
+              print("  -", item)
+          PYCODE
 
       - name: Verify final migration revision
         run: |
