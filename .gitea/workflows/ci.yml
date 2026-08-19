@@ -280,3 +280,213 @@ jobs:
       - name: CI completed
         run: |
           echo "Porsa regression CI passed for ${{ gitea.sha }}"
+
+  phase1_integration:
+    needs: regression
+    runs-on: porsa-ci
+    timeout-minutes: 30
+
+    services:
+      postgres_pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: rag_phase1_integration_ci
+          POSTGRES_USER: porsa_ci
+          POSTGRES_PASSWORD: porsa_ci_test_only
+        options: >-
+          --health-cmd "pg_isready -U porsa_ci -d rag_phase1_integration_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      porsa_test_redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      POSTGRES_DB: rag_phase1_integration_ci
+      POSTGRES_USER: porsa_ci
+      POSTGRES_PASSWORD: porsa_ci_test_only
+      POSTGRES_IP: postgres_pgvector
+
+      PORSA_TEST_DATABASE_URL: postgresql://porsa_ci:porsa_ci_test_only@postgres_pgvector:5432/rag_phase1_integration_ci
+
+      redis_url: redis://porsa_test_redis:6379/0
+      PORSA_TEST_REDIS_URL: redis://porsa_test_redis:6379/0
+
+      default_username: ci_admin
+      default_password: ci_test_password
+      default_firstname: CI
+      bootstrap_admin_enabled: "true"
+
+      jwt_secret: ci-only-jwt-secret-not-for-production
+      openai_api_key: test
+      jina_api_key: test
+
+      S3_ACCESS_KEY_ID: test
+      S3_SECRET_ACCESS_KEY: test
+
+      AUTH_RATE_LIMIT_ENABLED: "false"
+
+      PORSA_PHASE1_E2E_SEED_ALLOW: "1"
+
+      RUN_PHASE1_DIRECT_MR_E2E: "1"
+      RUN_PHASE1_MULTI_ITEM_SUPPLIER_E2E: "1"
+      RUN_PHASE1_NEGATIVE_CONTROLS_E2E: "1"
+      RUN_PHASE1_PAYMENT_AMENDMENT_E2E: "1"
+      RUN_PHASE1_PROCURE_TO_STOCK_E2E: "1"
+
+    steps:
+      - name: Checkout
+        uses: https://github.com/actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify checkout
+        run: |
+          set -eu
+          test -f backend/alembic.ini
+          test -f backend/tests/integration/phase1/seed_phase1_e2e.py
+          echo "sha=${{ gitea.sha }}"
+          git rev-parse HEAD
+
+      - name: Install Python environment
+        run: |
+          set -eu
+          export DEBIAN_FRONTEND=noninteractive
+
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 \
+            python3-venv \
+            python3-pip \
+            ca-certificates
+
+          rm -rf /var/lib/apt/lists/*
+
+          python3 -m venv /tmp/porsa-phase1-e2e-venv
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+
+          python --version
+          python -m pytest --version
+          python -m alembic --version
+
+      - name: Verify isolated services
+        run: |
+          set -eu
+
+          getent hosts postgres_pgvector
+          getent hosts porsa_test_redis
+
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/postgres_pgvector/5432) >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          (echo > /dev/tcp/postgres_pgvector/5432) >/dev/null 2>&1
+
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/porsa_test_redis/6379) >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          (echo > /dev/tcp/porsa_test_redis/6379) >/dev/null 2>&1
+
+          echo "isolated Phase 1 services reachable"
+
+      - name: Upgrade integration database
+        run: |
+          set -eu
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          cd backend
+
+          python -m alembic \
+            -c alembic.ini \
+            upgrade head
+
+          python -m alembic \
+            -c alembic.ini \
+            current
+
+      - name: Seed RBAC
+        run: |
+          set -eu
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          cd backend
+          python -m db.seed_rbac
+
+      - name: Bootstrap integration tenant
+        run: |
+          set -eu
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          cd backend
+          python -m db.init_db
+
+      - name: Seed Phase 1 integration prerequisites
+        run: |
+          set -eu
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          cd backend
+          PYTHONPATH=. python tests/integration/phase1/seed_phase1_e2e.py
+
+      - name: Run Phase 1 database integration scenarios
+        run: |
+          set -eu
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          cd backend
+
+          LOG=/tmp/porsa-phase1-e2e.log
+
+          python -m pytest \
+            -q \
+            -rs \
+            tests/integration/phase1/test_direct_mr_purchase.py::test_multi_item_direct_mr_to_approved_po \
+            tests/integration/phase1/test_multi_item_multi_supplier.py::test_multi_item_multi_supplier_rfq_to_po \
+            tests/integration/phase1/test_negative_controls.py::test_cancellation_paid_cost_and_tenant_controls \
+            tests/integration/phase1/test_payment_amendment.py::test_payment_actual_cost_and_amendment_workflow \
+            tests/test_phase_1_procure_to_stock_e2e.py::test_procure_to_stock_database_workflow \
+            | tee "$LOG"
+
+          grep -Eq '5 passed' "$LOG"
+
+          if grep -Eq '[1-9][0-9]* skipped' "$LOG"; then
+            echo "ERROR: Phase 1 database scenario was skipped"
+            exit 1
+          fi
+
+          echo "Phase 1 integration gate passed: 5/5"
+
+      - name: Verify integration database revision
+        run: |
+          set -eu
+          . /tmp/porsa-phase1-e2e-venv/bin/activate
+
+          cd backend
+
+          python -m alembic \
+            -c alembic.ini \
+            current
+
+          HEADS="$(python -m alembic -c alembic.ini heads | wc -l)"
+
+          test "$HEADS" -eq 1
+
+      - name: Phase 1 integration completed
+        run: |
+          echo "Porsa Phase 1 integration passed for ${{ gitea.sha }}"
