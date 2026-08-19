@@ -354,6 +354,13 @@ jobs:
           echo "sha=${{ gitea.sha }}"
           git rev-parse HEAD
 
+      - name: Prepare runtime directories
+        run: |
+          set -eu
+          mkdir -p backend/logs
+          test -d backend/logs
+          echo "runtime directories ready"
+
       - name: Install Python environment
         run: |
           set -eu
