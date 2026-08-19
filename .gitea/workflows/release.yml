@@ -98,8 +98,25 @@ jobs:
           docker push "$BACKEND"
           docker push "$CELERY"
 
-          docker manifest inspect "$BACKEND" >/dev/null
-          docker manifest inspect "$CELERY" >/dev/null
+          verify_manifest() {
+              IMAGE="$1"
+
+              for ATTEMPT in $(seq 1 30); do
+                  if docker manifest inspect --insecure "$IMAGE" >/dev/null 2>&1; then
+                      echo "manifest_verified=$IMAGE"
+                      return 0
+                  fi
+
+                  echo "manifest_wait=$ATTEMPT image=$IMAGE"
+                  sleep 2
+              done
+
+              echo "ERROR: manifest verification failed: $IMAGE" >&2
+              return 1
+          }
+
+          verify_manifest "$BACKEND"
+          verify_manifest "$CELERY"
 
           echo "release_sha=$SHA"
           echo "backend=$BACKEND"
