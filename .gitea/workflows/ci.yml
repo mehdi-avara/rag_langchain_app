@@ -497,3 +497,110 @@ jobs:
       - name: Phase 1 integration completed
         run: |
           echo "Porsa Phase 1 integration passed for ${{ gitea.sha }}"
+
+  publish_develop_images:
+    needs: phase1_integration
+    if: ${{ gitea.event_name == 'push' && gitea.ref == 'refs/heads/develop' }}
+    runs-on: porsa-release
+    timeout-minutes: 120
+
+    env:
+      REGISTRY: 10.254.254.2:3000
+      REGISTRY_OWNER: avara1382
+      REGISTRY_USER: Avara1382
+      REPOSITORY_URL: http://10.254.254.2:3000/Avara1382/porsa_back.git
+
+    steps:
+      - name: Build and publish develop images
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          GITEA_JOB_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          SHA="${{ gitea.sha }}"
+
+          test -n "$SHA"
+          test -n "$REGISTRY_TOKEN"
+          test -n "$GITEA_JOB_TOKEN"
+
+          WORK="$(mktemp -d /tmp/porsa-develop-build.XXXXXX)"
+
+          cleanup() {
+              docker logout "$REGISTRY" >/dev/null 2>&1 || true
+              rm -rf "$WORK"
+          }
+
+          trap cleanup EXIT
+
+          git init "$WORK"
+          cd "$WORK"
+
+          git remote add origin "$REPOSITORY_URL"
+
+          git \
+            -c "http.extraHeader=Authorization: token $GITEA_JOB_TOKEN" \
+            fetch \
+            --depth=1 \
+            origin \
+            "$SHA"
+
+          git checkout --detach FETCH_HEAD
+
+          test "$(git rev-parse HEAD)" = "$SHA"
+
+          printf '%s' "$REGISTRY_TOKEN" \
+            | docker login \
+                "$REGISTRY" \
+                --username "$REGISTRY_USER" \
+                --password-stdin
+
+          BACKEND="$REGISTRY/$REGISTRY_OWNER/porsa-backend:$SHA"
+          CELERY="$REGISTRY/$REGISTRY_OWNER/porsa-celery:$SHA"
+
+          BACKEND_CURRENT="$REGISTRY/$REGISTRY_OWNER/porsa-backend:develop-current"
+          CELERY_CURRENT="$REGISTRY/$REGISTRY_OWNER/porsa-celery:develop-current"
+
+          git archive --format=tar "$SHA:backend" \
+            | docker build \
+                --target backend \
+                --label "org.opencontainers.image.revision=$SHA" \
+                --label "org.opencontainers.image.source=porsa_back" \
+                -t "$BACKEND" \
+                -
+
+          test "$(
+            docker image inspect "$BACKEND" \
+              --format '{{.Config.User}}'
+          )" = "1006:1007"
+
+          git archive --format=tar "$SHA:backend" \
+            | docker build \
+                --target celery \
+                --label "org.opencontainers.image.revision=$SHA" \
+                --label "org.opencontainers.image.source=porsa_back" \
+                -t "$CELERY" \
+                -
+
+          test "$(
+            docker image inspect "$CELERY" \
+              --format '{{.Config.User}}'
+          )" = "1006:1007"
+
+          docker push "$BACKEND"
+          docker push "$CELERY"
+
+          docker manifest inspect --insecure "$BACKEND" >/dev/null
+          docker manifest inspect --insecure "$CELERY" >/dev/null
+
+          docker tag "$BACKEND" "$BACKEND_CURRENT"
+          docker tag "$CELERY" "$CELERY_CURRENT"
+
+          docker push "$BACKEND_CURRENT"
+          docker push "$CELERY_CURRENT"
+
+          docker manifest inspect --insecure "$BACKEND_CURRENT" >/dev/null
+          docker manifest inspect --insecure "$CELERY_CURRENT" >/dev/null
+
+          echo "develop_sha=$SHA"
+          echo "develop_images_publish=OK"
