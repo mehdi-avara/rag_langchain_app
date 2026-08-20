@@ -509,6 +509,7 @@ jobs:
       REGISTRY_OWNER: avara1382
       REGISTRY_USER: Avara1382
       REPOSITORY_URL: http://10.254.254.2:3000/Avara1382/porsa_back.git
+      PYTHON_BASE_IMAGE: '10.254.254.2:3000/avara1382/porsa-python-base@sha256:a4def8514e6a6d592dbb2f3c9c3423aadf1aec1f7a8586d47101ee6c654768ca'
 
     steps:
       - name: Build and publish develop images
@@ -563,6 +564,7 @@ jobs:
 
           git archive --format=tar "$SHA:backend" \
             | docker build \
+                --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
                 --target backend \
                 --label "org.opencontainers.image.revision=$SHA" \
                 --label "org.opencontainers.image.source=porsa_back" \
@@ -576,6 +578,7 @@ jobs:
 
           git archive --format=tar "$SHA:backend" \
             | docker build \
+                --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
                 --target celery \
                 --label "org.opencontainers.image.revision=$SHA" \
                 --label "org.opencontainers.image.source=porsa_back" \

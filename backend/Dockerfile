@@ -1,5 +1,6 @@
 # Base (minimal, shared)
-FROM python:3.11-slim AS base
+ARG PYTHON_BASE_IMAGE=python:3.11-slim
+FROM ${PYTHON_BASE_IMAGE} AS base
 
 WORKDIR /app
 
