@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 import re
 from typing import Any, Callable, Iterable, Optional
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from Models import User
@@ -201,14 +202,16 @@ def _coerce_field(field: PayloadField, slots: dict) -> Any:
 
 def _model_dump(obj: Any) -> dict:
     if hasattr(obj, "model_dump"):
-        return obj.model_dump(mode="json")
-    if isinstance(obj, dict):
-        return dict(obj)
-    return {
-        key: value
-        for key, value in vars(obj).items()
-        if not key.startswith("_")
-    }
+        data = obj.model_dump(mode="json")
+    elif isinstance(obj, dict):
+        data = dict(obj)
+    else:
+        data = {
+            key: value
+            for key, value in vars(obj).items()
+            if not key.startswith("_")
+        }
+    return jsonable_encoder(data)
 
 
 def _hit_id(hit: Any, id_attr: str) -> Any:

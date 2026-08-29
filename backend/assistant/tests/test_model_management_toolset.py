@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import datetime
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -196,6 +198,7 @@ def test_search_models_returns_grounded_model_references():
                 model="Mark 3",
                 type="centrifugal pump",
                 description="ANSI process pump",
+                created_at=datetime(2026, 5, 8, 13, 25, 12, 597370),
             )
         ]
 
@@ -222,6 +225,10 @@ def test_search_models_returns_grounded_model_references():
         == "model:42"
     )
     assert output["citations"] == ["model:42"]
+    assert output["retrieved_items"][0]["data"]["created_at"] == (
+        "2026-05-08T13:25:12.597370"
+    )
+    json.dumps(output["retrieved_items"])
 
 
 def test_ask_models_uses_grounded_model_records(monkeypatch):

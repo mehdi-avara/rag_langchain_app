@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
@@ -76,8 +77,12 @@ def add_message(
         chat_id=chat_id,
         role=role,
         content=content,
-        citations=citations,
-        retrieved_chunks=retrieved_chunks,
+        citations=jsonable_encoder(citations) if citations is not None else None,
+        retrieved_chunks=(
+            jsonable_encoder(retrieved_chunks)
+            if retrieved_chunks is not None
+            else None
+        ),
         draft_id=draft_id,
     )
 
